@@ -1669,4228 +1669,6 @@ contract CollateralTracker is Clone, ERC20Minimal, Multicall {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-// Libraries
-import {Errors} from "@libraries/Errors.sol";
-import {Math} from "@libraries/Math.sol";
-
-type LeftRightUnsigned is uint256;
-using LeftRightLibrary for LeftRightUnsigned global;
-
-type LeftRightSigned is int256;
-using LeftRightLibrary for LeftRightSigned global;
-
-/// @title Pack two separate data (each of 128bit) into a single 256-bit slot; 256bit-to-128bit packing methods.
-/// @author Axicon Labs Limited
-/// @notice Simple data type that divides a 256-bit word into two 128-bit slots.
-library LeftRightLibrary {
-    using Math for uint256;
-
-    /// @notice AND bitmask to isolate the left half of a uint256.
-    uint256 internal constant LEFT_HALF_BIT_MASK =
-        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000;
-
-    /// @notice AND bitmask to isolate the left half of an int256.
-    int256 internal constant LEFT_HALF_BIT_MASK_INT =
-        int256(uint256(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000));
-
-    /// @notice AND bitmask to isolate the right half of an int256.
-    int256 internal constant RIGHT_HALF_BIT_MASK = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-
-    /*//////////////////////////////////////////////////////////////
-                               RIGHT SLOT
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Get the "right" slot from a bit pattern.
-    /// @param self The 256 bit value to extract the right half from
-    /// @return The right half of `self`
-    function rightSlot(LeftRightUnsigned self) internal pure returns (uint128) {
-        return uint128(LeftRightUnsigned.unwrap(self));
-    }
-
-    /// @notice Get the "right" slot from a bit pattern.
-    /// @param self The 256 bit value to extract the right half from
-    /// @return The right half of `self`
-    function rightSlot(LeftRightSigned self) internal pure returns (int128) {
-        return int128(LeftRightSigned.unwrap(self));
-    }
-
-    // All addToRightSlot functions add bits to the right slot without clearing it first
-    // Typically, the slot is already clear when writing to it, but if it is not, the bits will be added to the existing bits
-    // Therefore, the assumption must not be made that the bits will be cleared while using these helpers
-    // Note that the values *within* the slots are allowed to overflow, but overflows are contained and will not leak into the other slot
-
-    /// @notice Add to the "right" slot in a 256-bit pattern.
-    /// @param self The 256-bit pattern to be written to
-    /// @param right The value to be added to the right slot
-    /// @return `self` with `right` added (not overwritten, but added) to the value in its right 128 bits
-    function addToRightSlot(
-        LeftRightUnsigned self,
-        uint128 right
-    ) internal pure returns (LeftRightUnsigned) {
-        unchecked {
-            // prevent the right slot from leaking into the left one in the case of an overflow
-            // ff + 1 = (1)00, but we want just ff + 1 = 00
-            return
-                LeftRightUnsigned.wrap(
-                    (LeftRightUnsigned.unwrap(self) & LEFT_HALF_BIT_MASK) +
-                        uint256(uint128(LeftRightUnsigned.unwrap(self)) + right)
-                );
-        }
-    }
-
-    /// @notice Add to the "right" slot in a 256-bit pattern.
-    /// @param self The 256-bit pattern to be written to
-    /// @param right The value to be added to the right slot
-    /// @return `self` with `right` added (not overwritten, but added) to the value in its right 128 bits
-    function addToRightSlot(
-        LeftRightSigned self,
-        int128 right
-    ) internal pure returns (LeftRightSigned) {
-        // bit mask needed in case rightHalfBitPattern < 0 due to 2's complement
-        unchecked {
-            // prevent the right slot from leaking into the left one in the case of a positive sign change
-            // ff + 1 = (1)00, but we want just ff + 1 = 00
-            return
-                LeftRightSigned.wrap(
-                    (LeftRightSigned.unwrap(self) & LEFT_HALF_BIT_MASK_INT) +
-                        (int256(int128(LeftRightSigned.unwrap(self)) + right) & RIGHT_HALF_BIT_MASK)
-                );
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                               LEFT SLOT
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Get the "left" slot from a bit pattern.
-    /// @param self The 256 bit value to extract the left half from
-    /// @return The left half of `self`
-    function leftSlot(LeftRightUnsigned self) internal pure returns (uint128) {
-        return uint128(LeftRightUnsigned.unwrap(self) >> 128);
-    }
-
-    /// @notice Get the "left" slot from a bit pattern.
-    /// @param self The 256 bit value to extract the left half from
-    /// @return The left half of `self`
-    function leftSlot(LeftRightSigned self) internal pure returns (int128) {
-        return int128(LeftRightSigned.unwrap(self) >> 128);
-    }
-
-    /// All addToLeftSlot functions add bits to the left slot without clearing it first
-    // Typically, the slot is already clear when writing to it, but if it is not, the bits will be added to the existing bits
-    // Therefore, the assumption must not be made that the bits will be cleared while using these helpers
-    // Note that the values *within* the slots are allowed to overflow, but overflows are contained and will not leak into the other slot
-
-    /// @notice Add to the "left" slot in a 256-bit pattern.
-    /// @param self The 256-bit pattern to be written to
-    /// @param left The value to be added to the left slot
-    /// @return `self` with `left` added (not overwritten, but added) to the value in its left 128 bits
-    function addToLeftSlot(
-        LeftRightUnsigned self,
-        uint128 left
-    ) internal pure returns (LeftRightUnsigned) {
-        unchecked {
-            return LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(self) + (uint256(left) << 128));
-        }
-    }
-
-    /// @notice Add to the "left" slot in a 256-bit pattern.
-    /// @param self The 256-bit pattern to be written to
-    /// @param left The value to be added to the left slot
-    /// @return `self` with `left` added (not overwritten, but added) to the value in its left 128 bits
-    function addToLeftSlot(
-        LeftRightSigned self,
-        int128 left
-    ) internal pure returns (LeftRightSigned) {
-        unchecked {
-            return LeftRightSigned.wrap(LeftRightSigned.unwrap(self) + (int256(left) << 128));
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                             MATH FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The augend
-    /// @param y The addend
-    /// @return z The sum `x + y`
-    function add(
-        LeftRightUnsigned x,
-        LeftRightUnsigned y
-    ) internal pure returns (LeftRightUnsigned z) {
-        unchecked {
-            // adding leftRight packed uint128's is same as just adding the values explicitly
-            // given that we check for overflows of the left and right values
-            z = LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(x) + LeftRightUnsigned.unwrap(y));
-
-            // on overflow z will be less than either x or y
-            // type cast z to uint128 to isolate the right slot and if it's lower than a value it's comprised of (x)
-            // then an overflow has occurred
-            if (
-                LeftRightUnsigned.unwrap(z) < LeftRightUnsigned.unwrap(x) ||
-                (uint128(LeftRightUnsigned.unwrap(z)) < uint128(LeftRightUnsigned.unwrap(x)))
-            ) revert Errors.UnderOverFlow();
-        }
-    }
-
-    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference `x - y`
-    function sub(
-        LeftRightUnsigned x,
-        LeftRightUnsigned y
-    ) internal pure returns (LeftRightUnsigned z) {
-        unchecked {
-            // subtracting leftRight packed uint128's is same as just subtracting the values explicitly
-            // given that we check for underflows of the left and right values
-            z = LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(x) - LeftRightUnsigned.unwrap(y));
-
-            // on underflow z will be greater than either x or y
-            // type cast z to uint128 to isolate the right slot and if it's higher than a value that was subtracted from (x)
-            // then an underflow has occurred
-            if (
-                LeftRightUnsigned.unwrap(z) > LeftRightUnsigned.unwrap(x) ||
-                (uint128(LeftRightUnsigned.unwrap(z)) > uint128(LeftRightUnsigned.unwrap(x)))
-            ) revert Errors.UnderOverFlow();
-        }
-    }
-
-    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The augend
-    /// @param y The addend
-    /// @return z The sum `x + y`
-    function add(LeftRightUnsigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
-        unchecked {
-            int256 left = int256(uint256(x.leftSlot())) + y.leftSlot();
-            int128 left128 = int128(left);
-
-            if (left128 != left) revert Errors.UnderOverFlow();
-
-            int256 right = int256(uint256(x.rightSlot())) + y.rightSlot();
-            int128 right128 = int128(right);
-
-            if (right128 != right) revert Errors.UnderOverFlow();
-
-            return z.addToRightSlot(right128).addToLeftSlot(left128);
-        }
-    }
-
-    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The augend
-    /// @param y The addend
-    /// @return z The sum `x + y`
-    function add(LeftRightSigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
-        unchecked {
-            int256 left256 = int256(x.leftSlot()) + y.leftSlot();
-            int128 left128 = int128(left256);
-
-            int256 right256 = int256(x.rightSlot()) + y.rightSlot();
-            int128 right128 = int128(right256);
-
-            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
-
-            return z.addToRightSlot(right128).addToLeftSlot(left128);
-        }
-    }
-
-    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference `x - y`
-    function sub(LeftRightSigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
-        unchecked {
-            int256 left256 = int256(x.leftSlot()) - y.leftSlot();
-            int128 left128 = int128(left256);
-
-            int256 right256 = int256(x.rightSlot()) - y.rightSlot();
-            int128 right128 = int128(right256);
-
-            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
-
-            return z.addToRightSlot(right128).addToLeftSlot(left128);
-        }
-    }
-
-    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference `x - y`
-    function sub(LeftRightSigned x, LeftRightUnsigned y) internal pure returns (LeftRightSigned z) {
-        unchecked {
-            int256 left256 = int256(x.leftSlot()) - int256(uint256(y.leftSlot()));
-            int128 left128 = int128(left256);
-
-            int256 right256 = int256(x.rightSlot()) - int256(uint256(y.rightSlot()));
-            int128 right128 = int128(right256);
-
-            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
-
-            return z.addToRightSlot(right128).addToLeftSlot(left128);
-        }
-    }
-
-    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
-    /// @notice For each slot, rectify difference `x - y` to 0 if negative.
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference `x - y`
-    function subRect(
-        LeftRightSigned x,
-        LeftRightSigned y
-    ) internal pure returns (LeftRightUnsigned z) {
-        unchecked {
-            int256 left256 = int256(x.leftSlot()) - y.leftSlot();
-            int128 left128 = int128(left256);
-
-            int256 right256 = int256(x.rightSlot()) - y.rightSlot();
-            int128 right128 = int128(right256);
-
-            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
-
-            return
-                z.addToRightSlot(uint128(uint256((Math.max(right128, 0))))).addToLeftSlot(
-                    uint128(uint256((Math.max(left128, 0))))
-                );
-        }
-    }
-
-    /// @notice Adds two sets of LeftRight-encoded words, freezing both right slots if either overflows, and vice versa.
-    /// @dev Used for linked accumulators, so if the accumulator for one side overflows for a token, both cease to accumulate.
-    /// @param x The first augend
-    /// @param dx The addend for `x`
-    /// @param y The second augend
-    /// @param dy The addend for `y`
-    /// @return The sum `x + dx`
-    /// @return The sum `y + dy`
-    function addCapped(
-        LeftRightUnsigned x,
-        LeftRightUnsigned dx,
-        LeftRightUnsigned y,
-        LeftRightUnsigned dy
-    ) internal pure returns (LeftRightUnsigned, LeftRightUnsigned) {
-        uint128 z_xR = (uint256(x.rightSlot()) + dx.rightSlot()).toUint128Capped();
-        uint128 z_xL = (uint256(x.leftSlot()) + dx.leftSlot()).toUint128Capped();
-        uint128 z_yR = (uint256(y.rightSlot()) + dy.rightSlot()).toUint128Capped();
-        uint128 z_yL = (uint256(y.leftSlot()) + dy.leftSlot()).toUint128Capped();
-
-        bool r_Enabled = !(z_xR == type(uint128).max || z_yR == type(uint128).max);
-        bool l_Enabled = !(z_xL == type(uint128).max || z_yL == type(uint128).max);
-
-        return (
-            LeftRightUnsigned.wrap(r_Enabled ? z_xR : x.rightSlot()).addToLeftSlot(
-                l_Enabled ? z_xL : x.leftSlot()
-            ),
-            LeftRightUnsigned.wrap(r_Enabled ? z_yR : y.rightSlot()).addToLeftSlot(
-                l_Enabled ? z_yL : y.leftSlot()
-            )
-        );
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.24;
-// Interfaces
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {IUniswapV3Pool} from "univ3-core/interfaces/IUniswapV3Pool.sol";
-// Libraries
-import {Constants} from "@libraries/Constants.sol";
-import {Math} from "@libraries/Math.sol";
-import {EfficientHash} from "@libraries/EfficientHash.sol";
-import {Errors} from "@libraries/Errors.sol";
-// OpenZeppelin libraries
-import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-// Custom types
-import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
-import {LiquidityChunk} from "@types/LiquidityChunk.sol";
-import {TokenId} from "@types/TokenId.sol";
-import {RiskParameters} from "@types/RiskParameters.sol";
-
-/// @title Compute general math quantities relevant to Panoptic and AMM pool management.
-/// @notice Contains Panoptic-specific helpers and math functions.
-/// @author Axicon Labs Limited
-library PanopticMath {
-    using Math for uint256;
-
-    /// @notice This is equivalent to `type(uint256).max` — used in assembly blocks as a replacement.
-    uint256 internal constant MAX_UINT256 = 2 ** 256 - 1;
-
-    /// @notice Masks 16-bit tickSpacing and 8 bits of vegoid out of 64-bit `[16-bit tickspacing][8-bit vegoid][40-bit poolPattern]` format poolId.
-    uint64 internal constant TICKSPACING_VEGOID_MASK = 0xFFFFFF0000000000;
-
-    uint256 internal constant PRIME_MODULUS_248 =
-        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff13;
-
-    uint256 internal constant PRIME_MODULUS_124_0 = 0xfffffffffffffffffffffffffffffc5; // 2**124 - 59
-    uint256 internal constant PRIME_MODULUS_124_1 = 0xffffffffffffffffffffffffffffd99; // 2**124 - 615
-
-    // Mask for isolating a 124-bit lane
-    uint256 internal constant LANE_MASK_124 = 0xfffffffffffffffffffffffffffffff;
-
-    uint256 internal constant UPPER_120BITS_MASK =
-        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000;
-
-    uint256 internal constant BITMASK_UINT88 = 0xFFFFFFFFFFFFFFFFFFFFFF;
-    uint256 internal constant BITMASK_UINT22 = 0x3FFFFF;
-
-    /*//////////////////////////////////////////////////////////////
-                              UTILITIES
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Increments the pool pattern (first 48 bits) of a poolId by 1.
-    /// @param poolId The 64-bit pool ID
-    /// @return The provided `poolId` with its pool pattern slot incremented by 1
-    function incrementPoolPattern(uint64 poolId) internal pure returns (uint64) {
-        unchecked {
-            return (poolId & TICKSPACING_VEGOID_MASK) + (uint40(poolId + 1));
-        }
-    }
-
-    /// @notice Get the number of leading hex characters in an address.
-    //     0x0000bababaab...     0xababababab...
-    //          ▲                 ▲
-    //          │                 │
-    //     4 leading hex      0 leading hex
-    //    character zeros    character zeros
-    //
-    /// @param addr The address to get the number of leading zero hex characters for
-    /// @return The number of leading zero hex characters in the address
-    function numberOfLeadingHexZeros(address addr) external pure returns (uint256) {
-        unchecked {
-            return addr == address(0) ? 40 : 39 - Math.mostSignificantNibble(uint160(addr));
-        }
-    }
-
-    /// @notice Returns ERC20 symbol of `token`.
-    /// @param token The address of the token to get the symbol of
-    /// @return The symbol of `token` or "???" if not supported
-    function safeERC20Symbol(address token) external view returns (string memory) {
-        // not guaranteed that token supports metadata extension
-        // so we need to let call fail and return placeholder if not
-        try IERC20Metadata(token).symbol() returns (string memory symbol) {
-            return symbol;
-        } catch {
-            return "???";
-        }
-    }
-
-    /// @notice Converts `fee` to a string with "bps" appended.
-    /// @dev The lowest supported value of `fee` is 1 (`="0.01bps"`).
-    /// @param fee The fee to convert to a string (in hundredths of basis points)
-    /// @return Stringified version of `fee` with "bps" appended
-    function uniswapFeeToString(uint24 fee) internal pure returns (string memory) {
-        return
-            string.concat(
-                Strings.toString(fee / 100),
-                fee % 100 == 0
-                    ? ""
-                    : string.concat(
-                        ".",
-                        Strings.toString((fee / 10) % 10),
-                        Strings.toString(fee % 10)
-                    ),
-                "bps"
-            );
-    }
-
-    /// @notice Update an existing account's "positions hash" with a new `tokenId`.
-    /// @notice The positions hash contains a fingerprint of all open positions created by an account/user and a count of the legs across those positions.
-    /// @dev The "fingerprint" portion of the hash is given by XORing the hashed `tokenId` of each position the user has open together.
-    /// @param existingHash The existing position hash representing a list of positions and the count of the legs across those positions
-    /// @param tokenId The new position to modify the existing hash with: `existingHash = uint248(existingHash) ^ uint248(hashOf(tokenId))`
-    /// @param addFlag Whether to mint (add) the tokenId to the count of positions or burn (subtract) it from the count `(existingHash >> 248) +/- tokenId.countLegs()`
-    /// @return newHash The updated position hash with the new tokenId XORed in and the leg count incremented/decremented
-    function updatePositionsHash(
-        uint256 existingHash,
-        TokenId tokenId,
-        bool addFlag
-    ) internal pure returns (uint256) {
-        // update hash by using the homomorphicHash method
-        uint256 updatedHash = homomorphicHash(existingHash, TokenId.unwrap(tokenId), addFlag);
-
-        // increment the upper 8 bits (leg counter) if addFlag=true, decrement otherwise
-        uint8 numberOfLegs = uint8(tokenId.countLegs());
-        if (numberOfLegs == 0) revert Errors.TokenIdHasZeroLegs();
-
-        // unchecked, so reverts if overflow
-        uint256 newLegCount = addFlag
-            ? uint8(existingHash >> 248) + numberOfLegs
-            : uint8(existingHash >> 248) - numberOfLegs;
-
-        unchecked {
-            return uint256(updatedHash) + (newLegCount << 248);
-        }
-    }
-
-    /// @notice Computes a homomorphic hash by adding or subtracting an item from an existing hash
-    /// @dev Uses XOR-based homomorphic hashing (XHASH). The hash of the item is XORed with the
-    ///      existing hash. Since XOR is its own inverse (A ⊕ B ⊕ B = A), both addition and
-    ///      subtraction operations use the same XOR operation. This ensures the operation is
-    ///      reversible and order-independent for the same set of items.
-    ///      OR
-    ///      Uses additive homomorphic hashing (AdHash) over a 248-bit prime field. The hash of the item
-    ///      is either added to or subtracted from the existing hash using modular arithmetic.
-    ///      Subtraction is implemented as addition of the modular inverse: hash + (PRIME - itemHash) mod PRIME.
-    ///      This ensures the operation is reversible and order-independent for the same set of items.
-    ///      OR
-    ///      Uses LtHash (Lattice-based Hash) with k=2 lanes for improved collision resistance.
-    ///      The 248-bit hash space is divided into two 124-bit lanes, each operating under
-    ///      modular arithmetic with a 124-bit prime. The item hash is split into two 124-bit
-    ///      chunks and each chunk is added/subtracted from its corresponding lane independently.
-    ///      Subtraction is implemented as addition of the modular inverse: lane + (PRIME - chunk) mod PRIME.
-    ///      This parallel lane approach provides better security properties than single-lane hashing
-    ///      while maintaining homomorphic properties (order-independence and reversibility).
-    /// @param hash The existing hash value (only lower 248 bits are used)
-    /// @param item The item to be hashed and added/subtracted (typically a TokenId cast to uint256)
-    /// @param addFlag True to add the item to the hash, false to subtract it
-    /// @return The updated homomorphic hash as a uint256 (but only lower 248 bits contain the hash)
-    function homomorphicHash(
-        uint256 hash,
-        uint256 item,
-        bool addFlag
-    ) internal pure returns (uint256) {
-        /*
-        {
-            // XHASH
-            return
-                uint248(hash) ^
-                (uint248(uint256(EfficientHash.efficientKeccak256(abi.encode(item)))));
-        }
-        {
-            // AdHash
-            uint256 itemHash = uint256(EfficientHash.efficientKeccak256(abi.encode(item)));
-            return
-                addFlag
-                    ? addmod(uint248(hash), uint248(itemHash), PRIME_MODULUS_248)
-                    : addmod(
-                        uint248(hash),
-                        PRIME_MODULUS_248 - (itemHash % PRIME_MODULUS_248),
-                        PRIME_MODULUS_248
-                    );
-        }
-        */
-        unchecked {
-            // LtHash, k=2
-            uint256 itemHash = uint256(EfficientHash.efficientKeccak256(abi.encode(item)));
-
-            // Pre-calculate the 124-bit chunks for the item to be added/removed
-            uint256 item_h0 = itemHash & LANE_MASK_124;
-            uint256 item_h1 = (itemHash >> 124) & LANE_MASK_124;
-
-            uint256 lane0 = hash & LANE_MASK_124;
-            uint256 newItem_h0 = addFlag
-                ? item_h0
-                : PRIME_MODULUS_124_0 - (item_h0 % PRIME_MODULUS_124_0);
-            uint256 hash0 = addmod(lane0, newItem_h0, PRIME_MODULUS_124_0);
-
-            uint256 lane1 = (hash >> 124) & LANE_MASK_124;
-            uint256 newItem_h1 = addFlag
-                ? item_h1
-                : PRIME_MODULUS_124_1 - (item_h1 % PRIME_MODULUS_124_1);
-            uint256 hash1 = addmod(lane1, newItem_h1, PRIME_MODULUS_124_1);
-
-            return hash0 + (hash1 << 124);
-        }
-    }
-
-    /// @notice Checks if an array of TokenIds contains any duplicate values
-    /// @dev Uses assembly for gas optimization. Performs O(n²) comparison by checking each element
-    ///      against all subsequent elements. Returns false immediately upon finding the first duplicate.
-    ///      Arrays with 0 or 1 elements are considered to have no duplicates.
-    /// @param arr The array of TokenIds to check for duplicates
-    /// @return True if the array contains no duplicate TokenIds, false if duplicates are found
-    function hasNoDuplicateTokenIds(TokenId[] calldata arr) external pure returns (bool) {
-        assembly {
-            let len := arr.length
-            let offset := arr.offset
-
-            // Early return for 0 or 1 elements
-            if lt(len, 2) {
-                mstore(0x00, 1)
-                return(0x00, 0x20)
-            }
-
-            // Check for duplicates
-            for {
-                let i := 0
-            } lt(i, len) {
-                i := add(i, 1)
-            } {
-                let val := calldataload(add(offset, mul(i, 0x20)))
-                for {
-                    let j := add(i, 1)
-                } lt(j, len) {
-                    j := add(j, 1)
-                } {
-                    if eq(val, calldataload(add(offset, mul(j, 0x20)))) {
-                        mstore(0x00, 0)
-                        return(0x00, 0x20)
-                    }
-                }
-            }
-
-            mstore(0x00, 1)
-            return(0x00, 0x20)
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                          ORACLE CALCULATIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Returns the median of the last `cardinality` average prices over `period` observations from `univ3pool`.
-    /// @dev Used when we need a manipulation-resistant TWAP price.
-    /// @dev Uniswap observations snapshot the closing price of the last block before the first interaction of a given block.
-    /// @dev The maximum frequency of observations is 1 per block, but there is no guarantee that the pool will be observed at every block.
-    /// @dev Each period has a minimum length of `blocktime * period`, but may be longer if the Uniswap pool is relatively inactive.
-    /// @dev The final price used in the array (of length `cardinality`) is the average of `cardinality` observations spaced by `period` (which is itself a number of observations).
-    /// @dev Thus, the minimum total time window is `cardinality * period * blocktime`.
-    /// @param univ3pool The Uniswap pool to get the median observation from
-    /// @param observationIndex The index of the last observation in the pool
-    /// @param observationCardinality The number of observations in the pool
-    /// @param cardinality The number of `periods` to in the median price array, should be odd
-    /// @param period The number of observations to average to compute one entry in the median price array
-    /// @return The median of `cardinality` observations spaced by `period` in the Uniswap pool
-    /// @return The latest observation in the Uniswap pool
-    function computeMedianObservedPrice(
-        IUniswapV3Pool univ3pool,
-        uint256 observationIndex,
-        uint256 observationCardinality,
-        uint256 cardinality,
-        uint256 period
-    ) internal view returns (int24, int24) {
-        unchecked {
-            int256[] memory tickCumulatives = new int256[](cardinality + 1);
-
-            uint256[] memory timestamps = new uint256[](cardinality + 1);
-            // get the last "cardinality" timestamps/tickCumulatives (if observationIndex < cardinality, the index will wrap back from observationCardinality)
-            for (uint256 i = 0; i < cardinality + 1; ++i) {
-                (timestamps[i], tickCumulatives[i], , ) = univ3pool.observations(
-                    uint256(
-                        (int256(observationIndex) - int256(i * period)) +
-                            int256(observationCardinality)
-                    ) % observationCardinality
-                );
-            }
-
-            int256[] memory ticks = new int256[](cardinality);
-            // use cardinality periods given by cardinality + 1 accumulator observations to compute the last cardinality observed ticks spaced by period
-            for (uint256 i = 0; i < cardinality; ++i) {
-                ticks[i] =
-                    (tickCumulatives[i] - tickCumulatives[i + 1]) /
-                    int256(timestamps[i] - timestamps[i + 1]);
-            }
-
-            // the `ticks` array descends from the most recent Uniswap observation prior to the sort
-            int24 latestTick = int24(ticks[0]);
-
-            // get the median of the `ticks` array (assuming `cardinality` is odd)
-            return (int24(Math.sort(ticks)[cardinality / 2]), latestTick);
-        }
-    }
-
-    /// @notice Computes the TWAP of a Uniswap V3 pool using data from its oracle.
-    /// @dev Note that our definition of TWAP differs from a typical mean of prices over a time window.
-    /// @dev We instead observe the average price over a series of time intervals, and define the TWAP as the median of those averages.
-    /// @param univ3pool The Uniswap pool from which to compute the TWAP
-    /// @param twapWindow The time window to compute the TWAP over
-    /// @return The final calculated TWAP tick
-    function twapFilter(IUniswapV3Pool univ3pool, uint32 twapWindow) external view returns (int24) {
-        uint32[] memory secondsAgos = new uint32[](20);
-
-        int256[] memory twapMeasurement = new int256[](19);
-
-        unchecked {
-            // construct the time slots
-            for (uint256 i = 0; i < 20; ++i) {
-                secondsAgos[i] = uint32(((i + 1) * twapWindow) / 20);
-            }
-
-            // observe the tickCumulative at the 20 pre-defined time slots
-            (int56[] memory tickCumulatives, ) = univ3pool.observe(secondsAgos);
-
-            // compute the average tick per 30s window
-            for (uint256 i = 0; i < 19; ++i) {
-                twapMeasurement[i] = int24(
-                    (tickCumulatives[i] - tickCumulatives[i + 1]) / int56(uint56(twapWindow / 20))
-                );
-            }
-
-            // sort the tick measurements
-            int256[] memory sortedTicks = Math.sort(twapMeasurement);
-
-            // Get the median value
-            return int24(sortedTicks[9]);
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                          LIQUIDITY CHUNK MATH
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice For a given option position (`tokenId`), leg index within that position (`legIndex`), and `positionSize` get the tick range spanned and its
-    /// liquidity (share ownership) in the Uniswap V3 pool; this is a liquidity chunk.
-    //          Liquidity chunk  (defined by tick upper, tick lower, and its size/amount: the liquidity)
-    //   liquidity    │
-    //         ▲      │
-    //         │     ┌▼┐
-    //         │  ┌──┴─┴──┐
-    //         │  │       │
-    //         │  │       │
-    //         └──┴───────┴────► price
-    //         Uniswap V3 Pool
-    /// @param tokenId The option position id
-    /// @param legIndex The leg index of the option position, can be {0,1,2,3}
-    /// @param positionSize The number of contracts held by this leg
-    /// @return A LiquidityChunk with `tickLower`, `tickUpper`, and `liquidity`
-    function getLiquidityChunk(
-        TokenId tokenId,
-        uint256 legIndex,
-        uint128 positionSize
-    ) internal pure returns (LiquidityChunk) {
-        // get the tick range for this leg
-        (int24 tickLower, int24 tickUpper) = tokenId.asTicks(legIndex);
-
-        // Get the amount of liquidity owned by this leg in the Uniswap V3 pool in the above tick range
-        // Background:
-        //
-        //  In Uniswap V3, the amount of liquidity received for a given amount of token0 when the price is
-        //  not in range is given by:
-        //     Liquidity = amount0 * (sqrt(upper) * sqrt(lower)) / (sqrt(upper) - sqrt(lower))
-        //  For token1, it is given by:
-        //     Liquidity = amount1 / (sqrt(upper) - sqrt(lower))
-        //
-        //  However, in Panoptic, each position has a asset parameter. The asset is the "basis" of the position.
-        //  In TradFi, the asset is always cash and selling a $1000 put requires the user to lock $1000, and selling
-        //  a call requires the user to lock 1 unit of asset.
-        //
-        //  Because Uniswap V3 chooses token0 and token1 from the alphanumeric order, there is no consistency as to whether token0 is
-        //  stablecoin, ETH, or an ERC20. Some pools may want ETH to be the asset (e.g. ETH-DAI) and some may wish the stablecoin to
-        //  be the asset (e.g. DAI-ETH) so that K asset is moved for puts and 1 asset is moved for calls.
-        //  But since the convention is to force the order always we have no say in this.
-        //
-        //  To solve this, we encode the asset value in tokenId. This parameter specifies which of token0 or token1 is the
-        //  asset, such that:
-        //     when asset=0, then amount0 moved at strike K =1.0001**currentTick is 1, amount1 moved to strike K is K
-        //     when asset=1, then amount1 moved at strike K =1.0001**currentTick is K, amount0 moved to strike K is 1/K
-        //
-        //  The following function takes this into account when computing the liquidity of the leg and switches between
-        //  the definition for getLiquidityForAmount0 or getLiquidityForAmount1 when relevant.
-
-        uint256 amount = positionSize * tokenId.optionRatio(legIndex);
-        if (tokenId.asset(legIndex) == 0) {
-            return Math.getLiquidityForAmount0(tickLower, tickUpper, amount);
-        } else {
-            return Math.getLiquidityForAmount1(tickLower, tickUpper, amount);
-        }
-    }
-
-    /// @notice Extract the tick range specified by `strike` and `width` for the given `tickSpacing`.
-    /// @param strike The strike price of the option
-    /// @param width The width of the option
-    /// @param tickSpacing The tick spacing of the underlying Uniswap V3 pool
-    /// @return The lower tick of the liquidity chunk
-    /// @return The upper tick of the liquidity chunk
-    function getTicks(
-        int24 strike,
-        int24 width,
-        int24 tickSpacing
-    ) internal pure returns (int24, int24) {
-        (int24 rangeDown, int24 rangeUp) = PanopticMath.getRangesFromStrike(width, tickSpacing);
-
-        unchecked {
-            return (strike - rangeDown, strike + rangeUp);
-        }
-    }
-
-    /// @notice Returns the distances of the upper and lower ticks from the strike for a position with the given width and tickSpacing.
-    /// @dev Given `r = (width * tickSpacing) / 2`, `tickLower = strike - floor(r)` and `tickUpper = strike + ceil(r)`.
-    /// @param width The width of the leg
-    /// @param tickSpacing The tick spacing of the underlying pool
-    /// @return The distance of the lower tick from the strike
-    /// @return The distance of the upper tick from the strike
-    function getRangesFromStrike(
-        int24 width,
-        int24 tickSpacing
-    ) internal pure returns (int24, int24) {
-        return (
-            (width * tickSpacing) / 2,
-            int24(int256(Math.unsafeDivRoundingUp(uint24(width) * uint24(tickSpacing), 2)))
-        );
-    }
-
-    /// @notice Computes the chunk key for a given leg of a position.
-    /// @dev The chunk key uniquely identifies a liquidity chunk by its strike, width, and token type.
-    /// @param tokenId The option position
-    /// @param leg The leg index within the position
-    /// @return chunkKey The keccak256 hash identifying this chunk
-    function getChunkKey(TokenId tokenId, uint256 leg) internal pure returns (bytes32 chunkKey) {
-        chunkKey = EfficientHash.efficientKeccak256(
-            abi.encodePacked(tokenId.strike(leg), tokenId.width(leg), tokenId.tokenType(leg))
-        );
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                         TOKEN CONVERSION LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Compute the amount of notional value underlying an option position.
-    /// @param tokenId The option position id
-    /// @param positionSize The number of contracts of the option
-    /// @param opening Whether you need the token0s and token1s moved while opening the position, or while closing
-    /// @return longAmounts Left-right packed word where rightSlot = token0 and leftSlot = token1 held against borrowed Uniswap liquidity for long legs
-    /// @return shortAmounts Left-right packed word where where rightSlot = token0 and leftSlot = token1 borrowed to create short legs
-    function computeExercisedAmounts(
-        TokenId tokenId,
-        uint128 positionSize,
-        bool opening
-    ) internal pure returns (LeftRightSigned longAmounts, LeftRightSigned shortAmounts) {
-        uint256 numLegs = tokenId.countLegs();
-        for (uint256 leg = 0; leg < numLegs; ) {
-            (LeftRightSigned longs, LeftRightSigned shorts) = calculateIOAmounts(
-                tokenId,
-                positionSize,
-                leg,
-                opening
-            );
-
-            longAmounts = longAmounts.add(longs);
-            shortAmounts = shortAmounts.add(shorts);
-            unchecked {
-                ++leg;
-            }
-        }
-    }
-
-    /// @notice Convert an amount of token0 into an amount of token1 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
-    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks
-    /// @param amount The amount of token0 to convert into token1
-    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token0 into token1
-    /// @return The converted `amount` of token0 represented in terms of token1
-    function convert0to1(uint256 amount, uint160 sqrtPriceX96) internal pure returns (uint256) {
-        unchecked {
-            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
-            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
-            if (sqrtPriceX96 < type(uint128).max) {
-                return Math.mulDiv192(amount, uint256(sqrtPriceX96) ** 2);
-            } else {
-                return Math.mulDiv128(amount, Math.mulDiv64(sqrtPriceX96, sqrtPriceX96));
-            }
-        }
-    }
-
-    /// @notice Convert an amount of token0 into an amount of token1 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
-    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks
-    /// @param amount The amount of token0 to convert into token1
-    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token0 into token1
-    /// @return The converted `amount` of token0 represented in terms of token1
-    function convert0to1RoundingUp(
-        uint256 amount,
-        uint160 sqrtPriceX96
-    ) internal pure returns (uint256) {
-        unchecked {
-            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
-            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
-            if (sqrtPriceX96 < type(uint128).max) {
-                return Math.mulDiv192RoundingUp(amount, uint256(sqrtPriceX96) ** 2);
-            } else {
-                return Math.mulDiv128RoundingUp(amount, Math.mulDiv64(sqrtPriceX96, sqrtPriceX96));
-            }
-        }
-    }
-
-    /// @notice Convert an amount of token1 into an amount of token0 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
-    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
-    /// @param amount The amount of token1 to convert into token0
-    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token1 into token0
-    /// @return The converted `amount` of token1 represented in terms of token0
-    function convert1to0(uint256 amount, uint160 sqrtPriceX96) internal pure returns (uint256) {
-        unchecked {
-            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
-            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
-            if (sqrtPriceX96 < type(uint128).max) {
-                return Math.mulDiv(amount, 2 ** 192, uint256(sqrtPriceX96) ** 2);
-            } else {
-                return Math.mulDiv(amount, 2 ** 128, Math.mulDiv64(sqrtPriceX96, sqrtPriceX96));
-            }
-        }
-    }
-
-    /// @notice Convert an amount of token1 into an amount of token0 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
-    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
-    /// @param amount The amount of token1 to convert into token0
-    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token1 into token0
-    /// @return The converted `amount` of token1 represented in terms of token0
-    function convert1to0RoundingUp(
-        uint256 amount,
-        uint160 sqrtPriceX96
-    ) internal pure returns (uint256) {
-        unchecked {
-            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
-            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
-            if (sqrtPriceX96 < type(uint128).max) {
-                return Math.mulDivRoundingUp(amount, 2 ** 192, uint256(sqrtPriceX96) ** 2);
-            } else {
-                return
-                    Math.mulDivRoundingUp(
-                        amount,
-                        2 ** 128,
-                        Math.mulDiv64(sqrtPriceX96, sqrtPriceX96)
-                    );
-            }
-        }
-    }
-
-    /// @notice Convert an amount of token0 into an amount of token1 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
-    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
-    /// @param amount The amount of token0 to convert into token1
-    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token0 into token1
-    /// @return The converted `amount` of token0 represented in terms of token1
-    function convert0to1(int256 amount, uint160 sqrtPriceX96) internal pure returns (int256) {
-        unchecked {
-            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
-            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
-            if (sqrtPriceX96 < type(uint128).max) {
-                int256 absResult = Math
-                    .mulDiv192(Math.absUint(amount), uint256(sqrtPriceX96) ** 2)
-                    .toInt256();
-                return amount < 0 ? -absResult : absResult;
-            } else {
-                int256 absResult = Math
-                    .mulDiv128(Math.absUint(amount), Math.mulDiv64(sqrtPriceX96, sqrtPriceX96))
-                    .toInt256();
-                return amount < 0 ? -absResult : absResult;
-            }
-        }
-    }
-
-    /// @notice Convert an amount of token0 into an amount of token1 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
-    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
-    /// @param amount The amount of token0 to convert into token1
-    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token0 into token1
-    /// @return The converted `amount` of token0 represented in terms of token1
-    function convert0to1RoundingUp(
-        int256 amount,
-        uint160 sqrtPriceX96
-    ) internal pure returns (int256) {
-        unchecked {
-            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
-            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
-            if (sqrtPriceX96 < type(uint128).max) {
-                int256 absResult = Math
-                    .mulDiv192RoundingUp(Math.absUint(amount), uint256(sqrtPriceX96) ** 2)
-                    .toInt256();
-                return amount < 0 ? -absResult : absResult;
-            } else {
-                int256 absResult = Math
-                    .mulDiv128RoundingUp(
-                        Math.absUint(amount),
-                        Math.mulDiv64(sqrtPriceX96, sqrtPriceX96)
-                    )
-                    .toInt256();
-                return amount < 0 ? -absResult : absResult;
-            }
-        }
-    }
-
-    /// @notice Convert an amount of token1 into an amount of token0 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
-    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
-    /// @param amount The amount of token1 to convert into token0
-    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token1 into token0
-    /// @return The converted `amount` of token1 represented in terms of token0
-    function convert1to0(int256 amount, uint160 sqrtPriceX96) internal pure returns (int256) {
-        unchecked {
-            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
-            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
-            if (sqrtPriceX96 < type(uint128).max) {
-                int256 absResult = Math
-                    .mulDiv(Math.absUint(amount), 2 ** 192, uint256(sqrtPriceX96) ** 2)
-                    .toInt256();
-                return amount < 0 ? -absResult : absResult;
-            } else {
-                int256 absResult = Math
-                    .mulDiv(
-                        Math.absUint(amount),
-                        2 ** 128,
-                        Math.mulDiv64(sqrtPriceX96, sqrtPriceX96)
-                    )
-                    .toInt256();
-                return amount < 0 ? -absResult : absResult;
-            }
-        }
-    }
-
-    /// @notice Convert an amount of token1 into an amount of token0 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
-    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
-    /// @param amount The amount of token1 to convert into token0
-    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token1 into token0
-    /// @return The converted `amount` of token1 represented in terms of token0
-    function convert1to0RoundingUp(
-        int256 amount,
-        uint160 sqrtPriceX96
-    ) internal pure returns (int256) {
-        unchecked {
-            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
-            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
-            if (sqrtPriceX96 < type(uint128).max) {
-                int256 absResult = Math
-                    .mulDivRoundingUp(Math.absUint(amount), 2 ** 192, uint256(sqrtPriceX96) ** 2)
-                    .toInt256();
-                return amount < 0 ? -absResult : absResult;
-            } else {
-                int256 absResult = Math
-                    .mulDivRoundingUp(
-                        Math.absUint(amount),
-                        2 ** 128,
-                        Math.mulDiv64(sqrtPriceX96, sqrtPriceX96)
-                    )
-                    .toInt256();
-                return amount < 0 ? -absResult : absResult;
-            }
-        }
-    }
-
-    /// @notice Get a single collateral balance and requirement in terms of the lowest-priced token for a given set of (token0/token1) collateral balances and requirements.
-    /// @param tokenData0 LeftRight encoded word with balance of token0 in the right slot, and required balance in left slot
-    /// @param tokenData1 LeftRight encoded word with balance of token1 in the right slot, and required balance in left slot
-    /// @param sqrtPriceX96 The price at which to compute the collateral value and requirements
-    /// @return The combined collateral balance of `tokenData0` and `tokenData1` in terms of (token0 if `price(token1/token0) < 1` and vice versa)
-    /// @return The combined required collateral threshold of `tokenData0` and `tokenData1` in terms of (token0 if `price(token1/token0) < 1` and vice versa)
-    function getCrossBalances(
-        LeftRightUnsigned tokenData0,
-        LeftRightUnsigned tokenData1,
-        uint160 sqrtPriceX96
-    ) internal pure returns (uint256, uint256) {
-        // convert values to the highest precision (lowest price) of the two tokens (token0 if price token1/token0 < 1 and vice versa)
-        if (sqrtPriceX96 < Constants.FP96) {
-            return (
-                tokenData0.rightSlot() +
-                    PanopticMath.convert1to0(tokenData1.rightSlot(), sqrtPriceX96),
-                tokenData0.leftSlot() +
-                    PanopticMath.convert1to0RoundingUp(tokenData1.leftSlot(), sqrtPriceX96)
-            );
-        }
-
-        return (
-            PanopticMath.convert0to1(tokenData0.rightSlot(), sqrtPriceX96) + tokenData1.rightSlot(),
-            PanopticMath.convert0to1RoundingUp(tokenData0.leftSlot(), sqrtPriceX96) +
-                tokenData1.leftSlot()
-        );
-    }
-
-    /// @notice Compute the notional value (for `tokenType = 0` and `tokenType = 1`) represented by a given leg in an option position.
-    /// @param tokenId The option position identifier
-    /// @param positionSize The number of option contracts held in this position (each contract can control multiple tokens)
-    /// @param legIndex The leg index of the option contract, can be {0,1,2,3}
-    /// @param opening Whether this position is being opened or closed
-    /// @return A LeftRight encoded variable containing the amount0 and the amount1 value controlled by this option position's leg
-    function getAmountsMoved(
-        TokenId tokenId,
-        uint128 positionSize,
-        uint256 legIndex,
-        bool opening
-    ) internal pure returns (LeftRightUnsigned) {
-        uint128 amount0;
-        uint128 amount1;
-
-        bool hasWidth = tokenId.width(legIndex) != 0;
-        // if the width is zero, add 1 to the width to allow liquidity amounts to be computes
-        /// @dev this is just for accounting purposes, the actual tokenId will remain with a width = 0
-        if (!hasWidth) {
-            tokenId = tokenId.addWidth(2, legIndex);
-        }
-
-        LiquidityChunk liquidityChunk = getLiquidityChunk(tokenId, legIndex, positionSize);
-
-        // Shorts round UP to ensure user pays enough (conservative for protocol)
-        // Longs round DOWN to ensure user receives correct amount (conservative for protocol)
-        if (
-            (tokenId.isLong(legIndex) == 0 && opening) ||
-            (tokenId.isLong(legIndex) != 0 && !opening) ||
-            !hasWidth
-        ) {
-            amount0 = uint128(Math.getAmount0ForLiquidityUp(liquidityChunk));
-            amount1 = uint128(Math.getAmount1ForLiquidityUp(liquidityChunk));
-        } else {
-            amount0 = uint128(Math.getAmount0ForLiquidity(liquidityChunk));
-            amount1 = uint128(Math.getAmount1ForLiquidity(liquidityChunk));
-        }
-        return LeftRightUnsigned.wrap(amount0).addToLeftSlot(amount1);
-    }
-
-    /// @notice Compute the amount of funds that are moved to or removed from the Panoptic Pool when `tokenId` is created.
-    /// @param tokenId The option position identifier
-    /// @param positionSize The number of positions minted
-    /// @param legIndex The leg index minted in this position, can be {0,1,2,3}
-    /// @param opening Whether this position is being opened or closed
-    /// @return longs A LeftRight-packed word containing the total amount of long positions
-    /// @return shorts A LeftRight-packed word containing the amount of short positions
-    function calculateIOAmounts(
-        TokenId tokenId,
-        uint128 positionSize,
-        uint256 legIndex,
-        bool opening
-    ) internal pure returns (LeftRightSigned longs, LeftRightSigned shorts) {
-        LeftRightUnsigned amountsMoved = getAmountsMoved(tokenId, positionSize, legIndex, opening);
-
-        bool isShort = tokenId.isLong(legIndex) == 0;
-
-        if (tokenId.tokenType(legIndex) == 0) {
-            if (isShort) {
-                // if option is short, increment shorts by contracts
-                shorts = LeftRightSigned.wrap(0).addToRightSlot(
-                    Math.toInt128(amountsMoved.rightSlot())
-                );
-            } else {
-                // is option is long, increment longs by contracts
-                longs = LeftRightSigned.wrap(0).addToRightSlot(
-                    Math.toInt128(amountsMoved.rightSlot())
-                );
-            }
-        } else {
-            if (isShort) {
-                // if option is short, increment shorts by notional
-                shorts = LeftRightSigned.wrap(0).addToLeftSlot(
-                    Math.toInt128(amountsMoved.leftSlot())
-                );
-            } else {
-                // if option is long, increment longs by notional
-                longs = LeftRightSigned.wrap(0).addToLeftSlot(
-                    Math.toInt128(amountsMoved.leftSlot())
-                );
-            }
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-type RiskParameters is uint256;
-using RiskParametersLibrary for RiskParameters global;
-
-/// @title A Panoptic Risk Parameters. Tracks the data outputted from the RiskEngine, like the safeMode, commission fees, (etc).
-/// @author Axicon Labs Limited
-//
-//
-// PACKING RULES FOR A RISKPARAMETERS:
-// =================================================================================================
-//  From the LSB to the MSB:
-// (1) safeMode             4 bits  : The safeMode state
-// (2) notionalFee          14 bits : The fee to be charged on notional at mint
-// (3) premiumFee           14 bits : The fee to be charged on the premium at burn
-// (4) protocolSplit        14 bits : The part of the fee that goes to the protocol w/ buildercodes
-// (5) builderSplit         14 bits : The part of the fee that goes to the builder w/ buildercodes
-// (6) tickDeltaLiquidation 13 bits : The MAX_TWAP_DELTA_LIQUIDATION. Tick deviation = 1.0001**(2**13) = +/- 126%
-// (7) maxSpread            22 bits : The MAX_SPREAD, in bps. Max fraction removed = 2**22/(2**22 + 10_000) = 99.76%
-// (8) bpDecreaseBuffer     26 bits : The BP_DECREASE_BUFFER, in millitick
-// (9) maxLegs              7 bits  : The MAX_OPEN_LEGS (constrained to be <128)
-// (9) feeRecipient         128bits : The recipient of the commission fee split
-// Total                    256bits  : Total bits used by a RiskParameters.
-// ===============================================================================================
-//
-// The bit pattern is therefore:
-//
-//          (9)              (8)          (7)              (6)             (5)            (4)          (3)             (2)              (1)
-//    <-- 128 bits --><-- 7 bits --><-- 26 bits --><-- 22 bits --><-- 13 bits --><-- 14 bits --><-- 14 bits --> <-- 14 bits --> <-- 14 bits --> <-- 4 bits -->
-//        feeRecipient   maxLegs      bpDecrease      maxSpread      tickDelta    builderSplit   protocolSplit    premiumFee    notionalFee         safeMode
-//
-//    <--- most significant bit                                                                  least significant bit --->
-//
-library RiskParametersLibrary {
-    /*//////////////////////////////////////////////////////////////
-                                ENCODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Create a new `RiskParameters` object.
-    /// @param _safeMode The safe mode state (uint6)
-    /// @param _notionalFee The commission fee (uint14)
-    /// @param _premiumFee The commission fee (uint14)
-    /// @param _protocolSplit The part of the fee that goes to the protocol w/ buildercodes (uint14)
-    /// @param _builderSplit The part of the fee that goes to the builder w/ buildercodes (uint14)
-    /// @param _tickDeltaLiquidation The MAX_TWAP_DELTA_LIQUIDATION (uint16)
-    /// @param _maxSpread The MAX_SPREAD, in bps (uint24)
-    /// @param _bpDecreaseBuffer The BP_DECREASE_BUFFER, in millitick (uint26)
-    /// @param _maxLegs The maximum allowed number of legs across all open positions for a user
-    /// @param _feeRecipient The recipient of the commission fee split (uint128)
-    /// @return result The new RiskParameters object
-    function storeRiskParameters(
-        uint256 _safeMode,
-        uint256 _notionalFee,
-        uint256 _premiumFee,
-        uint256 _protocolSplit,
-        uint256 _builderSplit,
-        uint256 _tickDeltaLiquidation,
-        uint256 _maxSpread,
-        uint256 _bpDecreaseBuffer,
-        uint256 _maxLegs,
-        uint256 _feeRecipient
-    ) internal pure returns (RiskParameters result) {
-        assembly {
-            result := add(
-                add(
-                    add(
-                        add(_safeMode, shl(4, _notionalFee)),
-                        add(shl(18, _premiumFee), shl(32, _protocolSplit))
-                    ),
-                    add(shl(46, _builderSplit), shl(60, _tickDeltaLiquidation))
-                ),
-                add(
-                    add(shl(73, _maxSpread), add(shl(95, _bpDecreaseBuffer), shl(121, _maxLegs))),
-                    shl(128, _feeRecipient)
-                )
-            )
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                DECODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Get the safeMode state of `self`.
-    /// @param self The RiskParameters to retrieve the safeMode state from
-    /// @return result The safeMode of `self`
-    function safeMode(RiskParameters self) internal pure returns (uint8 result) {
-        assembly {
-            result := and(self, 0xF)
-        }
-    }
-
-    /// @notice Get the notionalFee of `self`.
-    /// @param self The RiskParameters to retrieve the notionalFee from
-    /// @return result The notionalFee of `self`
-    function notionalFee(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(4, self), 0x3FFF)
-        }
-    }
-
-    /// @notice Get the premiumFee of `self`.
-    /// @param self The RiskParameters to retrieve the premiumFee from
-    /// @return result The premiumFee of `self`
-    function premiumFee(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(18, self), 0x3FFF)
-        }
-    }
-
-    /// @notice Get the protocolSplit of `self`.
-    /// @param self The RiskParameters to retrieve the protocolSplit from
-    /// @return result The protocolSplit of `self`
-    function protocolSplit(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(32, self), 0x3FFF)
-        }
-    }
-
-    /// @notice Get the builderSplit of `self`.
-    /// @param self The RiskParameters to retrieve the builderSplit from
-    /// @return result The builderSplit of `self`
-    function builderSplit(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(46, self), 0x3FFF)
-        }
-    }
-
-    /// @notice Get the tickDeltaLiquidation of `self`.
-    /// @param self The RiskParameters to retrieve the tickDeltaLiquidation from
-    /// @return result The tickDeltaLiquidation of `self`
-    function tickDeltaLiquidation(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(60, self), 0x1FFF)
-        }
-    }
-
-    /// @notice Get the maxSpread of `self`.
-    /// @param self The RiskParameters to retrieve the maxSpread from
-    /// @return result The maxSpread of `self`
-    function maxSpread(RiskParameters self) internal pure returns (uint24 result) {
-        assembly {
-            result := and(shr(73, self), 0x3FFFFF)
-        }
-    }
-
-    /// @notice Get the bpDecreaseBuffer of `self`.
-    /// @param self The RiskParameters to retrieve the bpDecreaseBuffer from
-    /// @return result The bpDecreaseBuffer of `self`
-    function bpDecreaseBuffer(RiskParameters self) internal pure returns (uint32 result) {
-        assembly {
-            result := and(shr(95, self), 0x3FFFFFF)
-        }
-    }
-
-    /// @notice Get the maxLegs of `self`.
-    /// @param self The RiskParameters to retrieve the maxLegs from
-    /// @return result The maxLegs of `self`
-    function maxLegs(RiskParameters self) internal pure returns (uint8 result) {
-        assembly {
-            result := and(shr(121, self), 0x7F)
-        }
-    }
-
-    /// @notice Get the feeRecipient of `self`.
-    /// @param self The RiskParameters to retrieve the feeRecipient from
-    /// @return result The feeRecipient of `self`
-    function feeRecipient(RiskParameters self) internal pure returns (uint128 result) {
-        assembly {
-            result := shr(128, self)
-        }
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.24;
-
-// Interfaces
-import {CollateralTracker} from "@contracts/CollateralTracker.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {IERC20Partial} from "@tokens/interfaces/IERC20Partial.sol";
-import {ISemiFungiblePositionManager} from "@contracts/interfaces/ISemiFungiblePositionManager.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {PanopticPool} from "@contracts/PanopticPool.sol";
-// Libraries
-import {PanopticMath} from "@libraries/PanopticMath.sol";
-import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
-import {TokenId} from "@types/TokenId.sol";
-import {RiskParameters} from "@types/RiskParameters.sol";
-import {EfficientHash} from "@libraries/EfficientHash.sol";
-
-/// @title InteractionHelper - contains helper functions for external interactions such as approvals.
-/// @notice Used to delegate logic with multiple external calls.
-/// @dev Generally employed when there is a need to save or reuse bytecode size
-/// on a core contract.
-/// @author Axicon Labs Limited
-library InteractionHelper {
-    /// @notice Function that performs approvals on behalf of the PanopticPool for CollateralTracker and SemiFungiblePositionManager.
-    /// @param sfpm The SemiFungiblePositionManager being approved for both token0 and token1
-    /// @param ct0 The CollateralTracker (token0) being approved for token0
-    /// @param ct1 The CollateralTracker (token1) being approved for token1
-    /// @param token0 The token0 (in Uniswap) being approved for
-    /// @param token1 The token1 (in Uniswap) being approved for
-    /// @param poolManager The Uniswap V4 pool manager address (zero address if using V3)
-    function doApprovals(
-        ISemiFungiblePositionManager sfpm,
-        CollateralTracker ct0,
-        CollateralTracker ct1,
-        address token0,
-        address token1,
-        address poolManager
-    ) external {
-        if (poolManager == address(0)) {
-            // Approve transfers of Panoptic Pool funds by SFPM
-            IERC20Partial(token0).approve(address(sfpm), type(uint256).max);
-            IERC20Partial(token1).approve(address(sfpm), type(uint256).max);
-
-            // Approve transfers of Panoptic Pool funds by Collateral token
-            IERC20Partial(token0).approve(address(ct0), type(uint256).max);
-            IERC20Partial(token1).approve(address(ct1), type(uint256).max);
-        } else {
-            IPoolManager(poolManager).setOperator(address(sfpm), true);
-            IPoolManager(poolManager).setOperator(address(ct0), true);
-            IPoolManager(poolManager).setOperator(address(ct1), true);
-        }
-    }
-
-    /// @notice Computes the name of a CollateralTracker based on the token composition and fee of the underlying Uniswap Pool.
-    /// @dev Some tokens do not have proper symbols so error handling is required - this logic takes up significant bytecode size, which is why it is in a library.
-    /// @param token0 The token0 of the Uniswap Pool
-    /// @param token1 The token1 of the Uniswap Pool
-    /// @param isToken0 Whether the collateral token computing the name is for token0 or token1
-    /// @param fee The fee of the Uniswap pool in hundredths of basis points
-    /// @param prefix A constant string appended to the start of the token name
-    /// @return The complete name of the collateral token calling this function
-    function computeName(
-        address token0,
-        address token1,
-        bool isToken0,
-        uint24 fee,
-        string memory prefix
-    ) external view returns (string memory) {
-        string memory symbol0 = PanopticMath.safeERC20Symbol(token0);
-        string memory symbol1 = PanopticMath.safeERC20Symbol(token1);
-
-        unchecked {
-            return
-                string.concat(
-                    prefix,
-                    " ",
-                    isToken0 ? symbol0 : symbol1,
-                    " LP on ",
-                    symbol0,
-                    "/",
-                    symbol1,
-                    " ",
-                    PanopticMath.uniswapFeeToString(fee)
-                );
-        }
-    }
-
-    /// @notice Returns collateral token symbol as `prefix` + `underlying token symbol`.
-    /// @param token The address of the underlying token used to compute the symbol
-    /// @param prefix A constant string prepended to the symbol of the underlying token to create the final symbol
-    /// @return The symbol of the collateral token
-    function computeSymbol(
-        address token,
-        string memory prefix
-    ) external view returns (string memory) {
-        return string.concat(prefix, PanopticMath.safeERC20Symbol(token));
-    }
-
-    /// @notice Returns decimals of underlying token (0 if not present).
-    /// @param token The address of the underlying token used to compute the decimals
-    /// @return The decimals of the token
-    function computeDecimals(address token) external view returns (uint8) {
-        // not guaranteed that token supports metadata extension
-        // so we need to let call fail and return placeholder if not
-        try IERC20Metadata(token).decimals() returns (uint8 _decimals) {
-            return _decimals;
-        } catch {
-            return 0;
-        }
-    }
-
-    function settleAmounts(
-        address liquidatee,
-        TokenId[] memory positionIdList,
-        LeftRightUnsigned haircutTotal,
-        LeftRightSigned[4][] memory haircutPerLeg,
-        LeftRightSigned[4][] memory premiasByLeg,
-        CollateralTracker ct0,
-        CollateralTracker ct1,
-        mapping(bytes32 chunkKey => LeftRightUnsigned settledTokens) storage settledTokens
-    ) external {
-        unchecked {
-            for (uint256 i = 0; i < positionIdList.length; i++) {
-                TokenId tokenId = positionIdList[i];
-                for (uint256 leg = 0; leg < tokenId.countLegs(); ++leg) {
-                    if (
-                        tokenId.isLong(leg) == 1 &&
-                        LeftRightSigned.unwrap(premiasByLeg[i][leg]) != 0
-                    ) {
-                        bytes32 chunkKey = EfficientHash.efficientKeccak256(
-                            abi.encodePacked(
-                                tokenId.strike(leg),
-                                tokenId.width(leg),
-                                tokenId.tokenType(leg)
-                            )
-                        );
-
-                        emit PanopticPool.PremiumSettled(
-                            liquidatee,
-                            tokenId,
-                            leg,
-                            LeftRightSigned.wrap(0).sub(haircutPerLeg[i][leg])
-                        );
-
-                        // The long premium is not committed to storage during the liquidation, so we add the entire adjusted amount
-                        // for the haircut directly to the accumulator
-                        settledTokens[chunkKey] = settledTokens[chunkKey].add(
-                            (LeftRightSigned.wrap(0).sub(premiasByLeg[i][leg])).subRect(
-                                haircutPerLeg[i][leg]
-                            )
-                        );
-                    }
-                }
-            }
-
-            if (haircutTotal.rightSlot() != 0)
-                ct0.settleBurn(
-                    liquidatee,
-                    0,
-                    0,
-                    0,
-                    int128(haircutTotal.rightSlot()),
-                    RiskParameters.wrap(0)
-                );
-            if (haircutTotal.leftSlot() != 0)
-                ct1.settleBurn(
-                    liquidatee,
-                    0,
-                    0,
-                    0,
-                    int128(haircutTotal.leftSlot()),
-                    RiskParameters.wrap(0)
-                );
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v4.8.0) (utils/Strings.sol)
-
-pragma solidity ^0.8.0;
-
-import "./math/Math.sol";
-
-/**
- * @dev String operations.
- */
-library Strings {
-    bytes16 private constant _SYMBOLS = "0123456789abcdef";
-    uint8 private constant _ADDRESS_LENGTH = 20;
-
-    /**
-     * @dev Converts a `uint256` to its ASCII `string` decimal representation.
-     */
-    function toString(uint256 value) internal pure returns (string memory) {
-        unchecked {
-            uint256 length = Math.log10(value) + 1;
-            string memory buffer = new string(length);
-            uint256 ptr;
-            /// @solidity memory-safe-assembly
-            assembly {
-                ptr := add(buffer, add(32, length))
-            }
-            while (true) {
-                ptr--;
-                /// @solidity memory-safe-assembly
-                assembly {
-                    mstore8(ptr, byte(mod(value, 10), _SYMBOLS))
-                }
-                value /= 10;
-                if (value == 0) break;
-            }
-            return buffer;
-        }
-    }
-
-    /**
-     * @dev Converts a `uint256` to its ASCII `string` hexadecimal representation.
-     */
-    function toHexString(uint256 value) internal pure returns (string memory) {
-        unchecked {
-            return toHexString(value, Math.log256(value) + 1);
-        }
-    }
-
-    /**
-     * @dev Converts a `uint256` to its ASCII `string` hexadecimal representation with fixed length.
-     */
-    function toHexString(uint256 value, uint256 length) internal pure returns (string memory) {
-        bytes memory buffer = new bytes(2 * length + 2);
-        buffer[0] = "0";
-        buffer[1] = "x";
-        for (uint256 i = 2 * length + 1; i > 1; --i) {
-            buffer[i] = _SYMBOLS[value & 0xf];
-            value >>= 4;
-        }
-        require(value == 0, "Strings: hex length insufficient");
-        return string(buffer);
-    }
-
-    /**
-     * @dev Converts an `address` with fixed length of 20 bytes to its not checksummed ASCII `string` hexadecimal representation.
-     */
-    function toHexString(address addr) internal pure returns (string memory) {
-        return toHexString(uint256(uint160(addr)), _ADDRESS_LENGTH);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import {IERC20Minimal} from "../interfaces/external/IERC20Minimal.sol";
-import {CustomRevert} from "../libraries/CustomRevert.sol";
-
-type Currency is address;
-
-using {greaterThan as >, lessThan as <, greaterThanOrEqualTo as >=, equals as ==} for Currency global;
-using CurrencyLibrary for Currency global;
-
-function equals(Currency currency, Currency other) pure returns (bool) {
-    return Currency.unwrap(currency) == Currency.unwrap(other);
-}
-
-function greaterThan(Currency currency, Currency other) pure returns (bool) {
-    return Currency.unwrap(currency) > Currency.unwrap(other);
-}
-
-function lessThan(Currency currency, Currency other) pure returns (bool) {
-    return Currency.unwrap(currency) < Currency.unwrap(other);
-}
-
-function greaterThanOrEqualTo(Currency currency, Currency other) pure returns (bool) {
-    return Currency.unwrap(currency) >= Currency.unwrap(other);
-}
-
-/// @title CurrencyLibrary
-/// @dev This library allows for transferring and holding native tokens and ERC20 tokens
-library CurrencyLibrary {
-    /// @notice Additional context for ERC-7751 wrapped error when a native transfer fails
-    error NativeTransferFailed();
-
-    /// @notice Additional context for ERC-7751 wrapped error when an ERC20 transfer fails
-    error ERC20TransferFailed();
-
-    /// @notice A constant to represent the native currency
-    Currency public constant ADDRESS_ZERO = Currency.wrap(address(0));
-
-    function transfer(Currency currency, address to, uint256 amount) internal {
-        // altered from https://github.com/transmissions11/solmate/blob/44a9963d4c78111f77caa0e65d677b8b46d6f2e6/src/utils/SafeTransferLib.sol
-        // modified custom error selectors
-
-        bool success;
-        if (currency.isAddressZero()) {
-            assembly ("memory-safe") {
-                // Transfer the ETH and revert if it fails.
-                success := call(gas(), to, amount, 0, 0, 0, 0)
-            }
-            // revert with NativeTransferFailed, containing the bubbled up error as an argument
-            if (!success) {
-                CustomRevert.bubbleUpAndRevertWith(to, bytes4(0), NativeTransferFailed.selector);
-            }
-        } else {
-            assembly ("memory-safe") {
-                // Get a pointer to some free memory.
-                let fmp := mload(0x40)
-
-                // Write the abi-encoded calldata into memory, beginning with the function selector.
-                mstore(fmp, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
-                mstore(add(fmp, 4), and(to, 0xffffffffffffffffffffffffffffffffffffffff)) // Append and mask the "to" argument.
-                mstore(add(fmp, 36), amount) // Append the "amount" argument. Masking not required as it's a full 32 byte type.
-
-                success :=
-                    and(
-                        // Set success to whether the call reverted, if not we check it either
-                        // returned exactly 1 (can't just be non-zero data), or had no return data.
-                        or(and(eq(mload(0), 1), gt(returndatasize(), 31)), iszero(returndatasize())),
-                        // We use 68 because the length of our calldata totals up like so: 4 + 32 * 2.
-                        // We use 0 and 32 to copy up to 32 bytes of return data into the scratch space.
-                        // Counterintuitively, this call must be positioned second to the or() call in the
-                        // surrounding and() call or else returndatasize() will be zero during the computation.
-                        call(gas(), currency, 0, fmp, 68, 0, 32)
-                    )
-
-                // Now clean the memory we used
-                mstore(fmp, 0) // 4 byte `selector` and 28 bytes of `to` were stored here
-                mstore(add(fmp, 0x20), 0) // 4 bytes of `to` and 28 bytes of `amount` were stored here
-                mstore(add(fmp, 0x40), 0) // 4 bytes of `amount` were stored here
-            }
-            // revert with ERC20TransferFailed, containing the bubbled up error as an argument
-            if (!success) {
-                CustomRevert.bubbleUpAndRevertWith(
-                    Currency.unwrap(currency), IERC20Minimal.transfer.selector, ERC20TransferFailed.selector
-                );
-            }
-        }
-    }
-
-    function balanceOfSelf(Currency currency) internal view returns (uint256) {
-        if (currency.isAddressZero()) {
-            return address(this).balance;
-        } else {
-            return IERC20Minimal(Currency.unwrap(currency)).balanceOf(address(this));
-        }
-    }
-
-    function balanceOf(Currency currency, address owner) internal view returns (uint256) {
-        if (currency.isAddressZero()) {
-            return owner.balance;
-        } else {
-            return IERC20Minimal(Currency.unwrap(currency)).balanceOf(owner);
-        }
-    }
-
-    function isAddressZero(Currency currency) internal pure returns (bool) {
-        return Currency.unwrap(currency) == Currency.unwrap(ADDRESS_ZERO);
-    }
-
-    function toId(Currency currency) internal pure returns (uint256) {
-        return uint160(Currency.unwrap(currency));
-    }
-
-    // If the upper 12 bytes are non-zero, they will be zero-ed out
-    // Therefore, fromId() and toId() are not inverses of each other
-    function fromId(uint256 id) internal pure returns (Currency) {
-        return Currency.wrap(address(uint160(id)));
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-type MarketState is uint256;
-using MarketStateLibrary for MarketState global;
-
-/// @title A Panoptic Market State. Tracks the data of a given CollateralTracker market.
-/// @author Axicon Labs Limited
-//
-//
-// PACKING RULES FOR A MARKETSTATE:
-// =================================================================================================
-//  From the LSB to the MSB:
-// (0) borrowIndex          80 bits : Global borrow index in WAD (starts at 1e18). 2**80 = 1.75 years at 800% interest
-// (1) marketEpoch          32 bits : Last interaction epoch for that market (1 epoch = block.timestamp/4)
-// (2) rateAtTarget         38 bits : The rateAtTarget value in WAD (2**38 = 800% interest rate)
-// (3) unrealizedInterest   106bits : Accumulated unrealized interest that hasn't been distributed (max deposit is 2**104)
-// Total                    256bits  : Total bits used by a MarketState.
-// ===============================================================================================
-//
-// The bit pattern is therefore:
-//
-//          (3)                 (2)                 (1)                 (0)
-//    <---- 106 bits ----><---- 38 bits ----><---- 32 bits ----><---- 80 bits ---->
-//     unrealizedInterest    rateAtTarget        marketEpoch        borrowIndex
-//
-//    <--- most significant bit                              least significant bit --->
-//
-library MarketStateLibrary {
-    // =============================================================
-    // CONSTANTS (MASKS)
-    // =============================================================
-    // We define "Positive Masks" (1s where the data is, 0s elsewhere).
-    // We will use NOT(MASK) to clear data.
-
-    // Bits 0-79 (80 bits)
-    uint256 internal constant BORROW_INDEX_MASK = (1 << 80) - 1;
-
-    // Bits 80-111 (32 bits)
-    uint256 internal constant EPOCH_MASK = ((1 << 32) - 1) << 80;
-
-    // Bits 112-149 (38 bits)
-    uint256 internal constant TARGET_RATE_MASK = ((1 << 38) - 1) << 112;
-
-    // Bits 150-255 (106 bits)
-    uint256 internal constant UNREALIZED_INTEREST_MASK =
-        0xFFFFFFFFFFFFFFFFFFFFFFFFFFC0000000000000000000000000000000000000;
-
-    /*//////////////////////////////////////////////////////////////
-                                ENCODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Create a new `MarketState` object.
-    /// @param _borrowIndex The global index (uint80)
-    /// @param _marketEpoch The market's epoch (uint32)
-    /// @param _rateAtTarget The rateAtTarget (uint38)
-    /// @param _unrealizedInterest The unrealized interest (uint106)
-    /// @return result The new MarketState object
-    function storeMarketState(
-        uint256 _borrowIndex,
-        uint256 _marketEpoch,
-        uint256 _rateAtTarget,
-        uint256 _unrealizedInterest
-    ) internal pure returns (MarketState result) {
-        assembly {
-            result := add(
-                add(add(_borrowIndex, shl(80, _marketEpoch)), shl(112, _rateAtTarget)),
-                shl(150, _unrealizedInterest)
-            )
-        }
-    }
-
-    /// @notice Update the Global Borrow Index (Lowest 80 bits)
-    /// @param self The MarketState to update
-    /// @param newIndex The new borrow index value
-    /// @return result The updated MarketState with the new borrow index
-    function updateBorrowIndex(
-        MarketState self,
-        uint80 newIndex
-    ) internal pure returns (MarketState result) {
-        assembly {
-            // 1. Clear the lowest 80 bits using not(BORROW_INDEX_MASK)
-            let cleared := and(self, not(BORROW_INDEX_MASK))
-            // 2. OR with the new value (no shift needed, it's at 0)
-            result := or(cleared, newIndex)
-        }
-    }
-
-    /// @notice Update the Market Epoch (Bits 80-111)
-    /// @param self The MarketState to update
-    /// @param newEpoch The new market epoch value
-    /// @return result The updated MarketState with the new market epoch
-    function updateMarketEpoch(
-        MarketState self,
-        uint32 newEpoch
-    ) internal pure returns (MarketState result) {
-        assembly {
-            // 1. Clear bits 80-111
-            let cleared := and(self, not(EPOCH_MASK))
-            // 2. Shift new value to 80 and combine
-            result := or(cleared, shl(80, newEpoch))
-        }
-    }
-
-    /// @notice Update the Rate At Target (Bits 112-149)
-    /// @param self The MarketState to update
-    /// @param newRate The new rate at target value
-    /// @return result The updated MarketState with the new rate at target
-    function updateRateAtTarget(
-        MarketState self,
-        uint40 newRate
-    ) internal pure returns (MarketState result) {
-        assembly {
-            // 1. Clear bits 112-149
-            let cleared := and(self, not(TARGET_RATE_MASK))
-
-            // 2. Safety: Mask the input to ensure it fits in 38 bits (0x3FFFFFFFFF)
-            //    This prevents 'newRate' from corrupting the neighbor if it > 38 bits.
-            let safeRate := and(newRate, 0x3FFFFFFFFF)
-
-            // 3. Shift to 112 and combine
-            result := or(cleared, shl(112, safeRate))
-        }
-    }
-
-    /// @notice Update the Unrealized Interest (Bits 150-255)
-    /// @param self The MarketState to update
-    /// @param newInterest The new unrealized interest value
-    /// @return result The updated MarketState with the new unrealized interest
-    function updateUnrealizedInterest(
-        MarketState self,
-        uint128 newInterest
-    ) internal pure returns (MarketState result) {
-        assembly {
-            // 1. Clear bits 150-255
-            let cleared := and(self, not(UNREALIZED_INTEREST_MASK))
-
-            // 2. Safety: Mask input to 106 bits
-            //    (1 << 106) - 1
-            let max106 := sub(shl(106, 1), 1)
-            let safeInterest := and(newInterest, max106)
-
-            // 3. Shift to 150 and combine
-            result := or(cleared, shl(150, safeInterest))
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                DECODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Get the borrowIndex of `self`.
-    /// @param self The MarketState to retrieve the borrowIndex state from
-    /// @return result The borrowIndex of `self`
-    function borrowIndex(MarketState self) internal pure returns (uint80 result) {
-        assembly {
-            result := and(self, 0xFFFFFFFFFFFFFFFFFFFF)
-        }
-    }
-
-    /// @notice Get the marketEpoch of `self`.
-    /// @param self The MarketState to retrieve the marketEpoch from
-    /// @return result The marketEpoch of `self`
-    function marketEpoch(MarketState self) internal pure returns (uint32 result) {
-        assembly {
-            result := and(shr(80, self), 0xFFFFFFFF)
-        }
-    }
-
-    /// @notice Get the rateAtTarget of `self`.
-    /// @param self The MarketState to retrieve the rateAtTarget from
-    /// @return result The rateAtTarget of `self`
-    function rateAtTarget(MarketState self) internal pure returns (uint40 result) {
-        assembly {
-            result := and(shr(112, self), 0x3FFFFFFFFF)
-        }
-    }
-
-    /// @notice Get the unrealizedInterest of `self`.
-    /// @param self The MarketState to retrieve the unrealizedInterest from
-    /// @return result The unrealizedInterest of `self`
-    function unrealizedInterest(MarketState self) internal pure returns (uint128 result) {
-        assembly {
-            result := shr(150, self)
-        }
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.24;
-// Interfaces
-import {CollateralTracker} from "@contracts/CollateralTracker.sol";
-import {ISemiFungiblePositionManager} from "@contracts/interfaces/ISemiFungiblePositionManager.sol";
-import {IRiskEngine} from "@contracts/interfaces/IRiskEngine.sol";
-// Inherited implementations
-import {Clone} from "clones-with-immutable-args/Clone.sol";
-import {Multicall} from "@base/Multicall.sol";
-// Libraries
-import {Constants} from "@libraries/Constants.sol";
-import {EfficientHash} from "@libraries/EfficientHash.sol";
-import {Errors} from "@libraries/Errors.sol";
-import {InteractionHelper} from "@libraries/InteractionHelper.sol";
-import {Math} from "@libraries/Math.sol";
-import {PanopticMath} from "@libraries/PanopticMath.sol";
-// Custom types
-import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
-import {LiquidityChunk} from "@types/LiquidityChunk.sol";
-import {PositionBalance, PositionBalanceLibrary} from "@types/PositionBalance.sol";
-import {RiskParameters} from "@types/RiskParameters.sol";
-import {TokenId} from "@types/TokenId.sol";
-import {OraclePack, OraclePackLibrary} from "@types/OraclePack.sol";
-
-/// @title The Panoptic Pool: Create permissionless options on a CLAMM.
-/// @author Axicon Labs Limited
-/// @notice Manages positions, collateral, liquidations and forced exercises.
-contract PanopticPool is Clone, Multicall {
-    /*//////////////////////////////////////////////////////////////
-                                EVENTS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Emitted when an account is liquidated.
-    /// @param liquidator Address of the caller liquidating the distressed account
-    /// @param liquidatee Address of the distressed/liquidatable account
-    /// @param bonusAmounts LeftRight encoding for the the bonus paid for token 0 (right slot) and 1 (left slot) to the liquidator
-    event AccountLiquidated(
-        address indexed liquidator,
-        address indexed liquidatee,
-        LeftRightSigned bonusAmounts
-    );
-
-    /// @notice Emitted when a position is force exercised.
-    /// @param exercisor Address of the account that forces the exercise of the position
-    /// @param user Address of the owner of the liquidated position
-    /// @param tokenId TokenId of the liquidated position
-    /// @param exerciseFee LeftRight encoding for the cost paid by the exercisor to force the exercise of the token;
-    /// the cost for token 0 (right slot) and 1 (left slot) is represented as negative
-    event ForcedExercised(
-        address indexed exercisor,
-        address indexed user,
-        TokenId indexed tokenId,
-        LeftRightSigned exerciseFee
-    );
-
-    /// @notice Emitted when premium is settled independent of a mint/burn (e.g. during `settlePremium`).
-    /// @param user Address of the owner of the settled position
-    /// @param tokenId TokenId of the settled position
-    /// @param legIndex The leg index of `tokenId` that the premium was settled for
-    /// @param settledAmounts LeftRight encoding for the amount of premium settled for token0 (right slot) and token1 (left slot)
-    event PremiumSettled(
-        address indexed user,
-        TokenId indexed tokenId,
-        uint256 legIndex,
-        LeftRightSigned settledAmounts
-    );
-
-    /// @notice Emitted when an option is burned.
-    /// @param recipient User that burnt the option
-    /// @param positionSize The number of contracts burnt, expressed in terms of the asset
-    /// @param tokenId TokenId of the burnt option
-    /// @param premiaByLeg LeftRight packing for the amount of premia settled for token0 (right) and token1 (left) for each leg of `tokenId`
-    event OptionBurnt(
-        address indexed recipient,
-        uint128 positionSize,
-        TokenId indexed tokenId,
-        LeftRightSigned[4] premiaByLeg
-    );
-
-    /// @notice Emitted when an option is minted.
-    /// @param recipient User that minted the option
-    /// @param tokenId TokenId of the created option
-    /// @param balanceData The `PositionBalance` data for `tokenId` containing the number of contracts, pool utilizations, and ticks at mint
-    event OptionMinted(
-        address indexed recipient,
-        TokenId indexed tokenId,
-        PositionBalance balanceData
-    );
-
-    /*//////////////////////////////////////////////////////////////
-                         IMMUTABLES & CONSTANTS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Lower price bound used when no slippage check is required.
-    int24 internal constant MIN_SWAP_TICK = Constants.MIN_POOL_TICK - 1;
-
-    /// @notice Upper price bound used when no slippage check is required.
-    int24 internal constant MAX_SWAP_TICK = Constants.MAX_POOL_TICK + 1;
-
-    /// @notice Flag that signals to compute premia for both the short and long legs of a position.
-    bool internal constant COMPUTE_PREMIA_AS_COLLATERAL = true;
-
-    /// @notice Flag that indicates only to include the share of (settled) premium that is available to collect when calling `_calculateAccumulatedPremia`.
-    bool internal constant ONLY_AVAILABLE_PREMIUM = false;
-
-    /// @notice Flag that signals to commit both collected Uniswap fees and settled long premium to `s_settledTokens`.
-    bool internal constant COMMIT_LONG_SETTLED = true;
-    /// @notice Flag that signals to only commit collected Uniswap fees to `s_settledTokens`.
-    bool internal constant DONOT_COMMIT_LONG_SETTLED = false;
-
-    /// @notice Flag for `_checkSolvency` to indicate that an account should be solvent at all input ticks.
-    bool internal constant ASSERT_SOLVENCY = true;
-
-    /// @notice Flag for `_checkSolvency` to indicate that an account should be insolvent at all input ticks.
-    bool internal constant ASSERT_INSOLVENCY = false;
-
-    /// @notice Flag that signals to add a new position to the user's positions hash (as opposed to removing an existing position).
-    bool internal constant ADD = true;
-
-    /// @notice The maximum allowed number of legs across all open positions for a user.
-    uint64 internal constant MAX_OPEN_LEGS = 25;
-
-    /// @notice Multiplier for the collateral requirement in the general case.
-    uint24 internal constant NO_BUFFER = 10_000_000;
-
-    /// @notice Decimals for computation (1 bps (1 basis point) precision: 0.01%).
-    /// @dev uint type for composability with unsigned integer based mathematical operations.
-    uint256 internal constant DECIMALS = 10_000;
-
-    /// @notice Transient storage slot for the tick price
-    bytes32 internal constant PRICE_TRANSIENT_SLOT = keccak256("panoptic.price.snapshot");
-
-    /// @notice The "engine" of Panoptic - manages AMM liquidity and executes all mints/burns/exercises.
-    ISemiFungiblePositionManager internal immutable SFPM;
-
-    /*//////////////////////////////////////////////////////////////
-                                STORAGE
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Stores a sorted set of 8 price observations used to compute the internal median oracle price.
-    // The data for the last 8 interactions is stored as such:
-    //
-    //    timestamp      orderMap      spotEMA      fastEMA       slowEMA      eonsEMA      reference         r7           r6                      r0
-    // |<- 24 bits ->|<- 24 bits ->|<- 22 bits ->|>- 22 bits ->|<- 22 bits >|<- 22 bits ->|<- 24 bits ->|<- 12bits ->|<- 12 bits ->|<- ... ->|<- 12 bits ->|
-    //
-    // LAST UPDATED BLOCK TIMESTAMP (22 bits) -> 22 bits (use 28 bits for the timestamp and truncate the lower 6 bits to create a 64s epoch-based timekeeping)
-    // [BLOCK.TIMESTAMP]
-    // (0000000000000000000000) // dynamic
-    //
-    // ORDERING of tick indices least --> greatest (24 bits)
-    // The value of the bit codon ([#]) is a pointer to a tick index in the tick array.
-    // The position of the bit codon from most to least significant is the ordering of the
-    // tick index it points to from least to greatest.
-    //
-    // rank:  0   1   2   3   4   5   6   7
-    // slot: [7] [5] [3] [1] [0] [2] [4] [6]
-    //       111 101 011 001 000 010 100 110
-    //
-    // [-512] [7]
-    // 111000000000
-    //
-    // [512] [0]
-    // 001000000000
-    //
-    // [-512] [6]
-    // 111000000000
-    //
-    // [512] [1]
-    // 001000000000
-    //
-    // [-512] [5]
-    // 111000000000
-    //
-    // [512] [2]
-    // 001000000000
-    //
-    // [0 = CURRENT TICK] [4]
-    // (000000000000) // dynamic
-    //
-    // [0 = CURRENT TICK] [3]
-    // (000000000000) // dynamic
-    OraclePack internal s_oraclePack;
-
-    // ERC4626 vaults that users collateralize their positions with
-    // Each token has its own vault, listed in the same order as the tokens in the pool
-    // In addition to collateral deposits, these vaults also handle various collateral/bonus/exercise computations
-
-    /// @notice Nested mapping that tracks the option formation: address => tokenId => leg => premiaGrowth.
-    /// @dev Premia growth is taking a snapshot of the chunk premium in SFPM, which is measuring the amount of fees
-    /// collected for every chunk per unit of liquidity (net or short, depending on the isLong value of the specific leg index).
-    mapping(address => mapping(TokenId => LeftRightUnsigned[4])) internal s_options;
-
-    /// @notice Per-chunk `last` value that gives the aggregate amount of premium owed to all sellers when multiplied by the total amount of liquidity `totalLiquidity`.
-    /// @dev `totalGrossPremium = totalLiquidity * (grossPremium(perLiquidityX64) - lastGrossPremium(perLiquidityX64)) / 2**64`
-    /// @dev Used to compute the denominator for the fraction of premium available to sellers to collect.
-    /// @dev LeftRight - right slot is token0, left slot is token1.
-    mapping(bytes32 chunkKey => LeftRightUnsigned lastGrossPremium) internal s_grossPremiumLast;
-
-    /// @notice Per-chunk accumulator for tokens owed to sellers that have been settled and are now available.
-    /// @dev This number increases when buyers pay long premium and when tokens are collected from Uniswap.
-    /// @dev It decreases when sellers close positions and collect the premium they are owed.
-    /// @dev LeftRight - right slot is token0, left slot is token1.
-    mapping(bytes32 chunkKey => LeftRightUnsigned settledTokens) internal s_settledTokens;
-
-    /// @notice Tracks the position size of a tokenId for a given user, and the pool utilizations and oracle tick values at the time of last mint.
-    //    <-- 24 bits --> <-- 24 bits --> <-- 24 bits --> <-- 24 bits --> <-- 16 bits --> <-- 16 bits --> <-- 128 bits -->
-    //   latestTick         medianTick       spotTick       currentTick     utilization1    utilization0    positionSize
-    mapping(address account => mapping(TokenId tokenId => PositionBalance positionBalance))
-        internal s_positionBalance;
-
-    /// @notice Tracks the position list hash (i.e `keccak256(XORs of abi.encodePacked(positionIdList))`).
-    /// @dev A component of this hash also tracks the total number of legs across all positions (i.e. makes sure the length of the provided positionIdList matches).
-    /// @dev The purpose of this system is to reduce storage usage when a user has more than one active position.
-    /// @dev Instead of having to manage an unwieldy storage array and do lots of loads, we just store a hash of the array.
-    /// @dev This hash can be cheaply verified on every operation with a user provided positionIdList - which can then be used for operations
-    /// without having to every load any other data from storage.
-    //      numLegs                   user positions hash
-    //  |<-- 8 bits -->|<------------------ 248 bits ------------------->|
-    //  |<---------------------- 256 bits ------------------------------>|
-    mapping(address account => uint256 positionsHash) internal s_positionsHash;
-
-    /*//////////////////////////////////////////////////////////////
-                   POOL-SPECIFIC IMMUTABLE PARAMETERS
-    //////////////////////////////////////////////////////////////*/
-
-    // The parameters will be encoded in calldata at `_getImmutableArgsOffset()` as follows:
-    // abi.encodePacked(address collateralToken0, address collateralToken1, address oracleContract, uint256 poolId, abi.encode(PoolKey poolKey))
-    // bytes: 0                    20                   40                   60                   92
-    //        |<---- 160 bits ---->|<---- 160 bits ---->|<---- 160 bits ---->|<---- 160 bits ---->|<---- 64 bits ---->|<---- 1280 bits ---->|
-    //           collateralToken0     collateralToken1       riskEngine             poolManager          poolId             poolKey
-
-    /// @notice Get the collateral token corresponding to token0 of the Uniswap pool.
-    /// @return Collateral token corresponding to token0 in Uniswap
-    function collateralToken0() public pure returns (CollateralTracker) {
-        return CollateralTracker(_getArgAddress(0));
-    }
-
-    /// @notice Get the collateral token corresponding to token1 of the Uniswap pool.
-    /// @return Collateral token corresponding to token1 in Uniswap
-    function collateralToken1() public pure returns (CollateralTracker) {
-        return CollateralTracker(_getArgAddress(20));
-    }
-
-    /// @notice Get the address of the risk engine contract used by this Panoptic Pool.
-    /// @return The risk engine contract used by this Panoptic Pool
-    function riskEngine() public pure returns (IRiskEngine) {
-        return IRiskEngine(_getArgAddress(40));
-    }
-
-    /// @notice Retrieve the PoolManager associated with that CollateralTracker.
-    /// @dev stored as zero if not a Uniswap v4 pool
-    /// @return The PoolManager instance associated with that CollateralTracker's uniswap V4 pool
-    function poolManager() public pure returns (address) {
-        return address(_getArgAddress(60));
-    }
-
-    /// @notice Get the Uniswap Pool ID for the Uniswap pool used by this Panoptic.
-    /// @return The Pool ID for this Panoptic Pool
-    function poolId() public pure returns (uint64) {
-        return uint64(_getArgUint64(80));
-    }
-
-    /// @notice Get the pool key for the Uniswap pool used by this Panoptic Pool.
-    /// @dev For Uniswap v3, this is the address of the UniswapV3Pool
-    /// @dev For Uniswap v4, this is Pool Key
-    /// @dev For any other AMMs, this is assumed to be an address
-    /// @return key The Pool Key for this Panoptic Pool.
-    function poolKey() public pure returns (bytes calldata key) {
-        uint256 offset = _getImmutableArgsOffset();
-        uint256 start = offset + 88;
-        uint256 len;
-        assembly {
-            len := sub(sub(calldatasize(), start), 2)
-            key.offset := start
-            key.length := len
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            ACCESS CONTROL
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Reverts if the associated Risk Engine is not the caller.
-    modifier onlyRiskEngine() {
-        _onlyRiskEngine();
-        _;
-    }
-
-    function _onlyRiskEngine() internal view {
-        if (msg.sender != address(riskEngine())) revert Errors.NotGuardian();
-    }
-
-    /// @notice Force safe mode lock: effective safe mode must be treated as level 3.
-    function lockSafeMode() external onlyRiskEngine {
-        s_oraclePack = s_oraclePack.lock();
-    }
-
-    /// @notice Remove forced safe mode lock.
-    function unlockSafeMode() external onlyRiskEngine {
-        s_oraclePack = s_oraclePack.unlock();
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                             INITIALIZATION
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Store the address of the canonical SemiFungiblePositionManager (SFPM) contract.
-    /// @param _sfpm The address of the SFPM
-    constructor(ISemiFungiblePositionManager _sfpm) {
-        SFPM = _sfpm;
-    }
-
-    /// @notice Initializes the median oracle of a new `PanopticPool` instance with median oracle state and performs initial token approvals.
-    /// @dev Must be called first (by the factory contract) before any transaction can occur.
-    function initialize() external {
-        // reverts if this contract has already been initialized (assuming block.timestamp > 0)
-        if (OraclePack.unwrap(s_oraclePack) != 0) revert Errors.PoolAlreadyInitialized();
-
-        int24 currentTick = getCurrentTick();
-
-        // Store the median data
-        uint96 EMAs = OraclePackLibrary.packEMAs(
-            currentTick,
-            currentTick,
-            currentTick,
-            currentTick
-        );
-        s_oraclePack = OraclePackLibrary.storeOraclePack(
-            block.timestamp >> 6,
-            0xf590a6, // orderMap
-            EMAs,
-            currentTick,
-            0xe00200e00200e00200e00000, // current residuals
-            0,
-            0
-        );
-        /*
-            (uint256((block.timestamp >> 6) % 2 ** 24) << 232) +
-            // magic number which adds (7,5,3,1,0,2,4,6) order and minTick in positions 7, 5, 3 and maxTick in 6, 4, 2
-            // see comment on s_oraclePack initialization for format of this magic number
-            (uint256(0xf590a60000000000000000000000000000800e00200e00200e00000000)) +
-            // eonsEMA at bits 207-186
-            (uint256(uint24(currentTick) & 0x3FFFFF) << 186) +
-            // slowEMA at bits 185-164
-            (uint256(uint24(currentTick) & 0x3FFFFF) << 164) +
-            // fastEMA at bits 163-142
-            (uint256(uint24(currentTick) & 0x3FFFFF) << 142) +
-            // spotEMA at bits 141-120
-            (uint256(uint24(currentTick) & 0x3FFFFF) << 120) +
-            // store currentTick as the reference tick at bits 119-96
-            (uint256(uint24(currentTick)) << 96);
-           */
-
-        // consolidate all 4 approval calls to one library delegatecall in order to reduce bytecode size
-        // approves:
-        // SFPM: token0, token1
-        // CollateralTracker0 - token0
-        // CollateralTracker1 - token1
-        InteractionHelper.doApprovals(
-            SFPM,
-            collateralToken0(),
-            collateralToken1(),
-            collateralToken0().token0(),
-            collateralToken0().token1(),
-            poolManager()
-        );
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                              EIP SUPPORT
-    //////////////////////////////////////////////////////////////*/
-
-    // note: this contract does not need to accept batch ERC1155 transfers from the SFPM or supply ERC-165 calls
-    // thus, `supportsInterface` and `onERC1155BatchReceived` are left unimplemented to reduce contract size
-
-    /// @notice Returns magic value when called by the `SemiFungiblePositionManager` contract to indicate that this contract supports ERC1155.
-    function onERC1155Received(
-        address,
-        address,
-        uint256,
-        uint256,
-        bytes memory
-    ) external pure returns (bytes4) {
-        return this.onERC1155Received.selector;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                             QUERY HELPERS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Reverts if the caller has a lower collateral balance than required to meet the provided `minValue0` and `minValue1`.
-    /// @dev Can be used for composable slippage checks with `multicall` (such as for a force exercise or liquidation).
-    /// @param minValue0 The minimum acceptable `token0` value of collateral
-    /// @param minValue1 The minimum acceptable `token1` value of collateral
-    function assertMinCollateralValues(uint256 minValue0, uint256 minValue1) external view {
-        CollateralTracker ct0 = collateralToken0();
-        CollateralTracker ct1 = collateralToken1();
-        if (ct0.assetsOf(msg.sender) < minValue0 || ct1.assetsOf(msg.sender) < minValue1)
-            revert Errors.AccountInsolvent(0, 0);
-    }
-
-    /// @notice Determines if account is eligible to withdraw or transfer collateral.
-    /// @dev Checks whether account is solvent with `BP_DECREASE_BUFFER` according to `_validateSolvency`.
-    /// @dev Prevents insolvent and near-insolvent accounts from withdrawing collateral before they are liquidated.
-    /// @dev Reverts if account is not solvent with `BP_DECREASE_BUFFER`.
-    /// @param user The account to check for collateral withdrawal eligibility
-    /// @param positionIdList The list of all option positions held by `user`
-    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
-    function validateCollateralWithdrawable(
-        address user,
-        TokenId[] calldata positionIdList,
-        bool usePremiaAsCollateral
-    ) external view {
-        (RiskParameters riskParameters, ) = getRiskParameters(0);
-        _validateSolvency(
-            user,
-            positionIdList,
-            riskParameters.bpDecreaseBuffer(),
-            usePremiaAsCollateral,
-            0
-        );
-    }
-
-    /// @notice Returns the total amount of premium accumulated for a list of positions and a list containing the corresponding `PositionBalance` information for each position.
-    /// @param user Address of the user that owns the positions
-    /// @param positionIdList List of positions. Written as `[tokenId1, tokenId2, ...]`
-    /// @param includePendingPremium If true, include premium that is owed to the user but has not yet settled; if false, only include premium that is available to collect
-    /// @return The total amount of premium owed (which may `includePendingPremium`) to the short legs in `positionIdList` (token0: right slot, token1: left slot)
-    /// @return The total amount of premium owed by the long legs in `positionIdList` (token0: right slot, token1: left slot)
-    /// @return A list of `PositionBalance` data (balance and pool utilization/oracle ticks at last mint) for each position, of the form `[PositionBalance_0, PositionBalance_1, ...]`
-    function getAccumulatedFeesAndPositionsData(
-        address user,
-        bool includePendingPremium,
-        TokenId[] calldata positionIdList
-    ) external view returns (LeftRightUnsigned, LeftRightUnsigned, PositionBalance[] memory) {
-        // Get the current tick of the Uniswap pool
-        int24 currentTick = getCurrentTick();
-        // Compute the accumulated premia for all tokenId in positionIdList (includes short+long premium)
-        return
-            _calculateAccumulatedPremia(
-                user,
-                positionIdList,
-                COMPUTE_PREMIA_AS_COLLATERAL,
-                includePendingPremium,
-                currentTick
-            );
-    }
-
-    /// @notice Calculate the accumulated premia owed from the option buyer to the option seller.
-    /// @param user The holder of options
-    /// @param positionIdList The list of all option positions held by user
-    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
-    /// @param includePendingPremium If true, include premium that is owed to the user but has not yet settled; if false, only include premium that is available to collect
-    /// @param atTick The current tick of the Uniswap pool
-    /// @return shortPremium The total amount of premium owed (which may `includePendingPremium`) to the short legs in `positionIdList` (token0: right slot, token1: left slot)
-    /// @return longPremium The total amount of premium owed by the long legs in `positionIdList` (token0: right slot, token1: left slot)
-    /// @return balances A list of balances and pool utilization for each position, of the form `[[tokenId0, balances0], [tokenId1, balances1], ...]`
-    function _calculateAccumulatedPremia(
-        address user,
-        TokenId[] calldata positionIdList,
-        bool usePremiaAsCollateral,
-        bool includePendingPremium,
-        int24 atTick
-    )
-        internal
-        view
-        returns (
-            LeftRightUnsigned shortPremium,
-            LeftRightUnsigned longPremium,
-            PositionBalance[] memory balances
-        )
-    {
-        uint256 pLength = positionIdList.length;
-        balances = new PositionBalance[](pLength);
-
-        address c_user = user;
-        // loop through each option position/tokenId
-        for (uint256 k = 0; k < pLength; ) {
-            TokenId tokenId = positionIdList[k];
-
-            {
-                PositionBalance positionBalanceData = s_positionBalance[c_user][tokenId];
-                if (positionBalanceData.positionSize() == 0) revert Errors.PositionNotOwned();
-
-                balances[k] = positionBalanceData;
-            }
-            (
-                LeftRightSigned[4] memory premiaByLeg,
-                uint256[2][4] memory premiumAccumulatorsByLeg
-            ) = _getPremia(
-                    tokenId,
-                    balances[k].positionSize(),
-                    c_user,
-                    usePremiaAsCollateral,
-                    atTick
-                );
-
-            uint256 numLegs = tokenId.countLegs();
-            for (uint256 leg = 0; leg < numLegs; ) {
-                if (tokenId.width(leg) != 0) {
-                    if (tokenId.isLong(leg) == 0) {
-                        if (!includePendingPremium) {
-                            bytes32 chunkKey = PanopticMath.getChunkKey(tokenId, leg);
-
-                            (uint256 totalLiquidity, , ) = _getLiquidities(tokenId, leg);
-                            shortPremium = shortPremium.add(
-                                _getAvailablePremium(
-                                    totalLiquidity,
-                                    s_settledTokens[chunkKey],
-                                    s_grossPremiumLast[chunkKey],
-                                    LeftRightUnsigned.wrap(
-                                        uint256(LeftRightSigned.unwrap(premiaByLeg[leg]))
-                                    ),
-                                    premiumAccumulatorsByLeg[leg]
-                                )
-                            );
-                        } else {
-                            shortPremium = shortPremium.add(
-                                LeftRightUnsigned.wrap(
-                                    uint256(LeftRightSigned.unwrap(premiaByLeg[leg]))
-                                )
-                            );
-                        }
-                    } else {
-                        longPremium = LeftRightUnsigned.wrap(
-                            uint256(
-                                LeftRightSigned.unwrap(
-                                    LeftRightSigned
-                                        .wrap(int256(LeftRightUnsigned.unwrap(longPremium)))
-                                        .sub(premiaByLeg[leg])
-                                )
-                            )
-                        );
-                    }
-                }
-                unchecked {
-                    ++leg;
-                }
-            }
-
-            unchecked {
-                ++k;
-            }
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                          ONBOARD MEDIAN TWAP
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Updates the internal oracle.
-    function pokeOracle() external {
-        int24 currentTick = getCurrentTick();
-
-        (, OraclePack oraclePack) = riskEngine().computeInternalMedian(s_oraclePack, currentTick);
-
-        if (OraclePack.unwrap(oraclePack) != 0) s_oraclePack = oraclePack;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                          MINT/BURN INTERFACE
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Mints or burns each `tokenId` in `positionIdList.
-    /// @param positionIdList The list of tokenIds for the option positions to be minted or burnt
-    /// @param finalPositionIdList The final positionIdList after all the tokens have been minted/burnt
-    /// @param positionSizes The list of positionSize for the position to be minted (0 for burns)
-    /// @param tickAndSpreadLimits A Nx3 array containing: the lower [0] and upper [1] bounds of an acceptable open interval for the ending price, and the maximum amount of "spread" defined as `removedLiquidity/netLiquidity` for a new position and
-    /// denominated as X10_000 = (`ratioLimit * 10_000`)
-    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
-    /// @param builderCode The builder code for fee distribution
-    function dispatch(
-        TokenId[] calldata positionIdList,
-        TokenId[] calldata finalPositionIdList,
-        uint128[] calldata positionSizes,
-        int24[3][] calldata tickAndSpreadLimits,
-        bool usePremiaAsCollateral,
-        uint256 builderCode
-    ) external {
-        // if safeMode, enforce covered at mint and exercise at burn
-        RiskParameters riskParameters;
-
-        LeftRightSigned cumulativeTickDeltas;
-        {
-            //assembly tload
-            bytes32 slot = PRICE_TRANSIENT_SLOT;
-            assembly {
-                cumulativeTickDeltas := tload(slot)
-            }
-        }
-        {
-            int24 startTick;
-            (riskParameters, startTick) = getRiskParameters(builderCode);
-
-            if (cumulativeTickDeltas.rightSlot() == 0) {
-                // initializes +1 sentinel
-                cumulativeTickDeltas = LeftRightSigned.wrap(0).addToRightSlot(1).addToLeftSlot(
-                    startTick
-                );
-            } else {
-                cumulativeTickDeltas = LeftRightSigned
-                    .wrap(0)
-                    .addToRightSlot(
-                        cumulativeTickDeltas.rightSlot() +
-                            int128(Math.abs(int24(cumulativeTickDeltas.leftSlot()) - startTick))
-                    )
-                    .addToLeftSlot(startTick);
-            }
-        }
-        for (uint256 i = 0; i < positionIdList.length; ) {
-            TokenId tokenId = positionIdList[i];
-
-            // make sure the tokenId is for this Panoptic pool
-            if (tokenId.poolId() != poolId()) revert Errors.WrongPoolId();
-
-            PositionBalance positionBalanceData = s_positionBalance[msg.sender][tokenId];
-
-            int24[2] memory _tickLimits;
-            _tickLimits[0] = tickAndSpreadLimits[i][0];
-            _tickLimits[1] = tickAndSpreadLimits[i][1];
-
-            // if safe mode is larger than 1, mandate all positions to be minted/burnt as covered
-            if (riskParameters.safeMode() > 1) {
-                if (_tickLimits[0] > _tickLimits[1]) {
-                    (_tickLimits[0], _tickLimits[1]) = (_tickLimits[1], _tickLimits[0]);
-                }
-            }
-            int24 finalTick;
-            if (PositionBalance.unwrap(positionBalanceData) == 0) {
-                // revert if more than 2 conditions are triggered to prevent the minting of any positions
-                if (riskParameters.safeMode() > 2) revert Errors.StaleOracle();
-                uint24 effectiveLiquidityLimit = uint24(tickAndSpreadLimits[i][2]);
-                (, finalTick) = _mintOptions(
-                    tokenId,
-                    positionSizes[i],
-                    effectiveLiquidityLimit,
-                    msg.sender,
-                    _tickLimits,
-                    riskParameters
-                );
-            } else {
-                uint128 positionSize = positionBalanceData.positionSize();
-
-                if (positionSize == 0) revert Errors.PositionNotOwned();
-
-                // if input positionSize matches the size stored, this is a settlePremium. Otherwise, this is a burn.
-                if (positionSize == positionSizes[i]) {
-                    finalTick = getCurrentTick();
-                    _settleOptions(msg.sender, tokenId, positionSize, riskParameters, finalTick);
-                } else {
-                    (, , finalTick) = _burnOptions(
-                        tokenId,
-                        positionSize,
-                        _tickLimits,
-                        msg.sender,
-                        COMMIT_LONG_SETTLED,
-                        riskParameters
-                    );
-                }
-            }
-
-            unchecked {
-                // update starting tick in leftSlot() and add the cumulative delta to the rightSlot()
-                // can never miscast because ticks are int24
-                cumulativeTickDeltas = LeftRightSigned
-                    .wrap(0)
-                    .addToRightSlot(
-                        cumulativeTickDeltas.rightSlot() +
-                            int128(Math.abs(int24(cumulativeTickDeltas.leftSlot()) - finalTick))
-                    )
-                    .addToLeftSlot(finalTick);
-                ++i;
-            }
-        }
-
-        unchecked {
-            // can never overflow as tickDeltaLiquidation is a int24
-            /// @dev revert if the total deviation is more than twice the tickDeltaLiquidation (ie. roundtrips more than the allowed tick liquidation delta per trip)
-            if (
-                cumulativeTickDeltas.rightSlot() >
-                int256(uint256(2 * riskParameters.tickDeltaLiquidation()))
-            ) revert Errors.PriceImpactTooLarge();
-
-            {
-                //assembly tstore
-                bytes32 slot = PRICE_TRANSIENT_SLOT;
-                assembly {
-                    tstore(slot, cumulativeTickDeltas)
-                }
-            }
-        }
-        // Perform solvency check on user's account to ensure they had enough buying power to mint the option
-        // Add an initial buffer to the collateral requirement to prevent users from minting their account close to insolvency
-        OraclePack oraclePack = _validateSolvency(
-            msg.sender,
-            finalPositionIdList,
-            riskParameters.bpDecreaseBuffer(),
-            usePremiaAsCollateral,
-            riskParameters.safeMode()
-        );
-        // Update `s_oraclePack` with a new observation if the last observation is old enough (returned oraclePack is nonzero)
-        if (OraclePack.unwrap(oraclePack) != 0) s_oraclePack = oraclePack;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                         POSITION MINTING LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Validates the current options of the user, and mints a new position.
-    /// @param tokenId The tokenId of the newly minted position
-    /// @param positionSize The size of the position to be minted, expressed in terms of the asset
-    /// @param effectiveLiquidityLimit Maximum amount of "spread" defined as `removedLiquidity/netLiquidity` for a new position and
-    /// denominated as X32 = (`ratioLimit * 2^32`)
-    /// @param owner The owner of the option position to be minted
-    /// @param tickLimits The lower and upper bound of an acceptable open interval for the ending price
-    /// @param riskParameters The RiskEngine's core parameters
-    function _mintOptions(
-        TokenId tokenId,
-        uint128 positionSize,
-        uint24 effectiveLiquidityLimit,
-        address owner,
-        int24[2] memory tickLimits,
-        RiskParameters riskParameters
-    ) internal returns (LeftRightSigned paidAmounts, int24 finalTick) {
-        // Mint in the SFPM and update state of collateral
-        LeftRightUnsigned[4] memory collectedByLeg;
-        LeftRightSigned netAmmDelta;
-        (collectedByLeg, netAmmDelta, finalTick) = SFPM.mintTokenizedPosition(
-            poolKey(),
-            tokenId,
-            positionSize,
-            tickLimits[0],
-            tickLimits[1]
-        );
-
-        _updateSettlementPostMint(
-            riskParameters,
-            tokenId,
-            collectedByLeg,
-            positionSize,
-            effectiveLiquidityLimit,
-            owner
-        );
-
-        uint32 poolUtilizations;
-
-        (poolUtilizations, paidAmounts) = _payCommissionAndWriteData(
-            tokenId,
-            positionSize,
-            owner,
-            netAmmDelta,
-            riskParameters
-        );
-
-        {
-            // update the users options balance of position `tokenId`
-            // NOTE: user can't mint same position multiple times, so set the positionSize instead of adding
-            PositionBalance balanceData = PositionBalanceLibrary.storeBalanceData(
-                positionSize,
-                poolUtilizations,
-                0
-            );
-            s_positionBalance[owner][tokenId] = balanceData;
-
-            emit OptionMinted(owner, tokenId, balanceData);
-        }
-    }
-
-    /// @notice Take the commission fees for minting `tokenId` and settle any other required collateral deltas.
-    /// @param tokenId The option position
-    /// @param positionSize The size of the position, expressed in terms of the asset
-    /// @param owner The owner of the option position to be minted
-    /// @param netAmmDelta The amount of tokens moved during creation of the option position
-    /// @param riskParameters The RiskEngine's core parameters
-    /// @return utilizations Packing of the pool utilization (how much funds are in the Panoptic pool versus the AMM pool at the time of minting),
-    /// right 64bits for token0 and left 64bits for token1, defined as `(inAMM * 10_000) / totalAssets()`
-    /// where totalAssets is the total tracked assets in the AMM and PanopticPool minus fees and donations to the Panoptic pool
-    /// @return paidAmounts The amount of tokens paid when creating that option for token0 (right) and token1 (left)
-    function _payCommissionAndWriteData(
-        TokenId tokenId,
-        uint128 positionSize,
-        address owner,
-        LeftRightSigned netAmmDelta,
-        RiskParameters riskParameters
-    ) internal returns (uint32 utilizations, LeftRightSigned paidAmounts) {
-        // compute how much of tokenId is long and short positions
-        (LeftRightSigned longAmounts, LeftRightSigned shortAmounts) = PanopticMath
-            .computeExercisedAmounts(tokenId, positionSize, true);
-        {
-            (uint32 utilization0, int128 paid0) = collateralToken0().settleMint(
-                owner,
-                longAmounts.rightSlot(),
-                shortAmounts.rightSlot(),
-                netAmmDelta.rightSlot(),
-                riskParameters
-            );
-            utilizations = utilization0;
-            paidAmounts = paidAmounts.addToRightSlot(paid0);
-        }
-        {
-            (uint32 utilization1, int128 paid1) = collateralToken1().settleMint(
-                owner,
-                longAmounts.leftSlot(),
-                shortAmounts.leftSlot(),
-                netAmmDelta.leftSlot(),
-                riskParameters
-            );
-            unchecked {
-                // no miscast because utilization is <=10_000
-                utilizations += uint32(utilization1 << 16);
-            }
-            paidAmounts = paidAmounts.addToLeftSlot(paid1);
-        }
-
-        // return pool utilizations as two uint16 (pool Utilization is always <= 10_000)
-        return (utilizations, paidAmounts);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                         POSITION BURNING LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Close all options in `positionIdList`.
-    /// @param owner The owner of the option position to be closed
-    /// @param tickLimitLow The lower bound of an acceptable open interval for the ending price on each option close
-    /// @param tickLimitHigh The upper bound of an acceptable open interval for the ending price on each option close
-    /// @param commitLongSettled Whether to commit the long premium that will be settled to storage (disabled during liquidations)
-    /// @param positionIdList The list of option positions to close
-    /// @return netPaid The net amount of tokens paid after closing the positions
-    /// @return premiasByLeg The amount of premia settled by the user for each leg of the position
-    function _burnAllOptionsFrom(
-        address owner,
-        int24 tickLimitLow,
-        int24 tickLimitHigh,
-        bool commitLongSettled,
-        TokenId[] calldata positionIdList
-    ) internal returns (LeftRightSigned netPaid, LeftRightSigned[4][] memory premiasByLeg) {
-        premiasByLeg = new LeftRightSigned[4][](positionIdList.length);
-        (RiskParameters riskParameters, ) = getRiskParameters(0);
-
-        for (uint256 i = 0; i < positionIdList.length; ) {
-            uint128 positionSize = s_positionBalance[owner][positionIdList[i]].positionSize();
-
-            if (positionSize == 0) revert Errors.PositionNotOwned();
-
-            int24[2] memory tickLimits;
-            tickLimits[0] = tickLimitLow;
-            tickLimits[1] = tickLimitHigh;
-            LeftRightSigned paidAmounts;
-            address _owner = owner;
-            (paidAmounts, premiasByLeg[i], ) = _burnOptions(
-                positionIdList[i],
-                positionSize,
-                tickLimits,
-                _owner,
-                commitLongSettled,
-                riskParameters
-            );
-            netPaid = netPaid.add(paidAmounts);
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    /// @notice Close a single option position.
-    /// @param tokenId The option position to burn
-    /// @param positionSize The size of the position to burn
-    /// @param tickLimits The lower and upper bound of an acceptable open interval for the ending price on each option close
-    /// @param owner The owner of the option position to be burned
-    /// @param commitLongSettled Whether to commit the long premium that will be settled to storage (disabled during liquidations)
-    /// @param riskParameters The RiskEngine's core risk parameters
-    /// @return paidAmounts The net amount of tokens paid after closing the position
-    /// @return premiaByLeg The amount of premia settled by the user for each leg of the position
-    /// @return finalTick The final tick after burning the options
-    function _burnOptions(
-        TokenId tokenId,
-        uint128 positionSize,
-        int24[2] memory tickLimits,
-        address owner,
-        bool commitLongSettled,
-        RiskParameters riskParameters
-    )
-        internal
-        returns (
-            LeftRightSigned paidAmounts,
-            LeftRightSigned[4] memory premiaByLeg,
-            int24 finalTick
-        )
-    {
-        LeftRightUnsigned[4] memory collectedByLeg;
-        LeftRightSigned netAmmDelta;
-        (collectedByLeg, netAmmDelta, finalTick) = SFPM.burnTokenizedPosition(
-            poolKey(),
-            tokenId,
-            positionSize,
-            tickLimits[0],
-            tickLimits[1]
-        );
-
-        LeftRightSigned realizedPremia;
-        (realizedPremia, premiaByLeg) = _updateSettlementPostBurn(
-            owner,
-            tokenId,
-            collectedByLeg,
-            positionSize,
-            riskParameters,
-            LeftRightSigned.wrap(commitLongSettled ? int128(1) : int128(0))
-        );
-
-        (LeftRightSigned longAmounts, LeftRightSigned shortAmounts) = PanopticMath
-            .computeExercisedAmounts(tokenId, positionSize, false);
-
-        emit OptionBurnt(owner, positionSize, tokenId, premiaByLeg);
-
-        RiskParameters _rp = riskParameters;
-        {
-            int128 paid0 = collateralToken0().settleBurn(
-                owner,
-                longAmounts.rightSlot(),
-                shortAmounts.rightSlot(),
-                netAmmDelta.rightSlot(),
-                realizedPremia.rightSlot(),
-                _rp
-            );
-            paidAmounts = paidAmounts.addToRightSlot(paid0);
-        }
-
-        {
-            int128 paid1 = collateralToken1().settleBurn(
-                owner,
-                longAmounts.leftSlot(),
-                shortAmounts.leftSlot(),
-                netAmmDelta.leftSlot(),
-                realizedPremia.leftSlot(),
-                _rp
-            );
-            paidAmounts = paidAmounts.addToLeftSlot(paid1);
-        }
-    }
-
-    /// @notice Validates the solvency of `user`.
-    /// @dev Falls back to the most conservative (least solvent) oracle tick if the sum of the squares of the deltas between all oracle ticks exceeds `MAX_TICKS_DELTA^2`, defined in the RiskEngine.
-    /// @dev Effectively, this means that the users must be solvent at all oracle ticks if the at least one of the ticks is sufficiently stale.
-    /// @param user The account to validate
-    /// @param positionIdList The list of positions to validate solvency for
-    /// @param buffer The buffer to apply to the collateral requirement for `user`
-    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
-    /// @return If nonzero (enough time has passed since last observation), the updated value for `s_oraclePack` with a new observation
-    function _validateSolvency(
-        address user,
-        TokenId[] calldata positionIdList,
-        uint32 buffer,
-        bool usePremiaAsCollateral,
-        uint8 safeMode
-    ) internal view returns (OraclePack) {
-        // check that the provided positionIdList matches the positions in memory
-        _validatePositionList(user, positionIdList);
-
-        int24 currentTick = getCurrentTick();
-
-        OraclePack oraclePack;
-        int24[] memory atTicks;
-
-        (atTicks, oraclePack) = riskEngine().getSolvencyTicks(currentTick, s_oraclePack);
-
-        if (positionIdList.length != 0) {
-            uint256 solvent = _checkSolvencyAtTicks(
-                user,
-                safeMode,
-                positionIdList,
-                currentTick,
-                atTicks,
-                usePremiaAsCollateral,
-                uint256(buffer)
-            );
-            uint256 numberOfTicks = atTicks.length;
-
-            if (solvent != numberOfTicks) revert Errors.AccountInsolvent(solvent, numberOfTicks);
-        }
-        return oraclePack;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                          SETTLEMENTS
-    //////////////////////////////////////////////////////////////*/
-
-    function _settleOptions(
-        address owner,
-        TokenId tokenId,
-        uint128 positionSize,
-        RiskParameters riskParameters,
-        int24 currentTick
-    ) internal {
-        // call _updateSettlementPostBurn to settle the long premia or the short premia (only for self calling)
-        LeftRightUnsigned[4] memory emptyCollectedByLegs;
-        LeftRightSigned realizedPremia;
-        unchecked {
-            // cannot be miscast because currentTick is a int24
-            (realizedPremia, ) = _updateSettlementPostBurn(
-                owner,
-                tokenId,
-                emptyCollectedByLegs,
-                positionSize,
-                riskParameters,
-                LeftRightSigned.wrap(1).addToLeftSlot(1 + (int128(currentTick) << 2))
-            );
-        }
-        // deduct the paid premium tokens from the owner's balance
-        collateralToken0().settleBurn(owner, 0, 0, 0, realizedPremia.rightSlot(), riskParameters);
-        collateralToken1().settleBurn(owner, 0, 0, 0, realizedPremia.leftSlot(), riskParameters);
-    }
-
-    /// @notice Adds collected tokens to `s_settledTokens` and adjusts `s_grossPremiumLast` for any liquidity added.
-    /// @dev Always called after `mintTokenizedPosition`.
-    /// @param tokenId The option position that was minted
-    /// @param collectedByLeg The amount of tokens collected in the corresponding chunk for each leg of the position
-    /// @param positionSize The size of the position, expressed in terms of the asset
-    /// @param effectiveLiquidityLimit Maximum amount of "spread" defined as `removedLiquidity/netLiquidity`
-    /// @param owner The owner of the option position to be minted
-    function _updateSettlementPostMint(
-        RiskParameters riskParameters,
-        TokenId tokenId,
-        LeftRightUnsigned[4] memory collectedByLeg,
-        uint128 positionSize,
-        uint24 effectiveLiquidityLimit,
-        address owner
-    ) internal {
-        // ADD the current tokenId to the position list hash (hash = XOR of all keccak256(tokenId))
-        // and increase the number of positions counter by 1.
-        _updatePositionsHash(owner, tokenId, ADD, riskParameters.maxLegs());
-
-        for (uint256 leg = 0; leg < tokenId.countLegs(); ) {
-            if (tokenId.width(leg) != 0) {
-                uint256 isLong = tokenId.isLong(leg);
-                // if position is long, ensure that removed liquidity does not deplete strike beyond min(MAX_SPREAD, user-provided effectiveLiquidityLimit)
-                // new totalLiquidity (total sold) = removedLiquidity + netLiquidity (R + N)
-                uint256 totalLiquidity = _checkLiquiditySpread(
-                    tokenId,
-                    leg,
-                    isLong == 0
-                        ? riskParameters.maxSpread()
-                        : Math.min(effectiveLiquidityLimit, riskParameters.maxSpread())
-                );
-
-                bytes32 chunkKey = PanopticMath.getChunkKey(tokenId, leg);
-
-                // add any tokens collected from Uniswap in a given chunk to the settled tokens available for withdrawal by sellers
-                s_settledTokens[chunkKey] = s_settledTokens[chunkKey].add(collectedByLeg[leg]);
-
-                LiquidityChunk liquidityChunk = PanopticMath.getLiquidityChunk(
-                    tokenId,
-                    leg,
-                    positionSize
-                );
-
-                uint256 grossCurrent0;
-                uint256 grossCurrent1;
-                {
-                    {
-                        uint256 tokenType = tokenId.tokenType(leg);
-                        uint256 vegoid = tokenId.vegoid();
-                        uint256 _isLong = isLong;
-                        // can use (type(int24).max flag because premia accumulators were updated during the mintTokenizedPosition step.
-                        (grossCurrent0, grossCurrent1) = SFPM.getAccountPremium(
-                            poolKey(),
-                            address(this),
-                            tokenType,
-                            liquidityChunk.tickLower(),
-                            liquidityChunk.tickUpper(),
-                            type(int24).max,
-                            _isLong,
-                            vegoid
-                        );
-                    }
-
-                    s_options[owner][tokenId][leg] = LeftRightUnsigned
-                        .wrap(uint128(grossCurrent0))
-                        .addToLeftSlot(uint128(grossCurrent1));
-                }
-
-                // if position is short, adjust `grossPremiumLast` upward to account for the increase in short liquidity
-                if (isLong == 0) {
-                    unchecked {
-                        // L
-                        LeftRightUnsigned grossPremiumLast = s_grossPremiumLast[chunkKey];
-                        // R
-                        uint256 positionLiquidity = liquidityChunk.liquidity();
-                        // T (totalLiquidity is (T + R) after minting)
-                        uint256 totalLiquidityBefore = totalLiquidity - positionLiquidity;
-
-                        // We need to adjust the grossPremiumLast value such that the result of
-                        // (grossPremium - adjustedGrossPremiumLast) * updatedTotalLiquidityPostMint / 2**64 is equal to (grossPremium - grossPremiumLast) * totalLiquidityBeforeMint / 2**64
-                        // G: total gross premium
-                        // T: totalLiquidityBeforeMint
-                        // R: positionLiquidity
-                        // C: current grossPremium value
-                        // L: current grossPremiumLast value
-                        // Ln: updated grossPremiumLast value
-                        // T * (C - L) = G
-                        // (T + R) * (C - Ln) = G
-                        //
-                        // T * (C - L) = (T + R) * (C - Ln)
-                        // (TC - TL) / (T + R) = C - Ln
-                        // Ln = C - (TC - TL)/(T + R)
-                        // Ln = (CT + CR - TC + TL)/(T+R)
-                        // Ln = (CR + TL)/(T+R)
-
-                        s_grossPremiumLast[chunkKey] = LeftRightUnsigned
-                            .wrap(
-                                uint128(
-                                    (grossCurrent0 *
-                                        positionLiquidity +
-                                        grossPremiumLast.rightSlot() *
-                                        totalLiquidityBefore) / totalLiquidity
-                                )
-                            )
-                            .addToLeftSlot(
-                                uint128(
-                                    (grossCurrent1 *
-                                        positionLiquidity +
-                                        grossPremiumLast.leftSlot() *
-                                        totalLiquidityBefore) / totalLiquidity
-                                )
-                            );
-                    }
-                }
-            }
-            unchecked {
-                ++leg;
-            }
-        }
-    }
-
-    /// @notice Updates settled tokens and grossPremiumLast for a chunk after a burn and returns premium info.
-    /// @param owner The owner of the option position that was burnt
-    /// @param tokenId The option position that was burnt
-    /// @param collectedByLeg The amount of tokens collected in the corresponding chunk for each leg of the position
-    /// @param positionSize The size of the position, expressed in terms of the asset
-    /// @param commitLongSettledAndKeepOpen Whether to commit the long premium that will be settled to storage (rightSlot != 0) and whether the position is being burned (leftSlot == 0)
-    /// @return realizedPremia The amount of premia settled by the user
-    /// @return premiaByLeg The amount of premia settled by the user for each leg of the position
-    function _updateSettlementPostBurn(
-        address owner,
-        TokenId tokenId,
-        LeftRightUnsigned[4] memory collectedByLeg,
-        uint128 positionSize,
-        RiskParameters riskParameters,
-        LeftRightSigned commitLongSettledAndKeepOpen
-    ) internal returns (LeftRightSigned realizedPremia, LeftRightSigned[4] memory premiaByLeg) {
-        uint256[2][4] memory premiumAccumulatorsByLeg;
-
-        // compute accumulated fees
-        (premiaByLeg, premiumAccumulatorsByLeg) = _getPremia(
-            tokenId,
-            positionSize,
-            owner,
-            COMPUTE_PREMIA_AS_COLLATERAL,
-            commitLongSettledAndKeepOpen.leftSlot() == 0
-                ? type(int24).max
-                : int24(commitLongSettledAndKeepOpen.leftSlot() >> 2)
-        );
-        for (uint256 leg = 0; leg < tokenId.countLegs(); ) {
-            if (tokenId.width(leg) != 0) {
-                LeftRightSigned legPremia = premiaByLeg[leg];
-                bytes32 chunkKey = PanopticMath.getChunkKey(tokenId, leg);
-
-                // collected from Uniswap
-                LeftRightUnsigned settledTokens = s_settledTokens[chunkKey].add(
-                    collectedByLeg[leg]
-                );
-
-                // (will be) paid by long legs
-                if (tokenId.isLong(leg) == 1) {
-                    if (commitLongSettledAndKeepOpen.rightSlot() != 0)
-                        settledTokens = LeftRightUnsigned.wrap(
-                            uint256(
-                                LeftRightSigned.unwrap(
-                                    LeftRightSigned
-                                        .wrap(int256(LeftRightUnsigned.unwrap(settledTokens)))
-                                        .sub(legPremia)
-                                )
-                            )
-                        );
-                    realizedPremia = realizedPremia.add(legPremia);
-                } else {
-                    if (commitLongSettledAndKeepOpen.leftSlot() == 0 || msg.sender == owner) {
-                        uint256 positionLiquidity;
-                        uint256 totalLiquidity;
-                        {
-                            LiquidityChunk liquidityChunk = PanopticMath.getLiquidityChunk(
-                                tokenId,
-                                leg,
-                                positionSize
-                            );
-                            positionLiquidity = liquidityChunk.liquidity();
-
-                            // if position is short, ensure that removed liquidity does not deplete strike beyond MAX_SPREAD when closed
-                            // new totalLiquidity (total sold) = removedLiquidity + netLiquidity (T - R)
-                            totalLiquidity = _checkLiquiditySpread(
-                                tokenId,
-                                leg,
-                                riskParameters.maxSpread()
-                            );
-                        }
-                        // T (totalLiquidity is (T - R) after burning)
-                        uint256 totalLiquidityBefore;
-                        unchecked {
-                            // cannot overflow because total liquidity is less than uint128
-                            totalLiquidityBefore = commitLongSettledAndKeepOpen.leftSlot() == 0
-                                ? totalLiquidity + positionLiquidity
-                                : totalLiquidity;
-                        }
-                        LeftRightUnsigned grossPremiumLast = s_grossPremiumLast[chunkKey];
-
-                        LeftRightUnsigned availablePremium = _getAvailablePremium(
-                            totalLiquidityBefore,
-                            settledTokens,
-                            grossPremiumLast,
-                            LeftRightUnsigned.wrap(uint256(LeftRightSigned.unwrap(legPremia))),
-                            premiumAccumulatorsByLeg[leg]
-                        );
-
-                        // subtract settled tokens sent to seller
-                        settledTokens = settledTokens.sub(availablePremium);
-
-                        // add available premium to amount that should be settled
-                        realizedPremia = realizedPremia.add(
-                            LeftRightSigned.wrap(int256(LeftRightUnsigned.unwrap(availablePremium)))
-                        );
-
-                        // update the base `premiaByLeg` value to reflect the amount of premium that will actually be settled
-                        premiaByLeg[leg] = LeftRightSigned.wrap(
-                            int256(LeftRightUnsigned.unwrap(availablePremium))
-                        );
-
-                        // We need to adjust the grossPremiumLast value such that the result of
-                        // (grossPremium - adjustedGrossPremiumLast) * updatedTotalLiquidityPostBurn / 2**64 is equal to
-                        // (grossPremium - grossPremiumLast) * totalLiquidityBeforeBurn / 2**64 - premiumOwedToPosition
-                        // G: total gross premium (- premiumOwedToPosition)
-                        // T: totalLiquidityBeforeMint
-                        // R: positionLiquidity
-                        // C: current grossPremium value
-                        // L: current grossPremiumLast value
-                        // Ln: updated grossPremiumLast value
-                        // T * (C - L) = G
-                        // (T - R) * (C - Ln) = G - P
-                        //
-                        // T * (C - L) = (T - R) * (C - Ln) + P
-                        // (TC - TL - P) / (T - R) = C - Ln
-                        // Ln = C - (TC - TL - P) / (T - R)
-                        // Ln = (TC - CR - TC + LT + P) / (T-R)
-                        // Ln = (LT - CR + P) / (T-R)
-
-                        unchecked {
-                            uint256[2][4]
-                                memory _premiumAccumulatorsByLeg = premiumAccumulatorsByLeg;
-                            uint256 _leg = leg;
-
-                            // if there's still liquidity, compute the new grossPremiumLast
-                            // otherwise, we just reset grossPremiumLast to the current grossPremium
-                            s_grossPremiumLast[chunkKey] = totalLiquidity != 0
-                                ? LeftRightUnsigned
-                                    .wrap(
-                                        uint128(
-                                            uint256(
-                                                Math.max(
-                                                    (int256(
-                                                        grossPremiumLast.rightSlot() *
-                                                            totalLiquidityBefore
-                                                    ) -
-                                                        int256(
-                                                            _premiumAccumulatorsByLeg[_leg][0] *
-                                                                positionLiquidity
-                                                        )) +
-                                                        int256(legPremia.rightSlot()) *
-                                                        2 ** 64,
-                                                    0
-                                                )
-                                            ) / totalLiquidity
-                                        )
-                                    )
-                                    .addToLeftSlot(
-                                        uint128(
-                                            uint256(
-                                                Math.max(
-                                                    (int256(
-                                                        grossPremiumLast.leftSlot() *
-                                                            totalLiquidityBefore
-                                                    ) -
-                                                        int256(
-                                                            _premiumAccumulatorsByLeg[_leg][1] *
-                                                                positionLiquidity
-                                                        )) + int256(legPremia.leftSlot()) * 2 ** 64,
-                                                    0
-                                                )
-                                            ) / totalLiquidity
-                                        )
-                                    )
-                                : LeftRightUnsigned
-                                    .wrap(uint128(premiumAccumulatorsByLeg[_leg][0]))
-                                    .addToLeftSlot(uint128(premiumAccumulatorsByLeg[_leg][1]));
-                        }
-                    }
-                }
-                // update settled tokens in storage with all local deltas
-                s_settledTokens[chunkKey] = settledTokens;
-
-                if (commitLongSettledAndKeepOpen.leftSlot() == 0) {
-                    // erase the s_options entry for that leg
-                    s_options[owner][tokenId][leg] = LeftRightUnsigned.wrap(0);
-                } else {
-                    // update the premium accumulator to the latest value: only if it is a long leg (settleLongPremium) OR if owner == msg.sender (autocollect)
-                    if (tokenId.isLong(leg) != 0 || msg.sender == owner) {
-                        s_options[owner][tokenId][leg] = LeftRightUnsigned
-                            .wrap(0)
-                            .addToRightSlot(uint128(premiumAccumulatorsByLeg[leg][0]))
-                            .addToLeftSlot(uint128(premiumAccumulatorsByLeg[leg][1]));
-
-                        emit PremiumSettled(owner, tokenId, leg, premiaByLeg[leg]);
-                    }
-                }
-            }
-
-            unchecked {
-                ++leg;
-            }
-        }
-
-        if (commitLongSettledAndKeepOpen.leftSlot() == 0) {
-            // reset balances and delete stored option data
-            s_positionBalance[owner][tokenId] = PositionBalance.wrap(0);
-
-            // REMOVE the current tokenId from the position list hash (hash = XOR of all keccak256(tokenId), remove by XOR'ing again)
-            // and decrease the number of positions counter by 1.
-            _updatePositionsHash(owner, tokenId, !ADD, riskParameters.maxLegs());
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                    LIQUIDATIONS & FORCED EXERCISES
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Dispatches liquidations, forced exercises, or long premium settlements based on account solvency
-    /// @dev This function determines the appropriate action based on solvency checks at multiple price points:
-    ///      - If insolvent at all ticks: Execute liquidation (burns all positions)
-    ///      - If solvent at all ticks: Execute force exercise or settle long premium based on list lengths
-    ///      - Otherwise: Revert as account is not fully margin called
-    /// @dev The function uses position list lengths to determine the specific operation:
-    ///      - Same length lists between positionIdListTo and positionIdListToFinal: Settle long premium
-    ///      - Final list one shorter: Force exercise
-    ///      - Final list empty: Liquidation
-    /// @param positionIdListFrom List of positions held by the caller (msg.sender)
-    /// @param account The account being acted upon (liquidated, exercised, or settled)
-    /// @param positionIdListTo Current positions of the target account
-    /// @param positionIdListToFinal Expected positions after the operation completes
-    /// @param usePremiaAsCollateral Packed value indicating whether to use premia as collateral:
-    ///        - leftSlot: For the caller (msg.sender)
-    ///        - rightSlot: For the target account
-    function dispatchFrom(
-        TokenId[] calldata positionIdListFrom,
-        address account,
-        TokenId[] calldata positionIdListTo,
-        TokenId[] calldata positionIdListToFinal,
-        LeftRightUnsigned usePremiaAsCollateral
-    ) external payable {
-        // Assert the account we are liquidating is actually insolvent
-        int24 twapTick = getTWAP();
-        int24 currentTick = getCurrentTick();
-
-        TokenId tokenId;
-
-        uint256 solvent;
-        uint256 numberOfTicks;
-        {
-            _validatePositionList(account, positionIdListTo);
-
-            // Enforce maximum delta between TWAP and currentTick to prevent extreme price manipulation
-            int24 spotTick;
-            int24 latestTick;
-            (spotTick, , latestTick, ) = riskEngine().getOracleTicks(currentTick, s_oraclePack);
-
-            unchecked {
-                (RiskParameters riskParameters, ) = getRiskParameters(0);
-                int256 MAX_TWAP_DELTA_LIQUIDATION = int256(
-                    uint256(riskParameters.tickDeltaLiquidation())
-                );
-                if (Math.abs(currentTick - twapTick) > MAX_TWAP_DELTA_LIQUIDATION)
-                    revert Errors.StaleOracle();
-            }
-
-            // Ensure the account is insolvent at twapTick (in place of medianTick), currentTick, spotTick, and latestTick
-            int24[] memory atTicks = new int24[](4);
-            atTicks[0] = spotTick;
-            atTicks[1] = twapTick;
-            atTicks[2] = latestTick;
-            atTicks[3] = currentTick;
-
-            solvent = _checkSolvencyAtTicks(
-                account,
-                0,
-                positionIdListTo,
-                currentTick,
-                atTicks,
-                COMPUTE_PREMIA_AS_COLLATERAL,
-                NO_BUFFER
-            );
-            numberOfTicks = atTicks.length;
-        }
-        {
-            uint256 toLength = positionIdListTo.length;
-            uint256 finalLength = positionIdListToFinal.length;
-            // if account is solvent at all ticks, this is a force exercise or a settlePremium.
-            if (solvent == numberOfTicks) {
-                unchecked {
-                    tokenId = positionIdListTo[toLength - 1];
-                    if (toLength == finalLength) {
-                        // same length, that's a settle
-                        {
-                            bytes32 toHash = EfficientHash.efficientKeccak256(
-                                abi.encodePacked(positionIdListTo)
-                            );
-                            bytes32 finalHash = EfficientHash.efficientKeccak256(
-                                abi.encodePacked(positionIdListToFinal)
-                            );
-                            if (toHash != finalHash) {
-                                revert Errors.InputListFail();
-                            }
-                        }
-                        _settlePremium(account, tokenId, twapTick, currentTick);
-                    } else if (toLength == (finalLength + 1)) {
-                        // final is one element shorter, that's a force exercise
-                        if (tokenId.countLongs() == 0 || tokenId.validateIsExercisable() == 0)
-                            revert Errors.NoLegsExercisable();
-                        _forceExercise(account, tokenId, twapTick, currentTick);
-                    } else if (finalLength == 0) {
-                        // if final length was zero, this was intended to be liquidation, but revert because not margin called and solvent at some of the tested ticks
-                        revert Errors.NotMarginCalled();
-                    } else {
-                        // otherwise, wrong input lists
-                        revert Errors.InputListFail();
-                    }
-                    // ensure the callee is still solvent after the operation
-                    bool premiaAsCollateral = usePremiaAsCollateral.rightSlot() > 0;
-                    _validateSolvency(
-                        account,
-                        positionIdListToFinal,
-                        NO_BUFFER,
-                        premiaAsCollateral,
-                        0
-                    );
-                }
-            } else if (solvent == 0) {
-                // if account is insolvent at all ticks, this is a liquidation
-
-                // if the positions lengths are the same, this was intended as a settlePremia, but revert because account is insolvent
-                if (toLength == finalLength) revert Errors.AccountInsolvent(solvent, 4);
-
-                if (positionIdListToFinal.length != 0) revert Errors.InputListFail();
-                // if the final position list has a non-zero length, this can't be a complete liquidation, revert
-                _liquidate(account, positionIdListTo, twapTick, currentTick);
-            } else {
-                // otherwise, revert because the account is not fully margin called
-                revert Errors.NotMarginCalled();
-            }
-        }
-
-        // ensure the caller is still solvent after the operation
-        _validateSolvency(
-            msg.sender,
-            positionIdListFrom,
-            NO_BUFFER,
-            usePremiaAsCollateral.leftSlot() > 0,
-            0
-        );
-    }
-
-    /// @notice Liquidates a distressed account. Will burn all positions and issue a bonus to the liquidator.
-    /// @dev Will revert if liquidated account is solvent at one of the oracle ticks or if TWAP tick is too far away from the current tick.
-    /// @param liquidatee Address of the distressed account
-    /// @param positionIdList List of positions owned by the user. Written as `[tokenId1, tokenId2, ...]`
-    function _liquidate(
-        address liquidatee,
-        TokenId[] calldata positionIdList,
-        int24 twapTick,
-        int24 currentTick
-    ) internal {
-        LeftRightUnsigned tokenData0;
-        LeftRightUnsigned tokenData1;
-        LeftRightUnsigned shortPremium;
-        {
-            PositionBalance[] memory positionBalanceArray = new PositionBalance[](
-                positionIdList.length
-            );
-            LeftRightUnsigned longPremium;
-            (shortPremium, longPremium, positionBalanceArray) = _calculateAccumulatedPremia(
-                liquidatee,
-                positionIdList,
-                COMPUTE_PREMIA_AS_COLLATERAL,
-                ONLY_AVAILABLE_PREMIUM,
-                currentTick
-            );
-            (tokenData0, tokenData1, ) = riskEngine().getMargin(
-                positionBalanceArray,
-                twapTick,
-                liquidatee,
-                positionIdList,
-                shortPremium,
-                longPremium,
-                collateralToken0(),
-                collateralToken1()
-            );
-        }
-
-        // The protocol delegates some virtual shares to ensure the burn can be settled.
-        collateralToken0().delegate(liquidatee);
-        collateralToken1().delegate(liquidatee);
-
-        LeftRightSigned bonusAmounts;
-        LeftRightUnsigned haircutTotal;
-        {
-            LeftRightSigned netPaid;
-            LeftRightSigned[4][] memory premiasByLeg;
-            // burn all options from the liquidatee
-
-            // Do not commit any settled long premium to storage - we will do this after we determine if any long premium must be revoked
-            // This is to prevent any short positions the liquidatee has being settled with tokens that will later be revoked
-            // NOTE: tick limits are not applied here since it is not the liquidator's position being liquidated
-            (netPaid, premiasByLeg) = _burnAllOptionsFrom(
-                liquidatee,
-                MIN_SWAP_TICK,
-                MAX_SWAP_TICK,
-                DONOT_COMMIT_LONG_SETTLED,
-                positionIdList
-            );
-
-            LeftRightSigned collateralRemaining;
-
-            // compute bonus amounts using latest tick data
-            (bonusAmounts, collateralRemaining) = riskEngine().getLiquidationBonus(
-                tokenData0,
-                tokenData1,
-                Math.getSqrtRatioAtTick(twapTick),
-                netPaid,
-                shortPremium
-            );
-
-            // premia cannot be paid if there is protocol loss associated with the liquidatee
-            // otherwise, an economic exploit could occur if the liquidator and liquidatee collude to
-            // manipulate the fees in a liquidity area they control past the protocol loss threshold
-            // such that the PLPs are forced to pay out premia to the liquidator
-            // thus, we haircut any premium paid by the liquidatee (converting tokens as necessary) until the protocol loss is covered or the premium is exhausted
-            // note that the haircutPremia function also commits the settled amounts (adjusted for the haircut) to storage, so it will be called even if there is no haircut
-
-            // if premium is haircut from a token that is not in protocol loss, some of the liquidation bonus will be converted into that token
-            address _liquidatee = liquidatee;
-            int24 _twapTick = twapTick;
-            TokenId[] memory _positionIdList = positionIdList;
-            LeftRightSigned bonusDeltas;
-            LeftRightSigned[4][] memory haircutPerLeg;
-            (bonusDeltas, haircutTotal, haircutPerLeg) = riskEngine().haircutPremia(
-                _liquidatee,
-                _positionIdList,
-                premiasByLeg,
-                collateralRemaining,
-                Math.getSqrtRatioAtTick(_twapTick)
-            );
-
-            bonusAmounts = bonusAmounts.add(bonusDeltas);
-
-            InteractionHelper.settleAmounts(
-                _liquidatee,
-                _positionIdList,
-                haircutTotal,
-                haircutPerLeg,
-                premiasByLeg,
-                collateralToken0(),
-                collateralToken1(),
-                s_settledTokens
-            );
-        }
-
-        // revoke delegated virtual shares and settle any bonus deltas with the liquidator
-        // native currency is represented as address(0), so it will always be currency0 alphanumerically
-        collateralToken0().settleLiquidation{value: msg.value}(
-            msg.sender,
-            liquidatee,
-            bonusAmounts.rightSlot()
-        );
-        collateralToken1().settleLiquidation(msg.sender, liquidatee, bonusAmounts.leftSlot());
-
-        emit AccountLiquidated(msg.sender, liquidatee, bonusAmounts);
-    }
-
-    /// @notice Force the exercise of a single position. Exercisor will have to pay a fee to the force exercisee.
-    /// @param account Address of the distressed account
-    /// @param tokenId The position to be force exercised; this position must contain at least one out-of-range long leg
-    function _forceExercise(
-        address account,
-        TokenId tokenId,
-        int24 twapTick,
-        int24 currentTick
-    ) internal {
-        CollateralTracker ct0 = collateralToken0();
-        CollateralTracker ct1 = collateralToken1();
-
-        uint128 positionSize;
-
-        LeftRightSigned exerciseFees;
-        {
-            PositionBalance positionBalance = s_positionBalance[account][tokenId];
-
-            positionSize = positionBalance.positionSize();
-
-            if (positionSize == 0) revert Errors.PositionNotOwned();
-
-            // Compute the exerciseFee, this will decrease the further away the price is from the exercised position
-            // Include any deltas in long legs between the current and oracle tick in the exercise fee
-            exerciseFees = riskEngine().exerciseCost(
-                currentTick,
-                twapTick,
-                tokenId,
-                positionBalance
-            );
-        }
-
-        // The protocol delegates some virtual shares to ensure the burn can be settled.
-        ct0.delegate(account);
-        ct1.delegate(account);
-        {
-            int24[2] memory tickLimits;
-            tickLimits[0] = MIN_SWAP_TICK;
-            tickLimits[1] = MAX_SWAP_TICK;
-            (RiskParameters riskParameters, ) = getRiskParameters(0);
-
-            // Exercise the option
-            // Turn off ITM swapping to prevent swap at potentially unfavorable price
-            _burnOptions(
-                tokenId,
-                positionSize,
-                tickLimits,
-                account,
-                COMMIT_LONG_SETTLED,
-                riskParameters
-            );
-        }
-        // redistribute token composition of refund amounts if user doesn't have enough of one token to pay
-        LeftRightSigned refundAmounts = riskEngine().getRefundAmounts(
-            account,
-            exerciseFees,
-            twapTick,
-            ct0,
-            ct1
-        );
-
-        // settle difference between delegated amounts (from the protocol) and exercise fees/substituted tokens
-        ct0.refund(account, msg.sender, refundAmounts.rightSlot());
-        ct1.refund(account, msg.sender, refundAmounts.leftSlot());
-        // revoke the virtual shares that were delegated after settling the difference with the exercisor
-        ct0.revoke(account);
-        ct1.revoke(account);
-
-        emit ForcedExercised(msg.sender, account, tokenId, exerciseFees);
-    }
-
-    /// @notice Settle unpaid premium for one `legIndex` on a position owned by `owner`.
-    /// @dev Called by sellers on buyers of their chunk to increase the available premium for withdrawal (before closing their position).
-    /// @dev This feature is only available when `owner` is solvent and has the requisite tokens to settle the premium.
-    /// @param owner The owner of the option position to make premium payments on
-    /// @param tokenId The position to be force exercised; this position must contain at least one out-of-range long leg
-    function _settlePremium(
-        address owner,
-        TokenId tokenId,
-        int24 twapTick,
-        int24 currentTick
-    ) internal {
-        CollateralTracker ct0 = collateralToken0();
-        CollateralTracker ct1 = collateralToken1();
-
-        // The protocol delegates some virtual shares to ensure the premia can be settled.
-        ct0.delegate(owner);
-        ct1.delegate(owner);
-
-        (RiskParameters riskParameters, ) = getRiskParameters(0);
-        uint128 positionSize = s_positionBalance[owner][tokenId].positionSize();
-        if (positionSize == 0) revert Errors.PositionNotOwned();
-
-        _settleOptions(owner, tokenId, positionSize, riskParameters, currentTick);
-
-        LeftRightSigned refundAmounts = riskEngine().getRefundAmounts(
-            owner,
-            LeftRightSigned.wrap(0),
-            twapTick,
-            ct0,
-            ct1
-        );
-        // allow the caller to settle tokens owed to the protocol by the settlee in exchange for the surplus token
-        ct0.refund(owner, msg.sender, refundAmounts.rightSlot());
-        ct1.refund(owner, msg.sender, refundAmounts.leftSlot());
-
-        ct0.revoke(owner);
-        ct1.revoke(owner);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            SOLVENCY CHECKS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Check whether an account is solvent at a given `atTick` with a collateral requirement of `buffer/10_000` multiplied by the requirement of `positionIdList`.
-    /// @dev Reverts if `account` is not solvent at all provided ticks and `expectedSolvent == true`, or if `account` is solvent at all ticks and `!expectedSolvent`.
-    /// @param account The account to check solvency for
-    /// @param safeMode The current safe mode status
-    /// @param positionIdList The list of positions to check solvency for
-    /// @param currentTick The current tick of the Uniswap pool (needed for fee calculations)
-    /// @param atTicks An array of ticks to check solvency at
-    /// @param buffer The buffer to apply to the collateral requirement
-    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
-    /// @return boolean flag that determines if account is solvent
-    function _checkSolvencyAtTicks(
-        address account,
-        uint8 safeMode,
-        TokenId[] calldata positionIdList,
-        int24 currentTick,
-        int24[] memory atTicks,
-        bool usePremiaAsCollateral,
-        uint256 buffer
-    ) internal view returns (uint256) {
-        (
-            LeftRightUnsigned shortPremium,
-            LeftRightUnsigned longPremium,
-            PositionBalance[] memory positionBalanceArray
-        ) = _calculateAccumulatedPremia(
-                account,
-                positionIdList,
-                usePremiaAsCollateral,
-                ONLY_AVAILABLE_PREMIUM,
-                currentTick
-            );
-
-        // if safeMode is ON, make the collateral requirements for 100% utilizations: no cross-margining, fully covered positions
-        if (safeMode > 0) {
-            unchecked {
-                // cannot miscast because DECIMAL = 10_000
-                uint32 maxUtilizations = uint32(DECIMALS + (DECIMALS << 16));
-                positionBalanceArray[0] = PositionBalanceLibrary.storeBalanceData(
-                    positionBalanceArray[0].positionSize(),
-                    maxUtilizations,
-                    0
-                );
-            }
-        }
-        uint256 solvent;
-        for (uint256 i; i < atTicks.length; ) {
-            unchecked {
-                if (
-                    _isAccountSolvent(
-                        account,
-                        atTicks[i],
-                        positionIdList,
-                        positionBalanceArray,
-                        shortPremium,
-                        longPremium,
-                        buffer
-                    )
-                ) ++solvent;
-
-                ++i;
-            }
-        }
-
-        return solvent;
-    }
-
-    /// @notice Check whether an account is solvent at a given `atTick` with a collateral requirement of `buffer/10_000` multiplied by the requirement of `positionBalanceArray`.
-    /// @param account The account to check solvency for
-    /// @param atTick The tick to check solvency at
-    /// @param positionIdList The list of all option positions held by the user
-    /// @param positionBalanceArray A list of balances and pool utilization for each position, of the form `[[tokenId0, balances0], [tokenId1, balances1], ...]`
-    /// @param shortPremium The total amount of premium (prorated by available settled tokens) owed to the short legs of `account`
-    /// @param longPremium The total amount of premium owed by the long legs of `account`
-    /// @param buffer The buffer to apply to the collateral requirement
-    /// @return Whether the account is solvent at the given tick
-    function _isAccountSolvent(
-        address account,
-        int24 atTick,
-        TokenId[] calldata positionIdList,
-        PositionBalance[] memory positionBalanceArray,
-        LeftRightUnsigned shortPremium,
-        LeftRightUnsigned longPremium,
-        uint256 buffer
-    ) internal view returns (bool) {
-        return
-            riskEngine().isAccountSolvent(
-                positionBalanceArray,
-                positionIdList,
-                atTick,
-                account,
-                shortPremium,
-                longPremium,
-                collateralToken0(),
-                collateralToken1(),
-                buffer
-            );
-    }
-
-    /// @notice Get risk parameters from the risk engine.
-    /// @dev Also checks whether the current tick has deviated too much from the previously stored ticks. Computed in the RiskEngine
-    function getRiskParameters(
-        uint256 builderCode
-    ) public view returns (RiskParameters riskParameters, int24 currentTick) {
-        currentTick = getCurrentTick();
-        riskParameters = riskEngine().getRiskParameters(currentTick, s_oraclePack, builderCode);
-    }
-
-    /// @notice Checks whether the current tick has deviated too much from the previously stored ticks. Computed in the RiskEngine
-    /// @return Whether the current tick has deviated too much to warrant putting the protocol in safe mode
-    function isSafeMode() external view returns (uint8) {
-        (RiskParameters riskParameters, ) = getRiskParameters(0);
-        return riskParameters.safeMode();
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                 POSITIONS HASH GENERATION & VALIDATION
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Makes sure that the positions in the incoming user's list match the existing active option positions.
-    /// @param account The owner of the incoming list of positions
-    /// @param positionIdList The existing list of active options for the owner
-    function _validatePositionList(
-        address account,
-        TokenId[] calldata positionIdList
-    ) internal view {
-        uint256 pLength = positionIdList.length;
-
-        uint256 fingerprintIncomingList;
-
-        // verify it has no duplicated elements
-        if (!PanopticMath.hasNoDuplicateTokenIds(positionIdList)) {
-            revert Errors.DuplicateTokenId();
-        }
-
-        uint64 _poolId = poolId();
-        for (uint256 i = 0; i < pLength; ) {
-            TokenId tokenId = positionIdList[i];
-            // make sure the tokenId is for this Panoptic pool
-            if (tokenId.poolId() != _poolId) revert Errors.WrongPoolId();
-
-            fingerprintIncomingList = PanopticMath.updatePositionsHash(
-                fingerprintIncomingList,
-                tokenId,
-                ADD
-            );
-            unchecked {
-                ++i;
-            }
-        }
-
-        // revert if fingerprint for provided `_positionIdList` does not match the one stored for the `_account`
-        if (fingerprintIncomingList != s_positionsHash[account]) revert Errors.InputListFail();
-    }
-
-    /// @notice Updates the hash for all positions owned by an account. This fingerprints the list of all incoming options with a single hash.
-    /// @dev The outcome of this function will be to update the hash of positions.
-    /// This is done as a duplicate/validation check of the incoming list O(N).
-    /// @dev The positions hash is stored as the XOR of the keccak256 of each tokenId. Updating will XOR the existing hash with the new tokenId.
-    /// The same update can either add a new tokenId (when minting an option), or remove an existing one (when burning it).
-    /// @param account The owner of `tokenId`
-    /// @param tokenId The option position
-    /// @param addFlag Whether to add `tokenId` to the hash (true) or remove it (false)
-    function _updatePositionsHash(
-        address account,
-        TokenId tokenId,
-        bool addFlag,
-        uint8 maxLegs
-    ) internal {
-        // Get the current position hash value (fingerprint of all pre-existing positions created by `_account`)
-        // Add the current tokenId to the positionsHash as XOR'd
-        // since 0 ^ x = x, no problem on first mint
-        // Store values back into the user option details with the updated hash (leaves the other parameters unchanged)
-        uint256 newHash = PanopticMath.updatePositionsHash(
-            s_positionsHash[account],
-            tokenId,
-            addFlag
-        );
-        if ((newHash >> 248) > maxLegs) revert Errors.TooManyLegsOpen();
-        s_positionsHash[account] = newHash;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                QUERIES
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Computes and returns all oracle ticks.
-    /// @return currentTick The current tick in the Uniswap pool
-    /// @return spotTick The fast oracle tick, sourced from the internal 10-minute EMA.
-    /// @return medianTick The slow oracle tick, calculated as the median of the 8 stored price points in the internal oracle.
-    /// @return latestTick The reconstructed absolute tick of the latest observation stored in the internal oracle.
-    /// @return oraclePack The current value of the 8-slot internal observation queue (`s_oraclePack`)
-    function getOracleTicks()
-        external
-        view
-        returns (
-            int24 currentTick,
-            int24 spotTick,
-            int24 medianTick,
-            int24 latestTick,
-            OraclePack oraclePack
-        )
-    {
-        currentTick = getCurrentTick();
-        (spotTick, medianTick, latestTick, ) = riskEngine().getOracleTicks(
-            currentTick,
-            s_oraclePack
-        );
-        oraclePack = s_oraclePack;
-    }
-
-    /// @notice Get the current number of legs across all open positions for an account.
-    /// @param user The account to query
-    /// @return Number of legs across the open positions of `user`
-    function numberOfLegs(address user) external view returns (uint256) {
-        return s_positionsHash[user] >> 248;
-    }
-
-    /// @notice Get the `tokenId` position data for `user`.
-    /// @param user The account that owns `tokenId`
-    /// @param tokenId The position to query
-    /// @return `currentTick` at mint
-    /// @return Fast oracle tick at mint
-    /// @return Slow oracle tick at mint
-    /// @return Last observed tick at mint
-    /// @return Utilization of token0 at mint
-    /// @return Utilization of token1 at mint
-    /// @return Size of the position
-    function positionData(
-        address user,
-        TokenId tokenId
-    ) external view returns (int24, int24, int24, int24, int256, int256, uint128) {
-        return s_positionBalance[user][tokenId].unpackAll();
-    }
-
-    /// @notice Get the oracle price used to check solvency in liquidations.
-    /// @return twapTick The current oracle price used to check solvency in liquidations
-    function getTWAP() public view returns (int24 twapTick) {
-        twapTick = riskEngine().twapEMA(s_oraclePack);
-    }
-
-    /// @notice Get the current tick of the underlying pool.
-    function getCurrentTick() public view returns (int24 currentTick) {
-        currentTick = SFPM.getCurrentTick(poolKey());
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                  PREMIA & PREMIA SPREAD CALCULATIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Ensure the effective liquidity in a given chunk is above a certain threshold.
-    /// @param tokenId An option position
-    /// @param leg A leg index of `tokenId` corresponding to a tickLower-tickUpper chunk
-    /// @param effectiveLiquidityLimit Maximum amount of "spread" defined as removedLiquidity/netLiquidity for a new position
-    /// denominated as X10_000 = (`ratioLimit * 10_000`)
-    /// @return totalLiquidity The total liquidity deposited in that chunk: `totalLiquidity = netLiquidity + removedLiquidity`
-    function _checkLiquiditySpread(
-        TokenId tokenId,
-        uint256 leg,
-        uint256 effectiveLiquidityLimit
-    ) internal view returns (uint256 totalLiquidity) {
-        uint256 netLiquidity;
-        uint256 removedLiquidity;
-        (totalLiquidity, netLiquidity, removedLiquidity) = _getLiquidities(tokenId, leg);
-
-        // compute and return effective liquidity. Return if short=net=0, which is closing short position
-        if (netLiquidity == 0 && removedLiquidity == 0) return totalLiquidity;
-
-        if (netLiquidity == 0) revert Errors.NetLiquidityZero();
-
-        uint256 effectiveLiquidityFactor;
-        unchecked {
-            // cannot overflow because liquidities are uint128
-            effectiveLiquidityFactor = (removedLiquidity * DECIMALS) / netLiquidity;
-        }
-
-        // put a limit on how much new liquidity in one transaction can be deployed into this leg
-        // the effective liquidity measures how many times more the newly added liquidity is compared to the existing/base liquidity
-        if (effectiveLiquidityFactor > effectiveLiquidityLimit)
-            revert Errors.EffectiveLiquidityAboveThreshold();
-    }
-
-    /// @notice Compute the premia collected for a single option position `tokenId`.
-    /// @param tokenId The option position
-    /// @param positionSize The number of contracts (size) of the option position
-    /// @param owner The holder of the tokenId option
-    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
-    /// @param atTick The tick at which the premia is calculated -> use (`atTick < type(int24).max`) to compute it
-    /// up to current block. `atTick = type(int24).max` will only consider fees as of the last on-chain transaction
-    /// @return premiaByLeg The amount of premia owed to the user for each leg of the position
-    /// @return premiumAccumulatorsByLeg The amount of premia accumulated for each leg of the position
-    function _getPremia(
-        TokenId tokenId,
-        uint128 positionSize,
-        address owner,
-        bool usePremiaAsCollateral,
-        int24 atTick
-    )
-        internal
-        view
-        returns (
-            LeftRightSigned[4] memory premiaByLeg,
-            uint256[2][4] memory premiumAccumulatorsByLeg
-        )
-    {
-        uint256 numLegs = tokenId.countLegs();
-        for (uint256 leg = 0; leg < numLegs; ) {
-            uint256 isLong = tokenId.isLong(leg);
-            if (tokenId.width(leg) != 0 && (isLong == 1 || usePremiaAsCollateral)) {
-                LiquidityChunk liquidityChunk = PanopticMath.getLiquidityChunk(
-                    tokenId,
-                    leg,
-                    positionSize
-                );
-                {
-                    uint256 vegoid = tokenId.vegoid();
-                    uint256 tokenType = tokenId.tokenType(leg);
-                    int24 _atTick = atTick;
-                    (premiumAccumulatorsByLeg[leg][0], premiumAccumulatorsByLeg[leg][1]) = SFPM
-                        .getAccountPremium(
-                            poolKey(),
-                            address(this),
-                            tokenType,
-                            liquidityChunk.tickLower(),
-                            liquidityChunk.tickUpper(),
-                            _atTick,
-                            isLong,
-                            vegoid
-                        );
-                }
-                unchecked {
-                    LeftRightUnsigned premiumAccumulatorLast = s_options[owner][tokenId][leg];
-                    premiaByLeg[leg] = LeftRightSigned
-                        .wrap(0)
-                        .addToRightSlot(
-                            int128(
-                                int256(
-                                    ((premiumAccumulatorsByLeg[leg][0] -
-                                        premiumAccumulatorLast.rightSlot()) *
-                                        (liquidityChunk.liquidity())) / 2 ** 64
-                                )
-                            )
-                        )
-                        .addToLeftSlot(
-                            int128(
-                                int256(
-                                    ((premiumAccumulatorsByLeg[leg][1] -
-                                        premiumAccumulatorLast.leftSlot()) *
-                                        (liquidityChunk.liquidity())) / 2 ** 64
-                                )
-                            )
-                        );
-                }
-
-                if (isLong == 1) {
-                    premiaByLeg[leg] = LeftRightSigned.wrap(0).sub(premiaByLeg[leg]);
-                }
-            }
-            unchecked {
-                ++leg;
-            }
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        AVAILABLE PREMIUM LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Query the amount of premium available for withdrawal given a certain `premiumOwed` for a chunk.
-    /// @dev Based on the ratio between `settledTokens` and the total premium owed to sellers in a chunk.
-    /// @dev The ratio is capped at 1 (as the base ratio can be greater than one if some seller forfeits enough premium).
-    /// @param totalLiquidity The updated total liquidity amount for the chunk
-    /// @param settledTokens LeftRight accumulator for the amount of tokens that have been settled (collected or paid)
-    /// @param grossPremiumLast The `last` values used with `premiumAccumulators` to compute the total premium owed to sellers
-    /// @param premiumOwed The amount of premium owed to sellers in the chunk
-    /// @param premiumAccumulators The current values of the premium accumulators for the chunk
-    /// @return The amount of token0/token1 premium available for withdrawal
-    function _getAvailablePremium(
-        uint256 totalLiquidity,
-        LeftRightUnsigned settledTokens,
-        LeftRightUnsigned grossPremiumLast,
-        LeftRightUnsigned premiumOwed,
-        uint256[2] memory premiumAccumulators
-    ) internal pure returns (LeftRightUnsigned) {
-        unchecked {
-            // long premium only accumulates as it is settled, so compute the ratio
-            // of total settled tokens in a chunk to total premium owed to sellers and multiply
-            // cap the ratio at 1 (it can be greater than one if some seller forfeits enough premium)
-            uint256 accumulated0 = ((premiumAccumulators[0] - grossPremiumLast.rightSlot()) *
-                totalLiquidity) / 2 ** 64;
-            uint256 accumulated1 = ((premiumAccumulators[1] - grossPremiumLast.leftSlot()) *
-                totalLiquidity) / 2 ** 64;
-
-            return (
-                LeftRightUnsigned
-                    .wrap(
-                        uint128(
-                            Math.min(
-                                (uint256(premiumOwed.rightSlot()) * settledTokens.rightSlot()) /
-                                    (accumulated0 == 0 ? type(uint256).max : accumulated0),
-                                premiumOwed.rightSlot()
-                            )
-                        )
-                    )
-                    .addToLeftSlot(
-                        uint128(
-                            Math.min(
-                                (uint256(premiumOwed.leftSlot()) * settledTokens.leftSlot()) /
-                                    (accumulated1 == 0 ? type(uint256).max : accumulated1),
-                                premiumOwed.leftSlot()
-                            )
-                        )
-                    )
-            );
-        }
-    }
-
-    /// @notice Query the total amount of liquidity sold in the corresponding chunk for a position leg.
-    /// @dev totalLiquidity (total sold) = removedLiquidity + netLiquidity (in AMM).
-    /// @param tokenId The option position
-    /// @param leg The leg of the option position to get `totalLiquidity` for
-    /// @return totalLiquidity The total amount of liquidity sold in the corresponding chunk for a position leg
-    /// @return netLiquidity The amount of liquidity available in the corresponding chunk for a position leg
-    /// @return removedLiquidity The amount of liquidity removed through buying in the corresponding chunk for a position leg
-    function _getLiquidities(
-        TokenId tokenId,
-        uint256 leg
-    )
-        internal
-        view
-        returns (uint256 totalLiquidity, uint128 netLiquidity, uint128 removedLiquidity)
-    {
-        (int24 tickLower, int24 tickUpper) = tokenId.asTicks(leg);
-
-        LeftRightUnsigned accountLiquidities = SFPM.getAccountLiquidity(
-            poolKey(),
-            address(this),
-            tokenId.tokenType(leg),
-            tickLower,
-            tickUpper
-        );
-
-        netLiquidity = accountLiquidities.rightSlot();
-        removedLiquidity = accountLiquidities.leftSlot();
-
-        unchecked {
-            totalLiquidity = netLiquidity + removedLiquidity;
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
-
-import {Currency} from "../types/Currency.sol";
-import {PoolKey} from "../types/PoolKey.sol";
-import {IHooks} from "./IHooks.sol";
-import {IERC6909Claims} from "./external/IERC6909Claims.sol";
-import {IProtocolFees} from "./IProtocolFees.sol";
-import {BalanceDelta} from "../types/BalanceDelta.sol";
-import {PoolId} from "../types/PoolId.sol";
-import {IExtsload} from "./IExtsload.sol";
-import {IExttload} from "./IExttload.sol";
-
-/// @notice Interface for the PoolManager
-interface IPoolManager is IProtocolFees, IERC6909Claims, IExtsload, IExttload {
-    /// @notice Thrown when a currency is not netted out after the contract is unlocked
-    error CurrencyNotSettled();
-
-    /// @notice Thrown when trying to interact with a non-initialized pool
-    error PoolNotInitialized();
-
-    /// @notice Thrown when unlock is called, but the contract is already unlocked
-    error AlreadyUnlocked();
-
-    /// @notice Thrown when a function is called that requires the contract to be unlocked, but it is not
-    error ManagerLocked();
-
-    /// @notice Pools are limited to type(int16).max tickSpacing in #initialize, to prevent overflow
-    error TickSpacingTooLarge(int24 tickSpacing);
-
-    /// @notice Pools must have a positive non-zero tickSpacing passed to #initialize
-    error TickSpacingTooSmall(int24 tickSpacing);
-
-    /// @notice PoolKey must have currencies where address(currency0) < address(currency1)
-    error CurrenciesOutOfOrderOrEqual(address currency0, address currency1);
-
-    /// @notice Thrown when a call to updateDynamicLPFee is made by an address that is not the hook,
-    /// or on a pool that does not have a dynamic swap fee.
-    error UnauthorizedDynamicLPFeeUpdate();
-
-    /// @notice Thrown when trying to swap amount of 0
-    error SwapAmountCannotBeZero();
-
-    ///@notice Thrown when native currency is passed to a non native settlement
-    error NonzeroNativeValue();
-
-    /// @notice Thrown when `clear` is called with an amount that is not exactly equal to the open currency delta.
-    error MustClearExactPositiveDelta();
-
-    /// @notice Emitted when a new pool is initialized
-    /// @param id The abi encoded hash of the pool key struct for the new pool
-    /// @param currency0 The first currency of the pool by address sort order
-    /// @param currency1 The second currency of the pool by address sort order
-    /// @param fee The fee collected upon every swap in the pool, denominated in hundredths of a bip
-    /// @param tickSpacing The minimum number of ticks between initialized ticks
-    /// @param hooks The hooks contract address for the pool, or address(0) if none
-    /// @param sqrtPriceX96 The price of the pool on initialization
-    /// @param tick The initial tick of the pool corresponding to the initialized price
-    event Initialize(
-        PoolId indexed id,
-        Currency indexed currency0,
-        Currency indexed currency1,
-        uint24 fee,
-        int24 tickSpacing,
-        IHooks hooks,
-        uint160 sqrtPriceX96,
-        int24 tick
-    );
-
-    /// @notice Emitted when a liquidity position is modified
-    /// @param id The abi encoded hash of the pool key struct for the pool that was modified
-    /// @param sender The address that modified the pool
-    /// @param tickLower The lower tick of the position
-    /// @param tickUpper The upper tick of the position
-    /// @param liquidityDelta The amount of liquidity that was added or removed
-    /// @param salt The extra data to make positions unique
-    event ModifyLiquidity(
-        PoolId indexed id, address indexed sender, int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt
-    );
-
-    /// @notice Emitted for swaps between currency0 and currency1
-    /// @param id The abi encoded hash of the pool key struct for the pool that was modified
-    /// @param sender The address that initiated the swap call, and that received the callback
-    /// @param amount0 The delta of the currency0 balance of the pool
-    /// @param amount1 The delta of the currency1 balance of the pool
-    /// @param sqrtPriceX96 The sqrt(price) of the pool after the swap, as a Q64.96
-    /// @param liquidity The liquidity of the pool after the swap
-    /// @param tick The log base 1.0001 of the price of the pool after the swap
-    /// @param fee The swap fee in hundredths of a bip
-    event Swap(
-        PoolId indexed id,
-        address indexed sender,
-        int128 amount0,
-        int128 amount1,
-        uint160 sqrtPriceX96,
-        uint128 liquidity,
-        int24 tick,
-        uint24 fee
-    );
-
-    /// @notice Emitted for donations
-    /// @param id The abi encoded hash of the pool key struct for the pool that was donated to
-    /// @param sender The address that initiated the donate call
-    /// @param amount0 The amount donated in currency0
-    /// @param amount1 The amount donated in currency1
-    event Donate(PoolId indexed id, address indexed sender, uint256 amount0, uint256 amount1);
-
-    /// @notice All interactions on the contract that account deltas require unlocking. A caller that calls `unlock` must implement
-    /// `IUnlockCallback(msg.sender).unlockCallback(data)`, where they interact with the remaining functions on this contract.
-    /// @dev The only functions callable without an unlocking are `initialize` and `updateDynamicLPFee`
-    /// @param data Any data to pass to the callback, via `IUnlockCallback(msg.sender).unlockCallback(data)`
-    /// @return The data returned by the call to `IUnlockCallback(msg.sender).unlockCallback(data)`
-    function unlock(bytes calldata data) external returns (bytes memory);
-
-    /// @notice Initialize the state for a given pool ID
-    /// @dev A swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the input is entirely consumed by the fee
-    /// @param key The pool key for the pool to initialize
-    /// @param sqrtPriceX96 The initial square root price
-    /// @return tick The initial tick of the pool
-    function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick);
-
-    struct ModifyLiquidityParams {
-        // the lower and upper tick of the position
-        int24 tickLower;
-        int24 tickUpper;
-        // how to modify the liquidity
-        int256 liquidityDelta;
-        // a value to set if you want unique liquidity positions at the same range
-        bytes32 salt;
-    }
-
-    /// @notice Modify the liquidity for the given pool
-    /// @dev Poke by calling with a zero liquidityDelta
-    /// @param key The pool to modify liquidity in
-    /// @param params The parameters for modifying the liquidity
-    /// @param hookData The data to pass through to the add/removeLiquidity hooks
-    /// @return callerDelta The balance delta of the caller of modifyLiquidity. This is the total of both principal, fee deltas, and hook deltas if applicable
-    /// @return feesAccrued The balance delta of the fees generated in the liquidity range. Returned for informational purposes
-    /// @dev Note that feesAccrued can be artificially inflated by a malicious actor and integrators should be careful using the value
-    /// For pools with a single liquidity position, actors can donate to themselves to inflate feeGrowthGlobal (and consequently feesAccrued)
-    /// atomically donating and collecting fees in the same unlockCallback may make the inflated value more extreme
-    function modifyLiquidity(PoolKey memory key, ModifyLiquidityParams memory params, bytes calldata hookData)
-        external
-        returns (BalanceDelta callerDelta, BalanceDelta feesAccrued);
-
-    struct SwapParams {
-        /// Whether to swap token0 for token1 or vice versa
-        bool zeroForOne;
-        /// The desired input amount if negative (exactIn), or the desired output amount if positive (exactOut)
-        int256 amountSpecified;
-        /// The sqrt price at which, if reached, the swap will stop executing
-        uint160 sqrtPriceLimitX96;
-    }
-
-    /// @notice Swap against the given pool
-    /// @param key The pool to swap in
-    /// @param params The parameters for swapping
-    /// @param hookData The data to pass through to the swap hooks
-    /// @return swapDelta The balance delta of the address swapping
-    /// @dev Swapping on low liquidity pools may cause unexpected swap amounts when liquidity available is less than amountSpecified.
-    /// Additionally note that if interacting with hooks that have the BEFORE_SWAP_RETURNS_DELTA_FLAG or AFTER_SWAP_RETURNS_DELTA_FLAG
-    /// the hook may alter the swap input/output. Integrators should perform checks on the returned swapDelta.
-    function swap(PoolKey memory key, SwapParams memory params, bytes calldata hookData)
-        external
-        returns (BalanceDelta swapDelta);
-
-    /// @notice Donate the given currency amounts to the in-range liquidity providers of a pool
-    /// @dev Calls to donate can be frontrun adding just-in-time liquidity, with the aim of receiving a portion donated funds.
-    /// Donors should keep this in mind when designing donation mechanisms.
-    /// @dev This function donates to in-range LPs at slot0.tick. In certain edge-cases of the swap algorithm, the `sqrtPrice` of
-    /// a pool can be at the lower boundary of tick `n`, but the `slot0.tick` of the pool is already `n - 1`. In this case a call to
-    /// `donate` would donate to tick `n - 1` (slot0.tick) not tick `n` (getTickAtSqrtPrice(slot0.sqrtPriceX96)).
-    /// Read the comments in `Pool.swap()` for more information about this.
-    /// @param key The key of the pool to donate to
-    /// @param amount0 The amount of currency0 to donate
-    /// @param amount1 The amount of currency1 to donate
-    /// @param hookData The data to pass through to the donate hooks
-    /// @return BalanceDelta The delta of the caller after the donate
-    function donate(PoolKey memory key, uint256 amount0, uint256 amount1, bytes calldata hookData)
-        external
-        returns (BalanceDelta);
-
-    /// @notice Writes the current ERC20 balance of the specified currency to transient storage
-    /// This is used to checkpoint balances for the manager and derive deltas for the caller.
-    /// @dev This MUST be called before any ERC20 tokens are sent into the contract, but can be skipped
-    /// for native tokens because the amount to settle is determined by the sent value.
-    /// However, if an ERC20 token has been synced and not settled, and the caller instead wants to settle
-    /// native funds, this function can be called with the native currency to then be able to settle the native currency
-    function sync(Currency currency) external;
-
-    /// @notice Called by the user to net out some value owed to the user
-    /// @dev Will revert if the requested amount is not available, consider using `mint` instead
-    /// @dev Can also be used as a mechanism for free flash loans
-    /// @param currency The currency to withdraw from the pool manager
-    /// @param to The address to withdraw to
-    /// @param amount The amount of currency to withdraw
-    function take(Currency currency, address to, uint256 amount) external;
-
-    /// @notice Called by the user to pay what is owed
-    /// @return paid The amount of currency settled
-    function settle() external payable returns (uint256 paid);
-
-    /// @notice Called by the user to pay on behalf of another address
-    /// @param recipient The address to credit for the payment
-    /// @return paid The amount of currency settled
-    function settleFor(address recipient) external payable returns (uint256 paid);
-
-    /// @notice WARNING - Any currency that is cleared, will be non-retrievable, and locked in the contract permanently.
-    /// A call to clear will zero out a positive balance WITHOUT a corresponding transfer.
-    /// @dev This could be used to clear a balance that is considered dust.
-    /// Additionally, the amount must be the exact positive balance. This is to enforce that the caller is aware of the amount being cleared.
-    function clear(Currency currency, uint256 amount) external;
-
-    /// @notice Called by the user to move value into ERC6909 balance
-    /// @param to The address to mint the tokens to
-    /// @param id The currency address to mint to ERC6909s, as a uint256
-    /// @param amount The amount of currency to mint
-    /// @dev The id is converted to a uint160 to correspond to a currency address
-    /// If the upper 12 bytes are not 0, they will be 0-ed out
-    function mint(address to, uint256 id, uint256 amount) external;
-
-    /// @notice Called by the user to move value from ERC6909 balance
-    /// @param from The address to burn the tokens from
-    /// @param id The currency address to burn from ERC6909s, as a uint256
-    /// @param amount The amount of currency to burn
-    /// @dev The id is converted to a uint160 to correspond to a currency address
-    /// If the upper 12 bytes are not 0, they will be 0-ed out
-    function burn(address from, uint256 id, uint256 amount) external;
-
-    /// @notice Updates the pools lp fees for the a pool that has enabled dynamic lp fees.
-    /// @dev A swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the input is entirely consumed by the fee
-    /// @param key The key of the pool to update dynamic LP fees for
-    /// @param newDynamicLPFee The new dynamic pool LP fee
-    function updateDynamicLPFee(PoolKey memory key, uint24 newDynamicLPFee) external;
-}
-
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.24;
 // Interfaces
@@ -8295,41 +4073,4225 @@ contract BuilderFactory {
     }
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.24;
+// Interfaces
+import {CollateralTracker} from "@contracts/CollateralTracker.sol";
+import {ISemiFungiblePositionManager} from "@contracts/interfaces/ISemiFungiblePositionManager.sol";
+import {IRiskEngine} from "@contracts/interfaces/IRiskEngine.sol";
+// Inherited implementations
+import {Clone} from "clones-with-immutable-args/Clone.sol";
+import {Multicall} from "@base/Multicall.sol";
+// Libraries
+import {Constants} from "@libraries/Constants.sol";
+import {EfficientHash} from "@libraries/EfficientHash.sol";
+import {Errors} from "@libraries/Errors.sol";
+import {InteractionHelper} from "@libraries/InteractionHelper.sol";
+import {Math} from "@libraries/Math.sol";
+import {PanopticMath} from "@libraries/PanopticMath.sol";
+// Custom types
+import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
+import {LiquidityChunk} from "@types/LiquidityChunk.sol";
+import {PositionBalance, PositionBalanceLibrary} from "@types/PositionBalance.sol";
+import {RiskParameters} from "@types/RiskParameters.sol";
+import {TokenId} from "@types/TokenId.sol";
+import {OraclePack, OraclePackLibrary} from "@types/OraclePack.sol";
 
-/// @title Multicall
-/// @notice Enables calling multiple methods in a single call to the contract.
-/// @dev Helpful for performing batch operations such as an "emergency exit", or simply creating advanced positions.
+/// @title The Panoptic Pool: Create permissionless options on a CLAMM.
 /// @author Axicon Labs Limited
-abstract contract Multicall {
-    /// @notice Performs multiple calls on the inheritor in a single transaction, and returns the data from each call.
-    /// @param data The calldata for each call
-    /// @return results The data returned by each call
-    function multicall(bytes[] calldata data) public payable returns (bytes[] memory results) {
-        results = new bytes[](data.length);
-        for (uint256 i = 0; i < data.length; ) {
-            (bool success, bytes memory result) = address(this).delegatecall(data[i]);
+/// @notice Manages positions, collateral, liquidations and forced exercises.
+contract PanopticPool is Clone, Multicall {
+    /*//////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////*/
 
-            if (!success) {
-                // Bubble up the revert reason
-                // The bytes type is ABI encoded as a length-prefixed byte array
-                // So we simply need to add 32 to the pointer to get the start of the data
-                // And then revert with the size loaded from the first 32 bytes
-                // Other solutions will do work to differentiate the revert reasons and provide parenthetical information
-                // However, we have chosen to simply replicate the the normal behavior of the call
-                // NOTE: memory-safe because it reads from memory already allocated by solidity (the bytes memory result)
-                assembly ("memory-safe") {
-                    revert(add(result, 32), mload(result))
+    /// @notice Emitted when an account is liquidated.
+    /// @param liquidator Address of the caller liquidating the distressed account
+    /// @param liquidatee Address of the distressed/liquidatable account
+    /// @param bonusAmounts LeftRight encoding for the the bonus paid for token 0 (right slot) and 1 (left slot) to the liquidator
+    event AccountLiquidated(
+        address indexed liquidator,
+        address indexed liquidatee,
+        LeftRightSigned bonusAmounts
+    );
+
+    /// @notice Emitted when a position is force exercised.
+    /// @param exercisor Address of the account that forces the exercise of the position
+    /// @param user Address of the owner of the liquidated position
+    /// @param tokenId TokenId of the liquidated position
+    /// @param exerciseFee LeftRight encoding for the cost paid by the exercisor to force the exercise of the token;
+    /// the cost for token 0 (right slot) and 1 (left slot) is represented as negative
+    event ForcedExercised(
+        address indexed exercisor,
+        address indexed user,
+        TokenId indexed tokenId,
+        LeftRightSigned exerciseFee
+    );
+
+    /// @notice Emitted when premium is settled independent of a mint/burn (e.g. during `settlePremium`).
+    /// @param user Address of the owner of the settled position
+    /// @param tokenId TokenId of the settled position
+    /// @param legIndex The leg index of `tokenId` that the premium was settled for
+    /// @param settledAmounts LeftRight encoding for the amount of premium settled for token0 (right slot) and token1 (left slot)
+    event PremiumSettled(
+        address indexed user,
+        TokenId indexed tokenId,
+        uint256 legIndex,
+        LeftRightSigned settledAmounts
+    );
+
+    /// @notice Emitted when an option is burned.
+    /// @param recipient User that burnt the option
+    /// @param positionSize The number of contracts burnt, expressed in terms of the asset
+    /// @param tokenId TokenId of the burnt option
+    /// @param premiaByLeg LeftRight packing for the amount of premia settled for token0 (right) and token1 (left) for each leg of `tokenId`
+    event OptionBurnt(
+        address indexed recipient,
+        uint128 positionSize,
+        TokenId indexed tokenId,
+        LeftRightSigned[4] premiaByLeg
+    );
+
+    /// @notice Emitted when an option is minted.
+    /// @param recipient User that minted the option
+    /// @param tokenId TokenId of the created option
+    /// @param balanceData The `PositionBalance` data for `tokenId` containing the number of contracts, pool utilizations, and ticks at mint
+    event OptionMinted(
+        address indexed recipient,
+        TokenId indexed tokenId,
+        PositionBalance balanceData
+    );
+
+    /*//////////////////////////////////////////////////////////////
+                         IMMUTABLES & CONSTANTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Lower price bound used when no slippage check is required.
+    int24 internal constant MIN_SWAP_TICK = Constants.MIN_POOL_TICK - 1;
+
+    /// @notice Upper price bound used when no slippage check is required.
+    int24 internal constant MAX_SWAP_TICK = Constants.MAX_POOL_TICK + 1;
+
+    /// @notice Flag that signals to compute premia for both the short and long legs of a position.
+    bool internal constant COMPUTE_PREMIA_AS_COLLATERAL = true;
+
+    /// @notice Flag that indicates only to include the share of (settled) premium that is available to collect when calling `_calculateAccumulatedPremia`.
+    bool internal constant ONLY_AVAILABLE_PREMIUM = false;
+
+    /// @notice Flag that signals to commit both collected Uniswap fees and settled long premium to `s_settledTokens`.
+    bool internal constant COMMIT_LONG_SETTLED = true;
+    /// @notice Flag that signals to only commit collected Uniswap fees to `s_settledTokens`.
+    bool internal constant DONOT_COMMIT_LONG_SETTLED = false;
+
+    /// @notice Flag for `_checkSolvency` to indicate that an account should be solvent at all input ticks.
+    bool internal constant ASSERT_SOLVENCY = true;
+
+    /// @notice Flag for `_checkSolvency` to indicate that an account should be insolvent at all input ticks.
+    bool internal constant ASSERT_INSOLVENCY = false;
+
+    /// @notice Flag that signals to add a new position to the user's positions hash (as opposed to removing an existing position).
+    bool internal constant ADD = true;
+
+    /// @notice The maximum allowed number of legs across all open positions for a user.
+    uint64 internal constant MAX_OPEN_LEGS = 25;
+
+    /// @notice Multiplier for the collateral requirement in the general case.
+    uint24 internal constant NO_BUFFER = 10_000_000;
+
+    /// @notice Decimals for computation (1 bps (1 basis point) precision: 0.01%).
+    /// @dev uint type for composability with unsigned integer based mathematical operations.
+    uint256 internal constant DECIMALS = 10_000;
+
+    /// @notice Transient storage slot for the tick price
+    bytes32 internal constant PRICE_TRANSIENT_SLOT = keccak256("panoptic.price.snapshot");
+
+    /// @notice The "engine" of Panoptic - manages AMM liquidity and executes all mints/burns/exercises.
+    ISemiFungiblePositionManager internal immutable SFPM;
+
+    /*//////////////////////////////////////////////////////////////
+                                STORAGE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Stores a sorted set of 8 price observations used to compute the internal median oracle price.
+    // The data for the last 8 interactions is stored as such:
+    //
+    //    timestamp      orderMap      spotEMA      fastEMA       slowEMA      eonsEMA      reference         r7           r6                      r0
+    // |<- 24 bits ->|<- 24 bits ->|<- 22 bits ->|>- 22 bits ->|<- 22 bits >|<- 22 bits ->|<- 24 bits ->|<- 12bits ->|<- 12 bits ->|<- ... ->|<- 12 bits ->|
+    //
+    // LAST UPDATED BLOCK TIMESTAMP (22 bits) -> 22 bits (use 28 bits for the timestamp and truncate the lower 6 bits to create a 64s epoch-based timekeeping)
+    // [BLOCK.TIMESTAMP]
+    // (0000000000000000000000) // dynamic
+    //
+    // ORDERING of tick indices least --> greatest (24 bits)
+    // The value of the bit codon ([#]) is a pointer to a tick index in the tick array.
+    // The position of the bit codon from most to least significant is the ordering of the
+    // tick index it points to from least to greatest.
+    //
+    // rank:  0   1   2   3   4   5   6   7
+    // slot: [7] [5] [3] [1] [0] [2] [4] [6]
+    //       111 101 011 001 000 010 100 110
+    //
+    // [-512] [7]
+    // 111000000000
+    //
+    // [512] [0]
+    // 001000000000
+    //
+    // [-512] [6]
+    // 111000000000
+    //
+    // [512] [1]
+    // 001000000000
+    //
+    // [-512] [5]
+    // 111000000000
+    //
+    // [512] [2]
+    // 001000000000
+    //
+    // [0 = CURRENT TICK] [4]
+    // (000000000000) // dynamic
+    //
+    // [0 = CURRENT TICK] [3]
+    // (000000000000) // dynamic
+    OraclePack internal s_oraclePack;
+
+    // ERC4626 vaults that users collateralize their positions with
+    // Each token has its own vault, listed in the same order as the tokens in the pool
+    // In addition to collateral deposits, these vaults also handle various collateral/bonus/exercise computations
+
+    /// @notice Nested mapping that tracks the option formation: address => tokenId => leg => premiaGrowth.
+    /// @dev Premia growth is taking a snapshot of the chunk premium in SFPM, which is measuring the amount of fees
+    /// collected for every chunk per unit of liquidity (net or short, depending on the isLong value of the specific leg index).
+    mapping(address => mapping(TokenId => LeftRightUnsigned[4])) internal s_options;
+
+    /// @notice Per-chunk `last` value that gives the aggregate amount of premium owed to all sellers when multiplied by the total amount of liquidity `totalLiquidity`.
+    /// @dev `totalGrossPremium = totalLiquidity * (grossPremium(perLiquidityX64) - lastGrossPremium(perLiquidityX64)) / 2**64`
+    /// @dev Used to compute the denominator for the fraction of premium available to sellers to collect.
+    /// @dev LeftRight - right slot is token0, left slot is token1.
+    mapping(bytes32 chunkKey => LeftRightUnsigned lastGrossPremium) internal s_grossPremiumLast;
+
+    /// @notice Per-chunk accumulator for tokens owed to sellers that have been settled and are now available.
+    /// @dev This number increases when buyers pay long premium and when tokens are collected from Uniswap.
+    /// @dev It decreases when sellers close positions and collect the premium they are owed.
+    /// @dev LeftRight - right slot is token0, left slot is token1.
+    mapping(bytes32 chunkKey => LeftRightUnsigned settledTokens) internal s_settledTokens;
+
+    /// @notice Tracks the position size of a tokenId for a given user, and the pool utilizations and oracle tick values at the time of last mint.
+    //    <-- 24 bits --> <-- 24 bits --> <-- 24 bits --> <-- 24 bits --> <-- 16 bits --> <-- 16 bits --> <-- 128 bits -->
+    //   latestTick         medianTick       spotTick       currentTick     utilization1    utilization0    positionSize
+    mapping(address account => mapping(TokenId tokenId => PositionBalance positionBalance))
+        internal s_positionBalance;
+
+    /// @notice Tracks the position list hash (i.e `keccak256(XORs of abi.encodePacked(positionIdList))`).
+    /// @dev A component of this hash also tracks the total number of legs across all positions (i.e. makes sure the length of the provided positionIdList matches).
+    /// @dev The purpose of this system is to reduce storage usage when a user has more than one active position.
+    /// @dev Instead of having to manage an unwieldy storage array and do lots of loads, we just store a hash of the array.
+    /// @dev This hash can be cheaply verified on every operation with a user provided positionIdList - which can then be used for operations
+    /// without having to every load any other data from storage.
+    //      numLegs                   user positions hash
+    //  |<-- 8 bits -->|<------------------ 248 bits ------------------->|
+    //  |<---------------------- 256 bits ------------------------------>|
+    mapping(address account => uint256 positionsHash) internal s_positionsHash;
+
+    /*//////////////////////////////////////////////////////////////
+                   POOL-SPECIFIC IMMUTABLE PARAMETERS
+    //////////////////////////////////////////////////////////////*/
+
+    // The parameters will be encoded in calldata at `_getImmutableArgsOffset()` as follows:
+    // abi.encodePacked(address collateralToken0, address collateralToken1, address oracleContract, uint256 poolId, abi.encode(PoolKey poolKey))
+    // bytes: 0                    20                   40                   60                   92
+    //        |<---- 160 bits ---->|<---- 160 bits ---->|<---- 160 bits ---->|<---- 160 bits ---->|<---- 64 bits ---->|<---- 1280 bits ---->|
+    //           collateralToken0     collateralToken1       riskEngine             poolManager          poolId             poolKey
+
+    /// @notice Get the collateral token corresponding to token0 of the Uniswap pool.
+    /// @return Collateral token corresponding to token0 in Uniswap
+    function collateralToken0() public pure returns (CollateralTracker) {
+        return CollateralTracker(_getArgAddress(0));
+    }
+
+    /// @notice Get the collateral token corresponding to token1 of the Uniswap pool.
+    /// @return Collateral token corresponding to token1 in Uniswap
+    function collateralToken1() public pure returns (CollateralTracker) {
+        return CollateralTracker(_getArgAddress(20));
+    }
+
+    /// @notice Get the address of the risk engine contract used by this Panoptic Pool.
+    /// @return The risk engine contract used by this Panoptic Pool
+    function riskEngine() public pure returns (IRiskEngine) {
+        return IRiskEngine(_getArgAddress(40));
+    }
+
+    /// @notice Retrieve the PoolManager associated with that CollateralTracker.
+    /// @dev stored as zero if not a Uniswap v4 pool
+    /// @return The PoolManager instance associated with that CollateralTracker's uniswap V4 pool
+    function poolManager() public pure returns (address) {
+        return address(_getArgAddress(60));
+    }
+
+    /// @notice Get the Uniswap Pool ID for the Uniswap pool used by this Panoptic.
+    /// @return The Pool ID for this Panoptic Pool
+    function poolId() public pure returns (uint64) {
+        return uint64(_getArgUint64(80));
+    }
+
+    /// @notice Get the pool key for the Uniswap pool used by this Panoptic Pool.
+    /// @dev For Uniswap v3, this is the address of the UniswapV3Pool
+    /// @dev For Uniswap v4, this is Pool Key
+    /// @dev For any other AMMs, this is assumed to be an address
+    /// @return key The Pool Key for this Panoptic Pool.
+    function poolKey() public pure returns (bytes calldata key) {
+        uint256 offset = _getImmutableArgsOffset();
+        uint256 start = offset + 88;
+        uint256 len;
+        assembly {
+            len := sub(sub(calldatasize(), start), 2)
+            key.offset := start
+            key.length := len
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            ACCESS CONTROL
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Reverts if the associated Risk Engine is not the caller.
+    modifier onlyRiskEngine() {
+        _onlyRiskEngine();
+        _;
+    }
+
+    function _onlyRiskEngine() internal view {
+        if (msg.sender != address(riskEngine())) revert Errors.NotGuardian();
+    }
+
+    /// @notice Force safe mode lock: effective safe mode must be treated as level 3.
+    function lockSafeMode() external onlyRiskEngine {
+        s_oraclePack = s_oraclePack.lock();
+    }
+
+    /// @notice Remove forced safe mode lock.
+    function unlockSafeMode() external onlyRiskEngine {
+        s_oraclePack = s_oraclePack.unlock();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             INITIALIZATION
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Store the address of the canonical SemiFungiblePositionManager (SFPM) contract.
+    /// @param _sfpm The address of the SFPM
+    constructor(ISemiFungiblePositionManager _sfpm) {
+        SFPM = _sfpm;
+    }
+
+    /// @notice Initializes the median oracle of a new `PanopticPool` instance with median oracle state and performs initial token approvals.
+    /// @dev Must be called first (by the factory contract) before any transaction can occur.
+    function initialize() external {
+        // reverts if this contract has already been initialized (assuming block.timestamp > 0)
+        if (OraclePack.unwrap(s_oraclePack) != 0) revert Errors.PoolAlreadyInitialized();
+
+        int24 currentTick = getCurrentTick();
+
+        // Store the median data
+        uint96 EMAs = OraclePackLibrary.packEMAs(
+            currentTick,
+            currentTick,
+            currentTick,
+            currentTick
+        );
+        s_oraclePack = OraclePackLibrary.storeOraclePack(
+            block.timestamp >> 6,
+            0xf590a6, // orderMap
+            EMAs,
+            currentTick,
+            0xe00200e00200e00200e00000, // current residuals
+            0,
+            0
+        );
+        /*
+            (uint256((block.timestamp >> 6) % 2 ** 24) << 232) +
+            // magic number which adds (7,5,3,1,0,2,4,6) order and minTick in positions 7, 5, 3 and maxTick in 6, 4, 2
+            // see comment on s_oraclePack initialization for format of this magic number
+            (uint256(0xf590a60000000000000000000000000000800e00200e00200e00000000)) +
+            // eonsEMA at bits 207-186
+            (uint256(uint24(currentTick) & 0x3FFFFF) << 186) +
+            // slowEMA at bits 185-164
+            (uint256(uint24(currentTick) & 0x3FFFFF) << 164) +
+            // fastEMA at bits 163-142
+            (uint256(uint24(currentTick) & 0x3FFFFF) << 142) +
+            // spotEMA at bits 141-120
+            (uint256(uint24(currentTick) & 0x3FFFFF) << 120) +
+            // store currentTick as the reference tick at bits 119-96
+            (uint256(uint24(currentTick)) << 96);
+           */
+
+        // consolidate all 4 approval calls to one library delegatecall in order to reduce bytecode size
+        // approves:
+        // SFPM: token0, token1
+        // CollateralTracker0 - token0
+        // CollateralTracker1 - token1
+        InteractionHelper.doApprovals(
+            SFPM,
+            collateralToken0(),
+            collateralToken1(),
+            collateralToken0().token0(),
+            collateralToken0().token1(),
+            poolManager()
+        );
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                              EIP SUPPORT
+    //////////////////////////////////////////////////////////////*/
+
+    // note: this contract does not need to accept batch ERC1155 transfers from the SFPM or supply ERC-165 calls
+    // thus, `supportsInterface` and `onERC1155BatchReceived` are left unimplemented to reduce contract size
+
+    /// @notice Returns magic value when called by the `SemiFungiblePositionManager` contract to indicate that this contract supports ERC1155.
+    function onERC1155Received(
+        address,
+        address,
+        uint256,
+        uint256,
+        bytes memory
+    ) external pure returns (bytes4) {
+        return this.onERC1155Received.selector;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             QUERY HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Reverts if the caller has a lower collateral balance than required to meet the provided `minValue0` and `minValue1`.
+    /// @dev Can be used for composable slippage checks with `multicall` (such as for a force exercise or liquidation).
+    /// @param minValue0 The minimum acceptable `token0` value of collateral
+    /// @param minValue1 The minimum acceptable `token1` value of collateral
+    function assertMinCollateralValues(uint256 minValue0, uint256 minValue1) external view {
+        CollateralTracker ct0 = collateralToken0();
+        CollateralTracker ct1 = collateralToken1();
+        if (ct0.assetsOf(msg.sender) < minValue0 || ct1.assetsOf(msg.sender) < minValue1)
+            revert Errors.AccountInsolvent(0, 0);
+    }
+
+    /// @notice Determines if account is eligible to withdraw or transfer collateral.
+    /// @dev Checks whether account is solvent with `BP_DECREASE_BUFFER` according to `_validateSolvency`.
+    /// @dev Prevents insolvent and near-insolvent accounts from withdrawing collateral before they are liquidated.
+    /// @dev Reverts if account is not solvent with `BP_DECREASE_BUFFER`.
+    /// @param user The account to check for collateral withdrawal eligibility
+    /// @param positionIdList The list of all option positions held by `user`
+    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
+    function validateCollateralWithdrawable(
+        address user,
+        TokenId[] calldata positionIdList,
+        bool usePremiaAsCollateral
+    ) external view {
+        (RiskParameters riskParameters, ) = getRiskParameters(0);
+        _validateSolvency(
+            user,
+            positionIdList,
+            riskParameters.bpDecreaseBuffer(),
+            usePremiaAsCollateral,
+            0
+        );
+    }
+
+    /// @notice Returns the total amount of premium accumulated for a list of positions and a list containing the corresponding `PositionBalance` information for each position.
+    /// @param user Address of the user that owns the positions
+    /// @param positionIdList List of positions. Written as `[tokenId1, tokenId2, ...]`
+    /// @param includePendingPremium If true, include premium that is owed to the user but has not yet settled; if false, only include premium that is available to collect
+    /// @return The total amount of premium owed (which may `includePendingPremium`) to the short legs in `positionIdList` (token0: right slot, token1: left slot)
+    /// @return The total amount of premium owed by the long legs in `positionIdList` (token0: right slot, token1: left slot)
+    /// @return A list of `PositionBalance` data (balance and pool utilization/oracle ticks at last mint) for each position, of the form `[PositionBalance_0, PositionBalance_1, ...]`
+    function getAccumulatedFeesAndPositionsData(
+        address user,
+        bool includePendingPremium,
+        TokenId[] calldata positionIdList
+    ) external view returns (LeftRightUnsigned, LeftRightUnsigned, PositionBalance[] memory) {
+        // Get the current tick of the Uniswap pool
+        int24 currentTick = getCurrentTick();
+        // Compute the accumulated premia for all tokenId in positionIdList (includes short+long premium)
+        return
+            _calculateAccumulatedPremia(
+                user,
+                positionIdList,
+                COMPUTE_PREMIA_AS_COLLATERAL,
+                includePendingPremium,
+                currentTick
+            );
+    }
+
+    /// @notice Calculate the accumulated premia owed from the option buyer to the option seller.
+    /// @param user The holder of options
+    /// @param positionIdList The list of all option positions held by user
+    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
+    /// @param includePendingPremium If true, include premium that is owed to the user but has not yet settled; if false, only include premium that is available to collect
+    /// @param atTick The current tick of the Uniswap pool
+    /// @return shortPremium The total amount of premium owed (which may `includePendingPremium`) to the short legs in `positionIdList` (token0: right slot, token1: left slot)
+    /// @return longPremium The total amount of premium owed by the long legs in `positionIdList` (token0: right slot, token1: left slot)
+    /// @return balances A list of balances and pool utilization for each position, of the form `[[tokenId0, balances0], [tokenId1, balances1], ...]`
+    function _calculateAccumulatedPremia(
+        address user,
+        TokenId[] calldata positionIdList,
+        bool usePremiaAsCollateral,
+        bool includePendingPremium,
+        int24 atTick
+    )
+        internal
+        view
+        returns (
+            LeftRightUnsigned shortPremium,
+            LeftRightUnsigned longPremium,
+            PositionBalance[] memory balances
+        )
+    {
+        uint256 pLength = positionIdList.length;
+        balances = new PositionBalance[](pLength);
+
+        address c_user = user;
+        // loop through each option position/tokenId
+        for (uint256 k = 0; k < pLength; ) {
+            TokenId tokenId = positionIdList[k];
+
+            {
+                PositionBalance positionBalanceData = s_positionBalance[c_user][tokenId];
+                if (positionBalanceData.positionSize() == 0) revert Errors.PositionNotOwned();
+
+                balances[k] = positionBalanceData;
+            }
+            (
+                LeftRightSigned[4] memory premiaByLeg,
+                uint256[2][4] memory premiumAccumulatorsByLeg
+            ) = _getPremia(
+                    tokenId,
+                    balances[k].positionSize(),
+                    c_user,
+                    usePremiaAsCollateral,
+                    atTick
+                );
+
+            uint256 numLegs = tokenId.countLegs();
+            for (uint256 leg = 0; leg < numLegs; ) {
+                if (tokenId.width(leg) != 0) {
+                    if (tokenId.isLong(leg) == 0) {
+                        if (!includePendingPremium) {
+                            bytes32 chunkKey = PanopticMath.getChunkKey(tokenId, leg);
+
+                            (uint256 totalLiquidity, , ) = _getLiquidities(tokenId, leg);
+                            shortPremium = shortPremium.add(
+                                _getAvailablePremium(
+                                    totalLiquidity,
+                                    s_settledTokens[chunkKey],
+                                    s_grossPremiumLast[chunkKey],
+                                    LeftRightUnsigned.wrap(
+                                        uint256(LeftRightSigned.unwrap(premiaByLeg[leg]))
+                                    ),
+                                    premiumAccumulatorsByLeg[leg]
+                                )
+                            );
+                        } else {
+                            shortPremium = shortPremium.add(
+                                LeftRightUnsigned.wrap(
+                                    uint256(LeftRightSigned.unwrap(premiaByLeg[leg]))
+                                )
+                            );
+                        }
+                    } else {
+                        longPremium = LeftRightUnsigned.wrap(
+                            uint256(
+                                LeftRightSigned.unwrap(
+                                    LeftRightSigned
+                                        .wrap(int256(LeftRightUnsigned.unwrap(longPremium)))
+                                        .sub(premiaByLeg[leg])
+                                )
+                            )
+                        );
+                    }
+                }
+                unchecked {
+                    ++leg;
                 }
             }
 
-            results[i] = result;
+            unchecked {
+                ++k;
+            }
+        }
+    }
 
+    /*//////////////////////////////////////////////////////////////
+                          ONBOARD MEDIAN TWAP
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Updates the internal oracle.
+    function pokeOracle() external {
+        int24 currentTick = getCurrentTick();
+
+        (, OraclePack oraclePack) = riskEngine().computeInternalMedian(s_oraclePack, currentTick);
+
+        if (OraclePack.unwrap(oraclePack) != 0) s_oraclePack = oraclePack;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          MINT/BURN INTERFACE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Mints or burns each `tokenId` in `positionIdList.
+    /// @param positionIdList The list of tokenIds for the option positions to be minted or burnt
+    /// @param finalPositionIdList The final positionIdList after all the tokens have been minted/burnt
+    /// @param positionSizes The list of positionSize for the position to be minted (0 for burns)
+    /// @param tickAndSpreadLimits A Nx3 array containing: the lower [0] and upper [1] bounds of an acceptable open interval for the ending price, and the maximum amount of "spread" defined as `removedLiquidity/netLiquidity` for a new position and
+    /// denominated as X10_000 = (`ratioLimit * 10_000`)
+    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
+    /// @param builderCode The builder code for fee distribution
+    function dispatch(
+        TokenId[] calldata positionIdList,
+        TokenId[] calldata finalPositionIdList,
+        uint128[] calldata positionSizes,
+        int24[3][] calldata tickAndSpreadLimits,
+        bool usePremiaAsCollateral,
+        uint256 builderCode
+    ) external {
+        // if safeMode, enforce covered at mint and exercise at burn
+        RiskParameters riskParameters;
+
+        LeftRightSigned cumulativeTickDeltas;
+        {
+            //assembly tload
+            bytes32 slot = PRICE_TRANSIENT_SLOT;
+            assembly {
+                cumulativeTickDeltas := tload(slot)
+            }
+        }
+        {
+            int24 startTick;
+            (riskParameters, startTick) = getRiskParameters(builderCode);
+
+            if (cumulativeTickDeltas.rightSlot() == 0) {
+                // initializes +1 sentinel
+                cumulativeTickDeltas = LeftRightSigned.wrap(0).addToRightSlot(1).addToLeftSlot(
+                    startTick
+                );
+            } else {
+                cumulativeTickDeltas = LeftRightSigned
+                    .wrap(0)
+                    .addToRightSlot(
+                        cumulativeTickDeltas.rightSlot() +
+                            int128(Math.abs(int24(cumulativeTickDeltas.leftSlot()) - startTick))
+                    )
+                    .addToLeftSlot(startTick);
+            }
+        }
+        for (uint256 i = 0; i < positionIdList.length; ) {
+            TokenId tokenId = positionIdList[i];
+
+            // make sure the tokenId is for this Panoptic pool
+            if (tokenId.poolId() != poolId()) revert Errors.WrongPoolId();
+
+            PositionBalance positionBalanceData = s_positionBalance[msg.sender][tokenId];
+
+            int24[2] memory _tickLimits;
+            _tickLimits[0] = tickAndSpreadLimits[i][0];
+            _tickLimits[1] = tickAndSpreadLimits[i][1];
+
+            // if safe mode is larger than 1, mandate all positions to be minted/burnt as covered
+            if (riskParameters.safeMode() > 1) {
+                if (_tickLimits[0] > _tickLimits[1]) {
+                    (_tickLimits[0], _tickLimits[1]) = (_tickLimits[1], _tickLimits[0]);
+                }
+            }
+            int24 finalTick;
+            if (PositionBalance.unwrap(positionBalanceData) == 0) {
+                // revert if more than 2 conditions are triggered to prevent the minting of any positions
+                if (riskParameters.safeMode() > 2) revert Errors.StaleOracle();
+                uint24 effectiveLiquidityLimit = uint24(tickAndSpreadLimits[i][2]);
+                (, finalTick) = _mintOptions(
+                    tokenId,
+                    positionSizes[i],
+                    effectiveLiquidityLimit,
+                    msg.sender,
+                    _tickLimits,
+                    riskParameters
+                );
+            } else {
+                uint128 positionSize = positionBalanceData.positionSize();
+
+                if (positionSize == 0) revert Errors.PositionNotOwned();
+
+                // if input positionSize matches the size stored, this is a settlePremium. Otherwise, this is a burn.
+                if (positionSize == positionSizes[i]) {
+                    finalTick = getCurrentTick();
+                    _settleOptions(msg.sender, tokenId, positionSize, riskParameters, finalTick);
+                } else {
+                    (, , finalTick) = _burnOptions(
+                        tokenId,
+                        positionSize,
+                        _tickLimits,
+                        msg.sender,
+                        COMMIT_LONG_SETTLED,
+                        riskParameters
+                    );
+                }
+            }
+
+            unchecked {
+                // update starting tick in leftSlot() and add the cumulative delta to the rightSlot()
+                // can never miscast because ticks are int24
+                cumulativeTickDeltas = LeftRightSigned
+                    .wrap(0)
+                    .addToRightSlot(
+                        cumulativeTickDeltas.rightSlot() +
+                            int128(Math.abs(int24(cumulativeTickDeltas.leftSlot()) - finalTick))
+                    )
+                    .addToLeftSlot(finalTick);
+                ++i;
+            }
+        }
+
+        unchecked {
+            // can never overflow as tickDeltaLiquidation is a int24
+            /// @dev revert if the total deviation is more than twice the tickDeltaLiquidation (ie. roundtrips more than the allowed tick liquidation delta per trip)
+            if (
+                cumulativeTickDeltas.rightSlot() >
+                int256(uint256(2 * riskParameters.tickDeltaLiquidation()))
+            ) revert Errors.PriceImpactTooLarge();
+
+            {
+                //assembly tstore
+                bytes32 slot = PRICE_TRANSIENT_SLOT;
+                assembly {
+                    tstore(slot, cumulativeTickDeltas)
+                }
+            }
+        }
+        // Perform solvency check on user's account to ensure they had enough buying power to mint the option
+        // Add an initial buffer to the collateral requirement to prevent users from minting their account close to insolvency
+        OraclePack oraclePack = _validateSolvency(
+            msg.sender,
+            finalPositionIdList,
+            riskParameters.bpDecreaseBuffer(),
+            usePremiaAsCollateral,
+            riskParameters.safeMode()
+        );
+        // Update `s_oraclePack` with a new observation if the last observation is old enough (returned oraclePack is nonzero)
+        if (OraclePack.unwrap(oraclePack) != 0) s_oraclePack = oraclePack;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         POSITION MINTING LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Validates the current options of the user, and mints a new position.
+    /// @param tokenId The tokenId of the newly minted position
+    /// @param positionSize The size of the position to be minted, expressed in terms of the asset
+    /// @param effectiveLiquidityLimit Maximum amount of "spread" defined as `removedLiquidity/netLiquidity` for a new position and
+    /// denominated as X32 = (`ratioLimit * 2^32`)
+    /// @param owner The owner of the option position to be minted
+    /// @param tickLimits The lower and upper bound of an acceptable open interval for the ending price
+    /// @param riskParameters The RiskEngine's core parameters
+    function _mintOptions(
+        TokenId tokenId,
+        uint128 positionSize,
+        uint24 effectiveLiquidityLimit,
+        address owner,
+        int24[2] memory tickLimits,
+        RiskParameters riskParameters
+    ) internal returns (LeftRightSigned paidAmounts, int24 finalTick) {
+        // Mint in the SFPM and update state of collateral
+        LeftRightUnsigned[4] memory collectedByLeg;
+        LeftRightSigned netAmmDelta;
+        (collectedByLeg, netAmmDelta, finalTick) = SFPM.mintTokenizedPosition(
+            poolKey(),
+            tokenId,
+            positionSize,
+            tickLimits[0],
+            tickLimits[1]
+        );
+
+        _updateSettlementPostMint(
+            riskParameters,
+            tokenId,
+            collectedByLeg,
+            positionSize,
+            effectiveLiquidityLimit,
+            owner
+        );
+
+        uint32 poolUtilizations;
+
+        (poolUtilizations, paidAmounts) = _payCommissionAndWriteData(
+            tokenId,
+            positionSize,
+            owner,
+            netAmmDelta,
+            riskParameters
+        );
+
+        {
+            // update the users options balance of position `tokenId`
+            // NOTE: user can't mint same position multiple times, so set the positionSize instead of adding
+            PositionBalance balanceData = PositionBalanceLibrary.storeBalanceData(
+                positionSize,
+                poolUtilizations,
+                0
+            );
+            s_positionBalance[owner][tokenId] = balanceData;
+
+            emit OptionMinted(owner, tokenId, balanceData);
+        }
+    }
+
+    /// @notice Take the commission fees for minting `tokenId` and settle any other required collateral deltas.
+    /// @param tokenId The option position
+    /// @param positionSize The size of the position, expressed in terms of the asset
+    /// @param owner The owner of the option position to be minted
+    /// @param netAmmDelta The amount of tokens moved during creation of the option position
+    /// @param riskParameters The RiskEngine's core parameters
+    /// @return utilizations Packing of the pool utilization (how much funds are in the Panoptic pool versus the AMM pool at the time of minting),
+    /// right 64bits for token0 and left 64bits for token1, defined as `(inAMM * 10_000) / totalAssets()`
+    /// where totalAssets is the total tracked assets in the AMM and PanopticPool minus fees and donations to the Panoptic pool
+    /// @return paidAmounts The amount of tokens paid when creating that option for token0 (right) and token1 (left)
+    function _payCommissionAndWriteData(
+        TokenId tokenId,
+        uint128 positionSize,
+        address owner,
+        LeftRightSigned netAmmDelta,
+        RiskParameters riskParameters
+    ) internal returns (uint32 utilizations, LeftRightSigned paidAmounts) {
+        // compute how much of tokenId is long and short positions
+        (LeftRightSigned longAmounts, LeftRightSigned shortAmounts) = PanopticMath
+            .computeExercisedAmounts(tokenId, positionSize, true);
+        {
+            (uint32 utilization0, int128 paid0) = collateralToken0().settleMint(
+                owner,
+                longAmounts.rightSlot(),
+                shortAmounts.rightSlot(),
+                netAmmDelta.rightSlot(),
+                riskParameters
+            );
+            utilizations = utilization0;
+            paidAmounts = paidAmounts.addToRightSlot(paid0);
+        }
+        {
+            (uint32 utilization1, int128 paid1) = collateralToken1().settleMint(
+                owner,
+                longAmounts.leftSlot(),
+                shortAmounts.leftSlot(),
+                netAmmDelta.leftSlot(),
+                riskParameters
+            );
+            unchecked {
+                // no miscast because utilization is <=10_000
+                utilizations += uint32(utilization1 << 16);
+            }
+            paidAmounts = paidAmounts.addToLeftSlot(paid1);
+        }
+
+        // return pool utilizations as two uint16 (pool Utilization is always <= 10_000)
+        return (utilizations, paidAmounts);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         POSITION BURNING LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Close all options in `positionIdList`.
+    /// @param owner The owner of the option position to be closed
+    /// @param tickLimitLow The lower bound of an acceptable open interval for the ending price on each option close
+    /// @param tickLimitHigh The upper bound of an acceptable open interval for the ending price on each option close
+    /// @param commitLongSettled Whether to commit the long premium that will be settled to storage (disabled during liquidations)
+    /// @param positionIdList The list of option positions to close
+    /// @return netPaid The net amount of tokens paid after closing the positions
+    /// @return premiasByLeg The amount of premia settled by the user for each leg of the position
+    function _burnAllOptionsFrom(
+        address owner,
+        int24 tickLimitLow,
+        int24 tickLimitHigh,
+        bool commitLongSettled,
+        TokenId[] calldata positionIdList
+    ) internal returns (LeftRightSigned netPaid, LeftRightSigned[4][] memory premiasByLeg) {
+        premiasByLeg = new LeftRightSigned[4][](positionIdList.length);
+        (RiskParameters riskParameters, ) = getRiskParameters(0);
+
+        for (uint256 i = 0; i < positionIdList.length; ) {
+            uint128 positionSize = s_positionBalance[owner][positionIdList[i]].positionSize();
+
+            if (positionSize == 0) revert Errors.PositionNotOwned();
+
+            int24[2] memory tickLimits;
+            tickLimits[0] = tickLimitLow;
+            tickLimits[1] = tickLimitHigh;
+            LeftRightSigned paidAmounts;
+            address _owner = owner;
+            (paidAmounts, premiasByLeg[i], ) = _burnOptions(
+                positionIdList[i],
+                positionSize,
+                tickLimits,
+                _owner,
+                commitLongSettled,
+                riskParameters
+            );
+            netPaid = netPaid.add(paidAmounts);
             unchecked {
                 ++i;
             }
         }
+    }
+
+    /// @notice Close a single option position.
+    /// @param tokenId The option position to burn
+    /// @param positionSize The size of the position to burn
+    /// @param tickLimits The lower and upper bound of an acceptable open interval for the ending price on each option close
+    /// @param owner The owner of the option position to be burned
+    /// @param commitLongSettled Whether to commit the long premium that will be settled to storage (disabled during liquidations)
+    /// @param riskParameters The RiskEngine's core risk parameters
+    /// @return paidAmounts The net amount of tokens paid after closing the position
+    /// @return premiaByLeg The amount of premia settled by the user for each leg of the position
+    /// @return finalTick The final tick after burning the options
+    function _burnOptions(
+        TokenId tokenId,
+        uint128 positionSize,
+        int24[2] memory tickLimits,
+        address owner,
+        bool commitLongSettled,
+        RiskParameters riskParameters
+    )
+        internal
+        returns (
+            LeftRightSigned paidAmounts,
+            LeftRightSigned[4] memory premiaByLeg,
+            int24 finalTick
+        )
+    {
+        LeftRightUnsigned[4] memory collectedByLeg;
+        LeftRightSigned netAmmDelta;
+        (collectedByLeg, netAmmDelta, finalTick) = SFPM.burnTokenizedPosition(
+            poolKey(),
+            tokenId,
+            positionSize,
+            tickLimits[0],
+            tickLimits[1]
+        );
+
+        LeftRightSigned realizedPremia;
+        (realizedPremia, premiaByLeg) = _updateSettlementPostBurn(
+            owner,
+            tokenId,
+            collectedByLeg,
+            positionSize,
+            riskParameters,
+            LeftRightSigned.wrap(commitLongSettled ? int128(1) : int128(0))
+        );
+
+        (LeftRightSigned longAmounts, LeftRightSigned shortAmounts) = PanopticMath
+            .computeExercisedAmounts(tokenId, positionSize, false);
+
+        emit OptionBurnt(owner, positionSize, tokenId, premiaByLeg);
+
+        RiskParameters _rp = riskParameters;
+        {
+            int128 paid0 = collateralToken0().settleBurn(
+                owner,
+                longAmounts.rightSlot(),
+                shortAmounts.rightSlot(),
+                netAmmDelta.rightSlot(),
+                realizedPremia.rightSlot(),
+                _rp
+            );
+            paidAmounts = paidAmounts.addToRightSlot(paid0);
+        }
+
+        {
+            int128 paid1 = collateralToken1().settleBurn(
+                owner,
+                longAmounts.leftSlot(),
+                shortAmounts.leftSlot(),
+                netAmmDelta.leftSlot(),
+                realizedPremia.leftSlot(),
+                _rp
+            );
+            paidAmounts = paidAmounts.addToLeftSlot(paid1);
+        }
+    }
+
+    /// @notice Validates the solvency of `user`.
+    /// @dev Falls back to the most conservative (least solvent) oracle tick if the sum of the squares of the deltas between all oracle ticks exceeds `MAX_TICKS_DELTA^2`, defined in the RiskEngine.
+    /// @dev Effectively, this means that the users must be solvent at all oracle ticks if the at least one of the ticks is sufficiently stale.
+    /// @param user The account to validate
+    /// @param positionIdList The list of positions to validate solvency for
+    /// @param buffer The buffer to apply to the collateral requirement for `user`
+    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
+    /// @return If nonzero (enough time has passed since last observation), the updated value for `s_oraclePack` with a new observation
+    function _validateSolvency(
+        address user,
+        TokenId[] calldata positionIdList,
+        uint32 buffer,
+        bool usePremiaAsCollateral,
+        uint8 safeMode
+    ) internal view returns (OraclePack) {
+        // check that the provided positionIdList matches the positions in memory
+        _validatePositionList(user, positionIdList);
+
+        int24 currentTick = getCurrentTick();
+
+        OraclePack oraclePack;
+        int24[] memory atTicks;
+
+        (atTicks, oraclePack) = riskEngine().getSolvencyTicks(currentTick, s_oraclePack);
+
+        if (positionIdList.length != 0) {
+            uint256 solvent = _checkSolvencyAtTicks(
+                user,
+                safeMode,
+                positionIdList,
+                currentTick,
+                atTicks,
+                usePremiaAsCollateral,
+                uint256(buffer)
+            );
+            uint256 numberOfTicks = atTicks.length;
+
+            if (solvent != numberOfTicks) revert Errors.AccountInsolvent(solvent, numberOfTicks);
+        }
+        return oraclePack;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          SETTLEMENTS
+    //////////////////////////////////////////////////////////////*/
+
+    function _settleOptions(
+        address owner,
+        TokenId tokenId,
+        uint128 positionSize,
+        RiskParameters riskParameters,
+        int24 currentTick
+    ) internal {
+        // call _updateSettlementPostBurn to settle the long premia or the short premia (only for self calling)
+        LeftRightUnsigned[4] memory emptyCollectedByLegs;
+        LeftRightSigned realizedPremia;
+        unchecked {
+            // cannot be miscast because currentTick is a int24
+            (realizedPremia, ) = _updateSettlementPostBurn(
+                owner,
+                tokenId,
+                emptyCollectedByLegs,
+                positionSize,
+                riskParameters,
+                LeftRightSigned.wrap(1).addToLeftSlot(1 + (int128(currentTick) << 2))
+            );
+        }
+        // deduct the paid premium tokens from the owner's balance
+        collateralToken0().settleBurn(owner, 0, 0, 0, realizedPremia.rightSlot(), riskParameters);
+        collateralToken1().settleBurn(owner, 0, 0, 0, realizedPremia.leftSlot(), riskParameters);
+    }
+
+    /// @notice Adds collected tokens to `s_settledTokens` and adjusts `s_grossPremiumLast` for any liquidity added.
+    /// @dev Always called after `mintTokenizedPosition`.
+    /// @param tokenId The option position that was minted
+    /// @param collectedByLeg The amount of tokens collected in the corresponding chunk for each leg of the position
+    /// @param positionSize The size of the position, expressed in terms of the asset
+    /// @param effectiveLiquidityLimit Maximum amount of "spread" defined as `removedLiquidity/netLiquidity`
+    /// @param owner The owner of the option position to be minted
+    function _updateSettlementPostMint(
+        RiskParameters riskParameters,
+        TokenId tokenId,
+        LeftRightUnsigned[4] memory collectedByLeg,
+        uint128 positionSize,
+        uint24 effectiveLiquidityLimit,
+        address owner
+    ) internal {
+        // ADD the current tokenId to the position list hash (hash = XOR of all keccak256(tokenId))
+        // and increase the number of positions counter by 1.
+        _updatePositionsHash(owner, tokenId, ADD, riskParameters.maxLegs());
+
+        for (uint256 leg = 0; leg < tokenId.countLegs(); ) {
+            if (tokenId.width(leg) != 0) {
+                uint256 isLong = tokenId.isLong(leg);
+                // if position is long, ensure that removed liquidity does not deplete strike beyond min(MAX_SPREAD, user-provided effectiveLiquidityLimit)
+                // new totalLiquidity (total sold) = removedLiquidity + netLiquidity (R + N)
+                uint256 totalLiquidity = _checkLiquiditySpread(
+                    tokenId,
+                    leg,
+                    isLong == 0
+                        ? riskParameters.maxSpread()
+                        : Math.min(effectiveLiquidityLimit, riskParameters.maxSpread())
+                );
+
+                bytes32 chunkKey = PanopticMath.getChunkKey(tokenId, leg);
+
+                // add any tokens collected from Uniswap in a given chunk to the settled tokens available for withdrawal by sellers
+                s_settledTokens[chunkKey] = s_settledTokens[chunkKey].add(collectedByLeg[leg]);
+
+                LiquidityChunk liquidityChunk = PanopticMath.getLiquidityChunk(
+                    tokenId,
+                    leg,
+                    positionSize
+                );
+
+                uint256 grossCurrent0;
+                uint256 grossCurrent1;
+                {
+                    {
+                        uint256 tokenType = tokenId.tokenType(leg);
+                        uint256 vegoid = tokenId.vegoid();
+                        uint256 _isLong = isLong;
+                        // can use (type(int24).max flag because premia accumulators were updated during the mintTokenizedPosition step.
+                        (grossCurrent0, grossCurrent1) = SFPM.getAccountPremium(
+                            poolKey(),
+                            address(this),
+                            tokenType,
+                            liquidityChunk.tickLower(),
+                            liquidityChunk.tickUpper(),
+                            type(int24).max,
+                            _isLong,
+                            vegoid
+                        );
+                    }
+
+                    s_options[owner][tokenId][leg] = LeftRightUnsigned
+                        .wrap(uint128(grossCurrent0))
+                        .addToLeftSlot(uint128(grossCurrent1));
+                }
+
+                // if position is short, adjust `grossPremiumLast` upward to account for the increase in short liquidity
+                if (isLong == 0) {
+                    unchecked {
+                        // L
+                        LeftRightUnsigned grossPremiumLast = s_grossPremiumLast[chunkKey];
+                        // R
+                        uint256 positionLiquidity = liquidityChunk.liquidity();
+                        // T (totalLiquidity is (T + R) after minting)
+                        uint256 totalLiquidityBefore = totalLiquidity - positionLiquidity;
+
+                        // We need to adjust the grossPremiumLast value such that the result of
+                        // (grossPremium - adjustedGrossPremiumLast) * updatedTotalLiquidityPostMint / 2**64 is equal to (grossPremium - grossPremiumLast) * totalLiquidityBeforeMint / 2**64
+                        // G: total gross premium
+                        // T: totalLiquidityBeforeMint
+                        // R: positionLiquidity
+                        // C: current grossPremium value
+                        // L: current grossPremiumLast value
+                        // Ln: updated grossPremiumLast value
+                        // T * (C - L) = G
+                        // (T + R) * (C - Ln) = G
+                        //
+                        // T * (C - L) = (T + R) * (C - Ln)
+                        // (TC - TL) / (T + R) = C - Ln
+                        // Ln = C - (TC - TL)/(T + R)
+                        // Ln = (CT + CR - TC + TL)/(T+R)
+                        // Ln = (CR + TL)/(T+R)
+
+                        s_grossPremiumLast[chunkKey] = LeftRightUnsigned
+                            .wrap(
+                                uint128(
+                                    (grossCurrent0 *
+                                        positionLiquidity +
+                                        grossPremiumLast.rightSlot() *
+                                        totalLiquidityBefore) / totalLiquidity
+                                )
+                            )
+                            .addToLeftSlot(
+                                uint128(
+                                    (grossCurrent1 *
+                                        positionLiquidity +
+                                        grossPremiumLast.leftSlot() *
+                                        totalLiquidityBefore) / totalLiquidity
+                                )
+                            );
+                    }
+                }
+            }
+            unchecked {
+                ++leg;
+            }
+        }
+    }
+
+    /// @notice Updates settled tokens and grossPremiumLast for a chunk after a burn and returns premium info.
+    /// @param owner The owner of the option position that was burnt
+    /// @param tokenId The option position that was burnt
+    /// @param collectedByLeg The amount of tokens collected in the corresponding chunk for each leg of the position
+    /// @param positionSize The size of the position, expressed in terms of the asset
+    /// @param commitLongSettledAndKeepOpen Whether to commit the long premium that will be settled to storage (rightSlot != 0) and whether the position is being burned (leftSlot == 0)
+    /// @return realizedPremia The amount of premia settled by the user
+    /// @return premiaByLeg The amount of premia settled by the user for each leg of the position
+    function _updateSettlementPostBurn(
+        address owner,
+        TokenId tokenId,
+        LeftRightUnsigned[4] memory collectedByLeg,
+        uint128 positionSize,
+        RiskParameters riskParameters,
+        LeftRightSigned commitLongSettledAndKeepOpen
+    ) internal returns (LeftRightSigned realizedPremia, LeftRightSigned[4] memory premiaByLeg) {
+        uint256[2][4] memory premiumAccumulatorsByLeg;
+
+        // compute accumulated fees
+        (premiaByLeg, premiumAccumulatorsByLeg) = _getPremia(
+            tokenId,
+            positionSize,
+            owner,
+            COMPUTE_PREMIA_AS_COLLATERAL,
+            commitLongSettledAndKeepOpen.leftSlot() == 0
+                ? type(int24).max
+                : int24(commitLongSettledAndKeepOpen.leftSlot() >> 2)
+        );
+        for (uint256 leg = 0; leg < tokenId.countLegs(); ) {
+            if (tokenId.width(leg) != 0) {
+                LeftRightSigned legPremia = premiaByLeg[leg];
+                bytes32 chunkKey = PanopticMath.getChunkKey(tokenId, leg);
+
+                // collected from Uniswap
+                LeftRightUnsigned settledTokens = s_settledTokens[chunkKey].add(
+                    collectedByLeg[leg]
+                );
+
+                // (will be) paid by long legs
+                if (tokenId.isLong(leg) == 1) {
+                    if (commitLongSettledAndKeepOpen.rightSlot() != 0)
+                        settledTokens = LeftRightUnsigned.wrap(
+                            uint256(
+                                LeftRightSigned.unwrap(
+                                    LeftRightSigned
+                                        .wrap(int256(LeftRightUnsigned.unwrap(settledTokens)))
+                                        .sub(legPremia)
+                                )
+                            )
+                        );
+                    realizedPremia = realizedPremia.add(legPremia);
+                } else {
+                    if (commitLongSettledAndKeepOpen.leftSlot() == 0 || msg.sender == owner) {
+                        uint256 positionLiquidity;
+                        uint256 totalLiquidity;
+                        {
+                            LiquidityChunk liquidityChunk = PanopticMath.getLiquidityChunk(
+                                tokenId,
+                                leg,
+                                positionSize
+                            );
+                            positionLiquidity = liquidityChunk.liquidity();
+
+                            // if position is short, ensure that removed liquidity does not deplete strike beyond MAX_SPREAD when closed
+                            // new totalLiquidity (total sold) = removedLiquidity + netLiquidity (T - R)
+                            totalLiquidity = _checkLiquiditySpread(
+                                tokenId,
+                                leg,
+                                riskParameters.maxSpread()
+                            );
+                        }
+                        // T (totalLiquidity is (T - R) after burning)
+                        uint256 totalLiquidityBefore;
+                        unchecked {
+                            // cannot overflow because total liquidity is less than uint128
+                            totalLiquidityBefore = commitLongSettledAndKeepOpen.leftSlot() == 0
+                                ? totalLiquidity + positionLiquidity
+                                : totalLiquidity;
+                        }
+                        LeftRightUnsigned grossPremiumLast = s_grossPremiumLast[chunkKey];
+
+                        LeftRightUnsigned availablePremium = _getAvailablePremium(
+                            totalLiquidityBefore,
+                            settledTokens,
+                            grossPremiumLast,
+                            LeftRightUnsigned.wrap(uint256(LeftRightSigned.unwrap(legPremia))),
+                            premiumAccumulatorsByLeg[leg]
+                        );
+
+                        // subtract settled tokens sent to seller
+                        settledTokens = settledTokens.sub(availablePremium);
+
+                        // add available premium to amount that should be settled
+                        realizedPremia = realizedPremia.add(
+                            LeftRightSigned.wrap(int256(LeftRightUnsigned.unwrap(availablePremium)))
+                        );
+
+                        // update the base `premiaByLeg` value to reflect the amount of premium that will actually be settled
+                        premiaByLeg[leg] = LeftRightSigned.wrap(
+                            int256(LeftRightUnsigned.unwrap(availablePremium))
+                        );
+
+                        // We need to adjust the grossPremiumLast value such that the result of
+                        // (grossPremium - adjustedGrossPremiumLast) * updatedTotalLiquidityPostBurn / 2**64 is equal to
+                        // (grossPremium - grossPremiumLast) * totalLiquidityBeforeBurn / 2**64 - premiumOwedToPosition
+                        // G: total gross premium (- premiumOwedToPosition)
+                        // T: totalLiquidityBeforeMint
+                        // R: positionLiquidity
+                        // C: current grossPremium value
+                        // L: current grossPremiumLast value
+                        // Ln: updated grossPremiumLast value
+                        // T * (C - L) = G
+                        // (T - R) * (C - Ln) = G - P
+                        //
+                        // T * (C - L) = (T - R) * (C - Ln) + P
+                        // (TC - TL - P) / (T - R) = C - Ln
+                        // Ln = C - (TC - TL - P) / (T - R)
+                        // Ln = (TC - CR - TC + LT + P) / (T-R)
+                        // Ln = (LT - CR + P) / (T-R)
+
+                        unchecked {
+                            uint256[2][4]
+                                memory _premiumAccumulatorsByLeg = premiumAccumulatorsByLeg;
+                            uint256 _leg = leg;
+
+                            // if there's still liquidity, compute the new grossPremiumLast
+                            // otherwise, we just reset grossPremiumLast to the current grossPremium
+                            s_grossPremiumLast[chunkKey] = totalLiquidity != 0
+                                ? LeftRightUnsigned
+                                    .wrap(
+                                        uint128(
+                                            uint256(
+                                                Math.max(
+                                                    (int256(
+                                                        grossPremiumLast.rightSlot() *
+                                                            totalLiquidityBefore
+                                                    ) -
+                                                        int256(
+                                                            _premiumAccumulatorsByLeg[_leg][0] *
+                                                                positionLiquidity
+                                                        )) +
+                                                        int256(legPremia.rightSlot()) *
+                                                        2 ** 64,
+                                                    0
+                                                )
+                                            ) / totalLiquidity
+                                        )
+                                    )
+                                    .addToLeftSlot(
+                                        uint128(
+                                            uint256(
+                                                Math.max(
+                                                    (int256(
+                                                        grossPremiumLast.leftSlot() *
+                                                            totalLiquidityBefore
+                                                    ) -
+                                                        int256(
+                                                            _premiumAccumulatorsByLeg[_leg][1] *
+                                                                positionLiquidity
+                                                        )) + int256(legPremia.leftSlot()) * 2 ** 64,
+                                                    0
+                                                )
+                                            ) / totalLiquidity
+                                        )
+                                    )
+                                : LeftRightUnsigned
+                                    .wrap(uint128(premiumAccumulatorsByLeg[_leg][0]))
+                                    .addToLeftSlot(uint128(premiumAccumulatorsByLeg[_leg][1]));
+                        }
+                    }
+                }
+                // update settled tokens in storage with all local deltas
+                s_settledTokens[chunkKey] = settledTokens;
+
+                if (commitLongSettledAndKeepOpen.leftSlot() == 0) {
+                    // erase the s_options entry for that leg
+                    s_options[owner][tokenId][leg] = LeftRightUnsigned.wrap(0);
+                } else {
+                    // update the premium accumulator to the latest value: only if it is a long leg (settleLongPremium) OR if owner == msg.sender (autocollect)
+                    if (tokenId.isLong(leg) != 0 || msg.sender == owner) {
+                        s_options[owner][tokenId][leg] = LeftRightUnsigned
+                            .wrap(0)
+                            .addToRightSlot(uint128(premiumAccumulatorsByLeg[leg][0]))
+                            .addToLeftSlot(uint128(premiumAccumulatorsByLeg[leg][1]));
+
+                        emit PremiumSettled(owner, tokenId, leg, premiaByLeg[leg]);
+                    }
+                }
+            }
+
+            unchecked {
+                ++leg;
+            }
+        }
+
+        if (commitLongSettledAndKeepOpen.leftSlot() == 0) {
+            // reset balances and delete stored option data
+            s_positionBalance[owner][tokenId] = PositionBalance.wrap(0);
+
+            // REMOVE the current tokenId from the position list hash (hash = XOR of all keccak256(tokenId), remove by XOR'ing again)
+            // and decrease the number of positions counter by 1.
+            _updatePositionsHash(owner, tokenId, !ADD, riskParameters.maxLegs());
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    LIQUIDATIONS & FORCED EXERCISES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Dispatches liquidations, forced exercises, or long premium settlements based on account solvency
+    /// @dev This function determines the appropriate action based on solvency checks at multiple price points:
+    ///      - If insolvent at all ticks: Execute liquidation (burns all positions)
+    ///      - If solvent at all ticks: Execute force exercise or settle long premium based on list lengths
+    ///      - Otherwise: Revert as account is not fully margin called
+    /// @dev The function uses position list lengths to determine the specific operation:
+    ///      - Same length lists between positionIdListTo and positionIdListToFinal: Settle long premium
+    ///      - Final list one shorter: Force exercise
+    ///      - Final list empty: Liquidation
+    /// @param positionIdListFrom List of positions held by the caller (msg.sender)
+    /// @param account The account being acted upon (liquidated, exercised, or settled)
+    /// @param positionIdListTo Current positions of the target account
+    /// @param positionIdListToFinal Expected positions after the operation completes
+    /// @param usePremiaAsCollateral Packed value indicating whether to use premia as collateral:
+    ///        - leftSlot: For the caller (msg.sender)
+    ///        - rightSlot: For the target account
+    function dispatchFrom(
+        TokenId[] calldata positionIdListFrom,
+        address account,
+        TokenId[] calldata positionIdListTo,
+        TokenId[] calldata positionIdListToFinal,
+        LeftRightUnsigned usePremiaAsCollateral
+    ) external payable {
+        // Assert the account we are liquidating is actually insolvent
+        int24 twapTick = getTWAP();
+        int24 currentTick = getCurrentTick();
+
+        TokenId tokenId;
+
+        uint256 solvent;
+        uint256 numberOfTicks;
+        {
+            _validatePositionList(account, positionIdListTo);
+
+            // Enforce maximum delta between TWAP and currentTick to prevent extreme price manipulation
+            int24 spotTick;
+            int24 latestTick;
+            (spotTick, , latestTick, ) = riskEngine().getOracleTicks(currentTick, s_oraclePack);
+
+            unchecked {
+                (RiskParameters riskParameters, ) = getRiskParameters(0);
+                int256 MAX_TWAP_DELTA_LIQUIDATION = int256(
+                    uint256(riskParameters.tickDeltaLiquidation())
+                );
+                if (Math.abs(currentTick - twapTick) > MAX_TWAP_DELTA_LIQUIDATION)
+                    revert Errors.StaleOracle();
+            }
+
+            // Ensure the account is insolvent at twapTick (in place of medianTick), currentTick, spotTick, and latestTick
+            int24[] memory atTicks = new int24[](4);
+            atTicks[0] = spotTick;
+            atTicks[1] = twapTick;
+            atTicks[2] = latestTick;
+            atTicks[3] = currentTick;
+
+            solvent = _checkSolvencyAtTicks(
+                account,
+                0,
+                positionIdListTo,
+                currentTick,
+                atTicks,
+                COMPUTE_PREMIA_AS_COLLATERAL,
+                NO_BUFFER
+            );
+            numberOfTicks = atTicks.length;
+        }
+        {
+            uint256 toLength = positionIdListTo.length;
+            uint256 finalLength = positionIdListToFinal.length;
+            // if account is solvent at all ticks, this is a force exercise or a settlePremium.
+            if (solvent == numberOfTicks) {
+                unchecked {
+                    tokenId = positionIdListTo[toLength - 1];
+                    if (toLength == finalLength) {
+                        // same length, that's a settle
+                        {
+                            bytes32 toHash = EfficientHash.efficientKeccak256(
+                                abi.encodePacked(positionIdListTo)
+                            );
+                            bytes32 finalHash = EfficientHash.efficientKeccak256(
+                                abi.encodePacked(positionIdListToFinal)
+                            );
+                            if (toHash != finalHash) {
+                                revert Errors.InputListFail();
+                            }
+                        }
+                        _settlePremium(account, tokenId, twapTick, currentTick);
+                    } else if (toLength == (finalLength + 1)) {
+                        // final is one element shorter, that's a force exercise
+                        if (tokenId.countLongs() == 0 || tokenId.validateIsExercisable() == 0)
+                            revert Errors.NoLegsExercisable();
+                        _forceExercise(account, tokenId, twapTick, currentTick);
+                    } else if (finalLength == 0) {
+                        // if final length was zero, this was intended to be liquidation, but revert because not margin called and solvent at some of the tested ticks
+                        revert Errors.NotMarginCalled();
+                    } else {
+                        // otherwise, wrong input lists
+                        revert Errors.InputListFail();
+                    }
+                    // ensure the callee is still solvent after the operation
+                    bool premiaAsCollateral = usePremiaAsCollateral.rightSlot() > 0;
+                    _validateSolvency(
+                        account,
+                        positionIdListToFinal,
+                        NO_BUFFER,
+                        premiaAsCollateral,
+                        0
+                    );
+                }
+            } else if (solvent == 0) {
+                // if account is insolvent at all ticks, this is a liquidation
+
+                // if the positions lengths are the same, this was intended as a settlePremia, but revert because account is insolvent
+                if (toLength == finalLength) revert Errors.AccountInsolvent(solvent, 4);
+
+                if (positionIdListToFinal.length != 0) revert Errors.InputListFail();
+                // if the final position list has a non-zero length, this can't be a complete liquidation, revert
+                _liquidate(account, positionIdListTo, twapTick, currentTick);
+            } else {
+                // otherwise, revert because the account is not fully margin called
+                revert Errors.NotMarginCalled();
+            }
+        }
+
+        // ensure the caller is still solvent after the operation
+        _validateSolvency(
+            msg.sender,
+            positionIdListFrom,
+            NO_BUFFER,
+            usePremiaAsCollateral.leftSlot() > 0,
+            0
+        );
+    }
+
+    /// @notice Liquidates a distressed account. Will burn all positions and issue a bonus to the liquidator.
+    /// @dev Will revert if liquidated account is solvent at one of the oracle ticks or if TWAP tick is too far away from the current tick.
+    /// @param liquidatee Address of the distressed account
+    /// @param positionIdList List of positions owned by the user. Written as `[tokenId1, tokenId2, ...]`
+    function _liquidate(
+        address liquidatee,
+        TokenId[] calldata positionIdList,
+        int24 twapTick,
+        int24 currentTick
+    ) internal {
+        LeftRightUnsigned tokenData0;
+        LeftRightUnsigned tokenData1;
+        LeftRightUnsigned shortPremium;
+        {
+            PositionBalance[] memory positionBalanceArray = new PositionBalance[](
+                positionIdList.length
+            );
+            LeftRightUnsigned longPremium;
+            (shortPremium, longPremium, positionBalanceArray) = _calculateAccumulatedPremia(
+                liquidatee,
+                positionIdList,
+                COMPUTE_PREMIA_AS_COLLATERAL,
+                ONLY_AVAILABLE_PREMIUM,
+                currentTick
+            );
+            (tokenData0, tokenData1, ) = riskEngine().getMargin(
+                positionBalanceArray,
+                twapTick,
+                liquidatee,
+                positionIdList,
+                shortPremium,
+                longPremium,
+                collateralToken0(),
+                collateralToken1()
+            );
+        }
+
+        // The protocol delegates some virtual shares to ensure the burn can be settled.
+        collateralToken0().delegate(liquidatee);
+        collateralToken1().delegate(liquidatee);
+
+        LeftRightSigned bonusAmounts;
+        LeftRightUnsigned haircutTotal;
+        {
+            LeftRightSigned netPaid;
+            LeftRightSigned[4][] memory premiasByLeg;
+            // burn all options from the liquidatee
+
+            // Do not commit any settled long premium to storage - we will do this after we determine if any long premium must be revoked
+            // This is to prevent any short positions the liquidatee has being settled with tokens that will later be revoked
+            // NOTE: tick limits are not applied here since it is not the liquidator's position being liquidated
+            (netPaid, premiasByLeg) = _burnAllOptionsFrom(
+                liquidatee,
+                MIN_SWAP_TICK,
+                MAX_SWAP_TICK,
+                DONOT_COMMIT_LONG_SETTLED,
+                positionIdList
+            );
+
+            LeftRightSigned collateralRemaining;
+
+            // compute bonus amounts using latest tick data
+            (bonusAmounts, collateralRemaining) = riskEngine().getLiquidationBonus(
+                tokenData0,
+                tokenData1,
+                Math.getSqrtRatioAtTick(twapTick),
+                netPaid,
+                shortPremium
+            );
+
+            // premia cannot be paid if there is protocol loss associated with the liquidatee
+            // otherwise, an economic exploit could occur if the liquidator and liquidatee collude to
+            // manipulate the fees in a liquidity area they control past the protocol loss threshold
+            // such that the PLPs are forced to pay out premia to the liquidator
+            // thus, we haircut any premium paid by the liquidatee (converting tokens as necessary) until the protocol loss is covered or the premium is exhausted
+            // note that the haircutPremia function also commits the settled amounts (adjusted for the haircut) to storage, so it will be called even if there is no haircut
+
+            // if premium is haircut from a token that is not in protocol loss, some of the liquidation bonus will be converted into that token
+            address _liquidatee = liquidatee;
+            int24 _twapTick = twapTick;
+            TokenId[] memory _positionIdList = positionIdList;
+            LeftRightSigned bonusDeltas;
+            LeftRightSigned[4][] memory haircutPerLeg;
+            (bonusDeltas, haircutTotal, haircutPerLeg) = riskEngine().haircutPremia(
+                _liquidatee,
+                _positionIdList,
+                premiasByLeg,
+                collateralRemaining,
+                Math.getSqrtRatioAtTick(_twapTick)
+            );
+
+            bonusAmounts = bonusAmounts.add(bonusDeltas);
+
+            InteractionHelper.settleAmounts(
+                _liquidatee,
+                _positionIdList,
+                haircutTotal,
+                haircutPerLeg,
+                premiasByLeg,
+                collateralToken0(),
+                collateralToken1(),
+                s_settledTokens
+            );
+        }
+
+        // revoke delegated virtual shares and settle any bonus deltas with the liquidator
+        // native currency is represented as address(0), so it will always be currency0 alphanumerically
+        collateralToken0().settleLiquidation{value: msg.value}(
+            msg.sender,
+            liquidatee,
+            bonusAmounts.rightSlot()
+        );
+        collateralToken1().settleLiquidation(msg.sender, liquidatee, bonusAmounts.leftSlot());
+
+        emit AccountLiquidated(msg.sender, liquidatee, bonusAmounts);
+    }
+
+    /// @notice Force the exercise of a single position. Exercisor will have to pay a fee to the force exercisee.
+    /// @param account Address of the distressed account
+    /// @param tokenId The position to be force exercised; this position must contain at least one out-of-range long leg
+    function _forceExercise(
+        address account,
+        TokenId tokenId,
+        int24 twapTick,
+        int24 currentTick
+    ) internal {
+        CollateralTracker ct0 = collateralToken0();
+        CollateralTracker ct1 = collateralToken1();
+
+        uint128 positionSize;
+
+        LeftRightSigned exerciseFees;
+        {
+            PositionBalance positionBalance = s_positionBalance[account][tokenId];
+
+            positionSize = positionBalance.positionSize();
+
+            if (positionSize == 0) revert Errors.PositionNotOwned();
+
+            // Compute the exerciseFee, this will decrease the further away the price is from the exercised position
+            // Include any deltas in long legs between the current and oracle tick in the exercise fee
+            exerciseFees = riskEngine().exerciseCost(
+                currentTick,
+                twapTick,
+                tokenId,
+                positionBalance
+            );
+        }
+
+        // The protocol delegates some virtual shares to ensure the burn can be settled.
+        ct0.delegate(account);
+        ct1.delegate(account);
+        {
+            int24[2] memory tickLimits;
+            tickLimits[0] = MIN_SWAP_TICK;
+            tickLimits[1] = MAX_SWAP_TICK;
+            (RiskParameters riskParameters, ) = getRiskParameters(0);
+
+            // Exercise the option
+            // Turn off ITM swapping to prevent swap at potentially unfavorable price
+            _burnOptions(
+                tokenId,
+                positionSize,
+                tickLimits,
+                account,
+                COMMIT_LONG_SETTLED,
+                riskParameters
+            );
+        }
+        // redistribute token composition of refund amounts if user doesn't have enough of one token to pay
+        LeftRightSigned refundAmounts = riskEngine().getRefundAmounts(
+            account,
+            exerciseFees,
+            twapTick,
+            ct0,
+            ct1
+        );
+
+        // settle difference between delegated amounts (from the protocol) and exercise fees/substituted tokens
+        ct0.refund(account, msg.sender, refundAmounts.rightSlot());
+        ct1.refund(account, msg.sender, refundAmounts.leftSlot());
+        // revoke the virtual shares that were delegated after settling the difference with the exercisor
+        ct0.revoke(account);
+        ct1.revoke(account);
+
+        emit ForcedExercised(msg.sender, account, tokenId, exerciseFees);
+    }
+
+    /// @notice Settle unpaid premium for one `legIndex` on a position owned by `owner`.
+    /// @dev Called by sellers on buyers of their chunk to increase the available premium for withdrawal (before closing their position).
+    /// @dev This feature is only available when `owner` is solvent and has the requisite tokens to settle the premium.
+    /// @param owner The owner of the option position to make premium payments on
+    /// @param tokenId The position to be force exercised; this position must contain at least one out-of-range long leg
+    function _settlePremium(
+        address owner,
+        TokenId tokenId,
+        int24 twapTick,
+        int24 currentTick
+    ) internal {
+        CollateralTracker ct0 = collateralToken0();
+        CollateralTracker ct1 = collateralToken1();
+
+        // The protocol delegates some virtual shares to ensure the premia can be settled.
+        ct0.delegate(owner);
+        ct1.delegate(owner);
+
+        (RiskParameters riskParameters, ) = getRiskParameters(0);
+        uint128 positionSize = s_positionBalance[owner][tokenId].positionSize();
+        if (positionSize == 0) revert Errors.PositionNotOwned();
+
+        _settleOptions(owner, tokenId, positionSize, riskParameters, currentTick);
+
+        LeftRightSigned refundAmounts = riskEngine().getRefundAmounts(
+            owner,
+            LeftRightSigned.wrap(0),
+            twapTick,
+            ct0,
+            ct1
+        );
+        // allow the caller to settle tokens owed to the protocol by the settlee in exchange for the surplus token
+        ct0.refund(owner, msg.sender, refundAmounts.rightSlot());
+        ct1.refund(owner, msg.sender, refundAmounts.leftSlot());
+
+        ct0.revoke(owner);
+        ct1.revoke(owner);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            SOLVENCY CHECKS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Check whether an account is solvent at a given `atTick` with a collateral requirement of `buffer/10_000` multiplied by the requirement of `positionIdList`.
+    /// @dev Reverts if `account` is not solvent at all provided ticks and `expectedSolvent == true`, or if `account` is solvent at all ticks and `!expectedSolvent`.
+    /// @param account The account to check solvency for
+    /// @param safeMode The current safe mode status
+    /// @param positionIdList The list of positions to check solvency for
+    /// @param currentTick The current tick of the Uniswap pool (needed for fee calculations)
+    /// @param atTicks An array of ticks to check solvency at
+    /// @param buffer The buffer to apply to the collateral requirement
+    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
+    /// @return boolean flag that determines if account is solvent
+    function _checkSolvencyAtTicks(
+        address account,
+        uint8 safeMode,
+        TokenId[] calldata positionIdList,
+        int24 currentTick,
+        int24[] memory atTicks,
+        bool usePremiaAsCollateral,
+        uint256 buffer
+    ) internal view returns (uint256) {
+        (
+            LeftRightUnsigned shortPremium,
+            LeftRightUnsigned longPremium,
+            PositionBalance[] memory positionBalanceArray
+        ) = _calculateAccumulatedPremia(
+                account,
+                positionIdList,
+                usePremiaAsCollateral,
+                ONLY_AVAILABLE_PREMIUM,
+                currentTick
+            );
+
+        // if safeMode is ON, make the collateral requirements for 100% utilizations: no cross-margining, fully covered positions
+        if (safeMode > 0) {
+            unchecked {
+                // cannot miscast because DECIMAL = 10_000
+                uint32 maxUtilizations = uint32(DECIMALS + (DECIMALS << 16));
+                positionBalanceArray[0] = PositionBalanceLibrary.storeBalanceData(
+                    positionBalanceArray[0].positionSize(),
+                    maxUtilizations,
+                    0
+                );
+            }
+        }
+        uint256 solvent;
+        for (uint256 i; i < atTicks.length; ) {
+            unchecked {
+                if (
+                    _isAccountSolvent(
+                        account,
+                        atTicks[i],
+                        positionIdList,
+                        positionBalanceArray,
+                        shortPremium,
+                        longPremium,
+                        buffer
+                    )
+                ) ++solvent;
+
+                ++i;
+            }
+        }
+
+        return solvent;
+    }
+
+    /// @notice Check whether an account is solvent at a given `atTick` with a collateral requirement of `buffer/10_000` multiplied by the requirement of `positionBalanceArray`.
+    /// @param account The account to check solvency for
+    /// @param atTick The tick to check solvency at
+    /// @param positionIdList The list of all option positions held by the user
+    /// @param positionBalanceArray A list of balances and pool utilization for each position, of the form `[[tokenId0, balances0], [tokenId1, balances1], ...]`
+    /// @param shortPremium The total amount of premium (prorated by available settled tokens) owed to the short legs of `account`
+    /// @param longPremium The total amount of premium owed by the long legs of `account`
+    /// @param buffer The buffer to apply to the collateral requirement
+    /// @return Whether the account is solvent at the given tick
+    function _isAccountSolvent(
+        address account,
+        int24 atTick,
+        TokenId[] calldata positionIdList,
+        PositionBalance[] memory positionBalanceArray,
+        LeftRightUnsigned shortPremium,
+        LeftRightUnsigned longPremium,
+        uint256 buffer
+    ) internal view returns (bool) {
+        return
+            riskEngine().isAccountSolvent(
+                positionBalanceArray,
+                positionIdList,
+                atTick,
+                account,
+                shortPremium,
+                longPremium,
+                collateralToken0(),
+                collateralToken1(),
+                buffer
+            );
+    }
+
+    /// @notice Get risk parameters from the risk engine.
+    /// @dev Also checks whether the current tick has deviated too much from the previously stored ticks. Computed in the RiskEngine
+    function getRiskParameters(
+        uint256 builderCode
+    ) public view returns (RiskParameters riskParameters, int24 currentTick) {
+        currentTick = getCurrentTick();
+        riskParameters = riskEngine().getRiskParameters(currentTick, s_oraclePack, builderCode);
+    }
+
+    /// @notice Checks whether the current tick has deviated too much from the previously stored ticks. Computed in the RiskEngine
+    /// @return Whether the current tick has deviated too much to warrant putting the protocol in safe mode
+    function isSafeMode() external view returns (uint8) {
+        (RiskParameters riskParameters, ) = getRiskParameters(0);
+        return riskParameters.safeMode();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                 POSITIONS HASH GENERATION & VALIDATION
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Makes sure that the positions in the incoming user's list match the existing active option positions.
+    /// @param account The owner of the incoming list of positions
+    /// @param positionIdList The existing list of active options for the owner
+    function _validatePositionList(
+        address account,
+        TokenId[] calldata positionIdList
+    ) internal view {
+        uint256 pLength = positionIdList.length;
+
+        uint256 fingerprintIncomingList;
+
+        // verify it has no duplicated elements
+        if (!PanopticMath.hasNoDuplicateTokenIds(positionIdList)) {
+            revert Errors.DuplicateTokenId();
+        }
+
+        uint64 _poolId = poolId();
+        for (uint256 i = 0; i < pLength; ) {
+            TokenId tokenId = positionIdList[i];
+            // make sure the tokenId is for this Panoptic pool
+            if (tokenId.poolId() != _poolId) revert Errors.WrongPoolId();
+
+            fingerprintIncomingList = PanopticMath.updatePositionsHash(
+                fingerprintIncomingList,
+                tokenId,
+                ADD
+            );
+            unchecked {
+                ++i;
+            }
+        }
+
+        // revert if fingerprint for provided `_positionIdList` does not match the one stored for the `_account`
+        if (fingerprintIncomingList != s_positionsHash[account]) revert Errors.InputListFail();
+    }
+
+    /// @notice Updates the hash for all positions owned by an account. This fingerprints the list of all incoming options with a single hash.
+    /// @dev The outcome of this function will be to update the hash of positions.
+    /// This is done as a duplicate/validation check of the incoming list O(N).
+    /// @dev The positions hash is stored as the XOR of the keccak256 of each tokenId. Updating will XOR the existing hash with the new tokenId.
+    /// The same update can either add a new tokenId (when minting an option), or remove an existing one (when burning it).
+    /// @param account The owner of `tokenId`
+    /// @param tokenId The option position
+    /// @param addFlag Whether to add `tokenId` to the hash (true) or remove it (false)
+    function _updatePositionsHash(
+        address account,
+        TokenId tokenId,
+        bool addFlag,
+        uint8 maxLegs
+    ) internal {
+        // Get the current position hash value (fingerprint of all pre-existing positions created by `_account`)
+        // Add the current tokenId to the positionsHash as XOR'd
+        // since 0 ^ x = x, no problem on first mint
+        // Store values back into the user option details with the updated hash (leaves the other parameters unchanged)
+        uint256 newHash = PanopticMath.updatePositionsHash(
+            s_positionsHash[account],
+            tokenId,
+            addFlag
+        );
+        if ((newHash >> 248) > maxLegs) revert Errors.TooManyLegsOpen();
+        s_positionsHash[account] = newHash;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                QUERIES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Computes and returns all oracle ticks.
+    /// @return currentTick The current tick in the Uniswap pool
+    /// @return spotTick The fast oracle tick, sourced from the internal 10-minute EMA.
+    /// @return medianTick The slow oracle tick, calculated as the median of the 8 stored price points in the internal oracle.
+    /// @return latestTick The reconstructed absolute tick of the latest observation stored in the internal oracle.
+    /// @return oraclePack The current value of the 8-slot internal observation queue (`s_oraclePack`)
+    function getOracleTicks()
+        external
+        view
+        returns (
+            int24 currentTick,
+            int24 spotTick,
+            int24 medianTick,
+            int24 latestTick,
+            OraclePack oraclePack
+        )
+    {
+        currentTick = getCurrentTick();
+        (spotTick, medianTick, latestTick, ) = riskEngine().getOracleTicks(
+            currentTick,
+            s_oraclePack
+        );
+        oraclePack = s_oraclePack;
+    }
+
+    /// @notice Get the current number of legs across all open positions for an account.
+    /// @param user The account to query
+    /// @return Number of legs across the open positions of `user`
+    function numberOfLegs(address user) external view returns (uint256) {
+        return s_positionsHash[user] >> 248;
+    }
+
+    /// @notice Get the `tokenId` position data for `user`.
+    /// @param user The account that owns `tokenId`
+    /// @param tokenId The position to query
+    /// @return `currentTick` at mint
+    /// @return Fast oracle tick at mint
+    /// @return Slow oracle tick at mint
+    /// @return Last observed tick at mint
+    /// @return Utilization of token0 at mint
+    /// @return Utilization of token1 at mint
+    /// @return Size of the position
+    function positionData(
+        address user,
+        TokenId tokenId
+    ) external view returns (int24, int24, int24, int24, int256, int256, uint128) {
+        return s_positionBalance[user][tokenId].unpackAll();
+    }
+
+    /// @notice Get the oracle price used to check solvency in liquidations.
+    /// @return twapTick The current oracle price used to check solvency in liquidations
+    function getTWAP() public view returns (int24 twapTick) {
+        twapTick = riskEngine().twapEMA(s_oraclePack);
+    }
+
+    /// @notice Get the current tick of the underlying pool.
+    function getCurrentTick() public view returns (int24 currentTick) {
+        currentTick = SFPM.getCurrentTick(poolKey());
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                  PREMIA & PREMIA SPREAD CALCULATIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Ensure the effective liquidity in a given chunk is above a certain threshold.
+    /// @param tokenId An option position
+    /// @param leg A leg index of `tokenId` corresponding to a tickLower-tickUpper chunk
+    /// @param effectiveLiquidityLimit Maximum amount of "spread" defined as removedLiquidity/netLiquidity for a new position
+    /// denominated as X10_000 = (`ratioLimit * 10_000`)
+    /// @return totalLiquidity The total liquidity deposited in that chunk: `totalLiquidity = netLiquidity + removedLiquidity`
+    function _checkLiquiditySpread(
+        TokenId tokenId,
+        uint256 leg,
+        uint256 effectiveLiquidityLimit
+    ) internal view returns (uint256 totalLiquidity) {
+        uint256 netLiquidity;
+        uint256 removedLiquidity;
+        (totalLiquidity, netLiquidity, removedLiquidity) = _getLiquidities(tokenId, leg);
+
+        // compute and return effective liquidity. Return if short=net=0, which is closing short position
+        if (netLiquidity == 0 && removedLiquidity == 0) return totalLiquidity;
+
+        if (netLiquidity == 0) revert Errors.NetLiquidityZero();
+
+        uint256 effectiveLiquidityFactor;
+        unchecked {
+            // cannot overflow because liquidities are uint128
+            effectiveLiquidityFactor = (removedLiquidity * DECIMALS) / netLiquidity;
+        }
+
+        // put a limit on how much new liquidity in one transaction can be deployed into this leg
+        // the effective liquidity measures how many times more the newly added liquidity is compared to the existing/base liquidity
+        if (effectiveLiquidityFactor > effectiveLiquidityLimit)
+            revert Errors.EffectiveLiquidityAboveThreshold();
+    }
+
+    /// @notice Compute the premia collected for a single option position `tokenId`.
+    /// @param tokenId The option position
+    /// @param positionSize The number of contracts (size) of the option position
+    /// @param owner The holder of the tokenId option
+    /// @param usePremiaAsCollateral Whether to compute accumulated premia for all legs held by the user for collateral (true), or just owed premia for long legs (false)
+    /// @param atTick The tick at which the premia is calculated -> use (`atTick < type(int24).max`) to compute it
+    /// up to current block. `atTick = type(int24).max` will only consider fees as of the last on-chain transaction
+    /// @return premiaByLeg The amount of premia owed to the user for each leg of the position
+    /// @return premiumAccumulatorsByLeg The amount of premia accumulated for each leg of the position
+    function _getPremia(
+        TokenId tokenId,
+        uint128 positionSize,
+        address owner,
+        bool usePremiaAsCollateral,
+        int24 atTick
+    )
+        internal
+        view
+        returns (
+            LeftRightSigned[4] memory premiaByLeg,
+            uint256[2][4] memory premiumAccumulatorsByLeg
+        )
+    {
+        uint256 numLegs = tokenId.countLegs();
+        for (uint256 leg = 0; leg < numLegs; ) {
+            uint256 isLong = tokenId.isLong(leg);
+            if (tokenId.width(leg) != 0 && (isLong == 1 || usePremiaAsCollateral)) {
+                LiquidityChunk liquidityChunk = PanopticMath.getLiquidityChunk(
+                    tokenId,
+                    leg,
+                    positionSize
+                );
+                {
+                    uint256 vegoid = tokenId.vegoid();
+                    uint256 tokenType = tokenId.tokenType(leg);
+                    int24 _atTick = atTick;
+                    (premiumAccumulatorsByLeg[leg][0], premiumAccumulatorsByLeg[leg][1]) = SFPM
+                        .getAccountPremium(
+                            poolKey(),
+                            address(this),
+                            tokenType,
+                            liquidityChunk.tickLower(),
+                            liquidityChunk.tickUpper(),
+                            _atTick,
+                            isLong,
+                            vegoid
+                        );
+                }
+                unchecked {
+                    LeftRightUnsigned premiumAccumulatorLast = s_options[owner][tokenId][leg];
+                    premiaByLeg[leg] = LeftRightSigned
+                        .wrap(0)
+                        .addToRightSlot(
+                            int128(
+                                int256(
+                                    ((premiumAccumulatorsByLeg[leg][0] -
+                                        premiumAccumulatorLast.rightSlot()) *
+                                        (liquidityChunk.liquidity())) / 2 ** 64
+                                )
+                            )
+                        )
+                        .addToLeftSlot(
+                            int128(
+                                int256(
+                                    ((premiumAccumulatorsByLeg[leg][1] -
+                                        premiumAccumulatorLast.leftSlot()) *
+                                        (liquidityChunk.liquidity())) / 2 ** 64
+                                )
+                            )
+                        );
+                }
+
+                if (isLong == 1) {
+                    premiaByLeg[leg] = LeftRightSigned.wrap(0).sub(premiaByLeg[leg]);
+                }
+            }
+            unchecked {
+                ++leg;
+            }
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        AVAILABLE PREMIUM LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Query the amount of premium available for withdrawal given a certain `premiumOwed` for a chunk.
+    /// @dev Based on the ratio between `settledTokens` and the total premium owed to sellers in a chunk.
+    /// @dev The ratio is capped at 1 (as the base ratio can be greater than one if some seller forfeits enough premium).
+    /// @param totalLiquidity The updated total liquidity amount for the chunk
+    /// @param settledTokens LeftRight accumulator for the amount of tokens that have been settled (collected or paid)
+    /// @param grossPremiumLast The `last` values used with `premiumAccumulators` to compute the total premium owed to sellers
+    /// @param premiumOwed The amount of premium owed to sellers in the chunk
+    /// @param premiumAccumulators The current values of the premium accumulators for the chunk
+    /// @return The amount of token0/token1 premium available for withdrawal
+    function _getAvailablePremium(
+        uint256 totalLiquidity,
+        LeftRightUnsigned settledTokens,
+        LeftRightUnsigned grossPremiumLast,
+        LeftRightUnsigned premiumOwed,
+        uint256[2] memory premiumAccumulators
+    ) internal pure returns (LeftRightUnsigned) {
+        unchecked {
+            // long premium only accumulates as it is settled, so compute the ratio
+            // of total settled tokens in a chunk to total premium owed to sellers and multiply
+            // cap the ratio at 1 (it can be greater than one if some seller forfeits enough premium)
+            uint256 accumulated0 = ((premiumAccumulators[0] - grossPremiumLast.rightSlot()) *
+                totalLiquidity) / 2 ** 64;
+            uint256 accumulated1 = ((premiumAccumulators[1] - grossPremiumLast.leftSlot()) *
+                totalLiquidity) / 2 ** 64;
+
+            return (
+                LeftRightUnsigned
+                    .wrap(
+                        uint128(
+                            Math.min(
+                                (uint256(premiumOwed.rightSlot()) * settledTokens.rightSlot()) /
+                                    (accumulated0 == 0 ? type(uint256).max : accumulated0),
+                                premiumOwed.rightSlot()
+                            )
+                        )
+                    )
+                    .addToLeftSlot(
+                        uint128(
+                            Math.min(
+                                (uint256(premiumOwed.leftSlot()) * settledTokens.leftSlot()) /
+                                    (accumulated1 == 0 ? type(uint256).max : accumulated1),
+                                premiumOwed.leftSlot()
+                            )
+                        )
+                    )
+            );
+        }
+    }
+
+    /// @notice Query the total amount of liquidity sold in the corresponding chunk for a position leg.
+    /// @dev totalLiquidity (total sold) = removedLiquidity + netLiquidity (in AMM).
+    /// @param tokenId The option position
+    /// @param leg The leg of the option position to get `totalLiquidity` for
+    /// @return totalLiquidity The total amount of liquidity sold in the corresponding chunk for a position leg
+    /// @return netLiquidity The amount of liquidity available in the corresponding chunk for a position leg
+    /// @return removedLiquidity The amount of liquidity removed through buying in the corresponding chunk for a position leg
+    function _getLiquidities(
+        TokenId tokenId,
+        uint256 leg
+    )
+        internal
+        view
+        returns (uint256 totalLiquidity, uint128 netLiquidity, uint128 removedLiquidity)
+    {
+        (int24 tickLower, int24 tickUpper) = tokenId.asTicks(leg);
+
+        LeftRightUnsigned accountLiquidities = SFPM.getAccountLiquidity(
+            poolKey(),
+            address(this),
+            tokenId.tokenType(leg),
+            tickLower,
+            tickUpper
+        );
+
+        netLiquidity = accountLiquidities.rightSlot();
+        removedLiquidity = accountLiquidities.leftSlot();
+
+        unchecked {
+            totalLiquidity = netLiquidity + removedLiquidity;
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {Currency} from "../types/Currency.sol";
+import {PoolKey} from "../types/PoolKey.sol";
+import {IHooks} from "./IHooks.sol";
+import {IERC6909Claims} from "./external/IERC6909Claims.sol";
+import {IProtocolFees} from "./IProtocolFees.sol";
+import {BalanceDelta} from "../types/BalanceDelta.sol";
+import {PoolId} from "../types/PoolId.sol";
+import {IExtsload} from "./IExtsload.sol";
+import {IExttload} from "./IExttload.sol";
+
+/// @notice Interface for the PoolManager
+interface IPoolManager is IProtocolFees, IERC6909Claims, IExtsload, IExttload {
+    /// @notice Thrown when a currency is not netted out after the contract is unlocked
+    error CurrencyNotSettled();
+
+    /// @notice Thrown when trying to interact with a non-initialized pool
+    error PoolNotInitialized();
+
+    /// @notice Thrown when unlock is called, but the contract is already unlocked
+    error AlreadyUnlocked();
+
+    /// @notice Thrown when a function is called that requires the contract to be unlocked, but it is not
+    error ManagerLocked();
+
+    /// @notice Pools are limited to type(int16).max tickSpacing in #initialize, to prevent overflow
+    error TickSpacingTooLarge(int24 tickSpacing);
+
+    /// @notice Pools must have a positive non-zero tickSpacing passed to #initialize
+    error TickSpacingTooSmall(int24 tickSpacing);
+
+    /// @notice PoolKey must have currencies where address(currency0) < address(currency1)
+    error CurrenciesOutOfOrderOrEqual(address currency0, address currency1);
+
+    /// @notice Thrown when a call to updateDynamicLPFee is made by an address that is not the hook,
+    /// or on a pool that does not have a dynamic swap fee.
+    error UnauthorizedDynamicLPFeeUpdate();
+
+    /// @notice Thrown when trying to swap amount of 0
+    error SwapAmountCannotBeZero();
+
+    ///@notice Thrown when native currency is passed to a non native settlement
+    error NonzeroNativeValue();
+
+    /// @notice Thrown when `clear` is called with an amount that is not exactly equal to the open currency delta.
+    error MustClearExactPositiveDelta();
+
+    /// @notice Emitted when a new pool is initialized
+    /// @param id The abi encoded hash of the pool key struct for the new pool
+    /// @param currency0 The first currency of the pool by address sort order
+    /// @param currency1 The second currency of the pool by address sort order
+    /// @param fee The fee collected upon every swap in the pool, denominated in hundredths of a bip
+    /// @param tickSpacing The minimum number of ticks between initialized ticks
+    /// @param hooks The hooks contract address for the pool, or address(0) if none
+    /// @param sqrtPriceX96 The price of the pool on initialization
+    /// @param tick The initial tick of the pool corresponding to the initialized price
+    event Initialize(
+        PoolId indexed id,
+        Currency indexed currency0,
+        Currency indexed currency1,
+        uint24 fee,
+        int24 tickSpacing,
+        IHooks hooks,
+        uint160 sqrtPriceX96,
+        int24 tick
+    );
+
+    /// @notice Emitted when a liquidity position is modified
+    /// @param id The abi encoded hash of the pool key struct for the pool that was modified
+    /// @param sender The address that modified the pool
+    /// @param tickLower The lower tick of the position
+    /// @param tickUpper The upper tick of the position
+    /// @param liquidityDelta The amount of liquidity that was added or removed
+    /// @param salt The extra data to make positions unique
+    event ModifyLiquidity(
+        PoolId indexed id, address indexed sender, int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt
+    );
+
+    /// @notice Emitted for swaps between currency0 and currency1
+    /// @param id The abi encoded hash of the pool key struct for the pool that was modified
+    /// @param sender The address that initiated the swap call, and that received the callback
+    /// @param amount0 The delta of the currency0 balance of the pool
+    /// @param amount1 The delta of the currency1 balance of the pool
+    /// @param sqrtPriceX96 The sqrt(price) of the pool after the swap, as a Q64.96
+    /// @param liquidity The liquidity of the pool after the swap
+    /// @param tick The log base 1.0001 of the price of the pool after the swap
+    /// @param fee The swap fee in hundredths of a bip
+    event Swap(
+        PoolId indexed id,
+        address indexed sender,
+        int128 amount0,
+        int128 amount1,
+        uint160 sqrtPriceX96,
+        uint128 liquidity,
+        int24 tick,
+        uint24 fee
+    );
+
+    /// @notice Emitted for donations
+    /// @param id The abi encoded hash of the pool key struct for the pool that was donated to
+    /// @param sender The address that initiated the donate call
+    /// @param amount0 The amount donated in currency0
+    /// @param amount1 The amount donated in currency1
+    event Donate(PoolId indexed id, address indexed sender, uint256 amount0, uint256 amount1);
+
+    /// @notice All interactions on the contract that account deltas require unlocking. A caller that calls `unlock` must implement
+    /// `IUnlockCallback(msg.sender).unlockCallback(data)`, where they interact with the remaining functions on this contract.
+    /// @dev The only functions callable without an unlocking are `initialize` and `updateDynamicLPFee`
+    /// @param data Any data to pass to the callback, via `IUnlockCallback(msg.sender).unlockCallback(data)`
+    /// @return The data returned by the call to `IUnlockCallback(msg.sender).unlockCallback(data)`
+    function unlock(bytes calldata data) external returns (bytes memory);
+
+    /// @notice Initialize the state for a given pool ID
+    /// @dev A swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the input is entirely consumed by the fee
+    /// @param key The pool key for the pool to initialize
+    /// @param sqrtPriceX96 The initial square root price
+    /// @return tick The initial tick of the pool
+    function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick);
+
+    struct ModifyLiquidityParams {
+        // the lower and upper tick of the position
+        int24 tickLower;
+        int24 tickUpper;
+        // how to modify the liquidity
+        int256 liquidityDelta;
+        // a value to set if you want unique liquidity positions at the same range
+        bytes32 salt;
+    }
+
+    /// @notice Modify the liquidity for the given pool
+    /// @dev Poke by calling with a zero liquidityDelta
+    /// @param key The pool to modify liquidity in
+    /// @param params The parameters for modifying the liquidity
+    /// @param hookData The data to pass through to the add/removeLiquidity hooks
+    /// @return callerDelta The balance delta of the caller of modifyLiquidity. This is the total of both principal, fee deltas, and hook deltas if applicable
+    /// @return feesAccrued The balance delta of the fees generated in the liquidity range. Returned for informational purposes
+    /// @dev Note that feesAccrued can be artificially inflated by a malicious actor and integrators should be careful using the value
+    /// For pools with a single liquidity position, actors can donate to themselves to inflate feeGrowthGlobal (and consequently feesAccrued)
+    /// atomically donating and collecting fees in the same unlockCallback may make the inflated value more extreme
+    function modifyLiquidity(PoolKey memory key, ModifyLiquidityParams memory params, bytes calldata hookData)
+        external
+        returns (BalanceDelta callerDelta, BalanceDelta feesAccrued);
+
+    struct SwapParams {
+        /// Whether to swap token0 for token1 or vice versa
+        bool zeroForOne;
+        /// The desired input amount if negative (exactIn), or the desired output amount if positive (exactOut)
+        int256 amountSpecified;
+        /// The sqrt price at which, if reached, the swap will stop executing
+        uint160 sqrtPriceLimitX96;
+    }
+
+    /// @notice Swap against the given pool
+    /// @param key The pool to swap in
+    /// @param params The parameters for swapping
+    /// @param hookData The data to pass through to the swap hooks
+    /// @return swapDelta The balance delta of the address swapping
+    /// @dev Swapping on low liquidity pools may cause unexpected swap amounts when liquidity available is less than amountSpecified.
+    /// Additionally note that if interacting with hooks that have the BEFORE_SWAP_RETURNS_DELTA_FLAG or AFTER_SWAP_RETURNS_DELTA_FLAG
+    /// the hook may alter the swap input/output. Integrators should perform checks on the returned swapDelta.
+    function swap(PoolKey memory key, SwapParams memory params, bytes calldata hookData)
+        external
+        returns (BalanceDelta swapDelta);
+
+    /// @notice Donate the given currency amounts to the in-range liquidity providers of a pool
+    /// @dev Calls to donate can be frontrun adding just-in-time liquidity, with the aim of receiving a portion donated funds.
+    /// Donors should keep this in mind when designing donation mechanisms.
+    /// @dev This function donates to in-range LPs at slot0.tick. In certain edge-cases of the swap algorithm, the `sqrtPrice` of
+    /// a pool can be at the lower boundary of tick `n`, but the `slot0.tick` of the pool is already `n - 1`. In this case a call to
+    /// `donate` would donate to tick `n - 1` (slot0.tick) not tick `n` (getTickAtSqrtPrice(slot0.sqrtPriceX96)).
+    /// Read the comments in `Pool.swap()` for more information about this.
+    /// @param key The key of the pool to donate to
+    /// @param amount0 The amount of currency0 to donate
+    /// @param amount1 The amount of currency1 to donate
+    /// @param hookData The data to pass through to the donate hooks
+    /// @return BalanceDelta The delta of the caller after the donate
+    function donate(PoolKey memory key, uint256 amount0, uint256 amount1, bytes calldata hookData)
+        external
+        returns (BalanceDelta);
+
+    /// @notice Writes the current ERC20 balance of the specified currency to transient storage
+    /// This is used to checkpoint balances for the manager and derive deltas for the caller.
+    /// @dev This MUST be called before any ERC20 tokens are sent into the contract, but can be skipped
+    /// for native tokens because the amount to settle is determined by the sent value.
+    /// However, if an ERC20 token has been synced and not settled, and the caller instead wants to settle
+    /// native funds, this function can be called with the native currency to then be able to settle the native currency
+    function sync(Currency currency) external;
+
+    /// @notice Called by the user to net out some value owed to the user
+    /// @dev Will revert if the requested amount is not available, consider using `mint` instead
+    /// @dev Can also be used as a mechanism for free flash loans
+    /// @param currency The currency to withdraw from the pool manager
+    /// @param to The address to withdraw to
+    /// @param amount The amount of currency to withdraw
+    function take(Currency currency, address to, uint256 amount) external;
+
+    /// @notice Called by the user to pay what is owed
+    /// @return paid The amount of currency settled
+    function settle() external payable returns (uint256 paid);
+
+    /// @notice Called by the user to pay on behalf of another address
+    /// @param recipient The address to credit for the payment
+    /// @return paid The amount of currency settled
+    function settleFor(address recipient) external payable returns (uint256 paid);
+
+    /// @notice WARNING - Any currency that is cleared, will be non-retrievable, and locked in the contract permanently.
+    /// A call to clear will zero out a positive balance WITHOUT a corresponding transfer.
+    /// @dev This could be used to clear a balance that is considered dust.
+    /// Additionally, the amount must be the exact positive balance. This is to enforce that the caller is aware of the amount being cleared.
+    function clear(Currency currency, uint256 amount) external;
+
+    /// @notice Called by the user to move value into ERC6909 balance
+    /// @param to The address to mint the tokens to
+    /// @param id The currency address to mint to ERC6909s, as a uint256
+    /// @param amount The amount of currency to mint
+    /// @dev The id is converted to a uint160 to correspond to a currency address
+    /// If the upper 12 bytes are not 0, they will be 0-ed out
+    function mint(address to, uint256 id, uint256 amount) external;
+
+    /// @notice Called by the user to move value from ERC6909 balance
+    /// @param from The address to burn the tokens from
+    /// @param id The currency address to burn from ERC6909s, as a uint256
+    /// @param amount The amount of currency to burn
+    /// @dev The id is converted to a uint160 to correspond to a currency address
+    /// If the upper 12 bytes are not 0, they will be 0-ed out
+    function burn(address from, uint256 id, uint256 amount) external;
+
+    /// @notice Updates the pools lp fees for the a pool that has enabled dynamic lp fees.
+    /// @dev A swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the input is entirely consumed by the fee
+    /// @param key The key of the pool to update dynamic LP fees for
+    /// @param newDynamicLPFee The new dynamic pool LP fee
+    function updateDynamicLPFee(PoolKey memory key, uint24 newDynamicLPFee) external;
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+type RiskParameters is uint256;
+using RiskParametersLibrary for RiskParameters global;
+
+/// @title A Panoptic Risk Parameters. Tracks the data outputted from the RiskEngine, like the safeMode, commission fees, (etc).
+/// @author Axicon Labs Limited
+//
+//
+// PACKING RULES FOR A RISKPARAMETERS:
+// =================================================================================================
+//  From the LSB to the MSB:
+// (1) safeMode             4 bits  : The safeMode state
+// (2) notionalFee          14 bits : The fee to be charged on notional at mint
+// (3) premiumFee           14 bits : The fee to be charged on the premium at burn
+// (4) protocolSplit        14 bits : The part of the fee that goes to the protocol w/ buildercodes
+// (5) builderSplit         14 bits : The part of the fee that goes to the builder w/ buildercodes
+// (6) tickDeltaLiquidation 13 bits : The MAX_TWAP_DELTA_LIQUIDATION. Tick deviation = 1.0001**(2**13) = +/- 126%
+// (7) maxSpread            22 bits : The MAX_SPREAD, in bps. Max fraction removed = 2**22/(2**22 + 10_000) = 99.76%
+// (8) bpDecreaseBuffer     26 bits : The BP_DECREASE_BUFFER, in millitick
+// (9) maxLegs              7 bits  : The MAX_OPEN_LEGS (constrained to be <128)
+// (9) feeRecipient         128bits : The recipient of the commission fee split
+// Total                    256bits  : Total bits used by a RiskParameters.
+// ===============================================================================================
+//
+// The bit pattern is therefore:
+//
+//          (9)              (8)          (7)              (6)             (5)            (4)          (3)             (2)              (1)
+//    <-- 128 bits --><-- 7 bits --><-- 26 bits --><-- 22 bits --><-- 13 bits --><-- 14 bits --><-- 14 bits --> <-- 14 bits --> <-- 14 bits --> <-- 4 bits -->
+//        feeRecipient   maxLegs      bpDecrease      maxSpread      tickDelta    builderSplit   protocolSplit    premiumFee    notionalFee         safeMode
+//
+//    <--- most significant bit                                                                  least significant bit --->
+//
+library RiskParametersLibrary {
+    /*//////////////////////////////////////////////////////////////
+                                ENCODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Create a new `RiskParameters` object.
+    /// @param _safeMode The safe mode state (uint6)
+    /// @param _notionalFee The commission fee (uint14)
+    /// @param _premiumFee The commission fee (uint14)
+    /// @param _protocolSplit The part of the fee that goes to the protocol w/ buildercodes (uint14)
+    /// @param _builderSplit The part of the fee that goes to the builder w/ buildercodes (uint14)
+    /// @param _tickDeltaLiquidation The MAX_TWAP_DELTA_LIQUIDATION (uint16)
+    /// @param _maxSpread The MAX_SPREAD, in bps (uint24)
+    /// @param _bpDecreaseBuffer The BP_DECREASE_BUFFER, in millitick (uint26)
+    /// @param _maxLegs The maximum allowed number of legs across all open positions for a user
+    /// @param _feeRecipient The recipient of the commission fee split (uint128)
+    /// @return result The new RiskParameters object
+    function storeRiskParameters(
+        uint256 _safeMode,
+        uint256 _notionalFee,
+        uint256 _premiumFee,
+        uint256 _protocolSplit,
+        uint256 _builderSplit,
+        uint256 _tickDeltaLiquidation,
+        uint256 _maxSpread,
+        uint256 _bpDecreaseBuffer,
+        uint256 _maxLegs,
+        uint256 _feeRecipient
+    ) internal pure returns (RiskParameters result) {
+        assembly {
+            result := add(
+                add(
+                    add(
+                        add(_safeMode, shl(4, _notionalFee)),
+                        add(shl(18, _premiumFee), shl(32, _protocolSplit))
+                    ),
+                    add(shl(46, _builderSplit), shl(60, _tickDeltaLiquidation))
+                ),
+                add(
+                    add(shl(73, _maxSpread), add(shl(95, _bpDecreaseBuffer), shl(121, _maxLegs))),
+                    shl(128, _feeRecipient)
+                )
+            )
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                DECODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the safeMode state of `self`.
+    /// @param self The RiskParameters to retrieve the safeMode state from
+    /// @return result The safeMode of `self`
+    function safeMode(RiskParameters self) internal pure returns (uint8 result) {
+        assembly {
+            result := and(self, 0xF)
+        }
+    }
+
+    /// @notice Get the notionalFee of `self`.
+    /// @param self The RiskParameters to retrieve the notionalFee from
+    /// @return result The notionalFee of `self`
+    function notionalFee(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(4, self), 0x3FFF)
+        }
+    }
+
+    /// @notice Get the premiumFee of `self`.
+    /// @param self The RiskParameters to retrieve the premiumFee from
+    /// @return result The premiumFee of `self`
+    function premiumFee(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(18, self), 0x3FFF)
+        }
+    }
+
+    /// @notice Get the protocolSplit of `self`.
+    /// @param self The RiskParameters to retrieve the protocolSplit from
+    /// @return result The protocolSplit of `self`
+    function protocolSplit(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(32, self), 0x3FFF)
+        }
+    }
+
+    /// @notice Get the builderSplit of `self`.
+    /// @param self The RiskParameters to retrieve the builderSplit from
+    /// @return result The builderSplit of `self`
+    function builderSplit(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(46, self), 0x3FFF)
+        }
+    }
+
+    /// @notice Get the tickDeltaLiquidation of `self`.
+    /// @param self The RiskParameters to retrieve the tickDeltaLiquidation from
+    /// @return result The tickDeltaLiquidation of `self`
+    function tickDeltaLiquidation(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(60, self), 0x1FFF)
+        }
+    }
+
+    /// @notice Get the maxSpread of `self`.
+    /// @param self The RiskParameters to retrieve the maxSpread from
+    /// @return result The maxSpread of `self`
+    function maxSpread(RiskParameters self) internal pure returns (uint24 result) {
+        assembly {
+            result := and(shr(73, self), 0x3FFFFF)
+        }
+    }
+
+    /// @notice Get the bpDecreaseBuffer of `self`.
+    /// @param self The RiskParameters to retrieve the bpDecreaseBuffer from
+    /// @return result The bpDecreaseBuffer of `self`
+    function bpDecreaseBuffer(RiskParameters self) internal pure returns (uint32 result) {
+        assembly {
+            result := and(shr(95, self), 0x3FFFFFF)
+        }
+    }
+
+    /// @notice Get the maxLegs of `self`.
+    /// @param self The RiskParameters to retrieve the maxLegs from
+    /// @return result The maxLegs of `self`
+    function maxLegs(RiskParameters self) internal pure returns (uint8 result) {
+        assembly {
+            result := and(shr(121, self), 0x7F)
+        }
+    }
+
+    /// @notice Get the feeRecipient of `self`.
+    /// @param self The RiskParameters to retrieve the feeRecipient from
+    /// @return result The feeRecipient of `self`
+    function feeRecipient(RiskParameters self) internal pure returns (uint128 result) {
+        assembly {
+            result := shr(128, self)
+        }
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.24;
+// Interfaces
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IUniswapV3Pool} from "univ3-core/interfaces/IUniswapV3Pool.sol";
+// Libraries
+import {Constants} from "@libraries/Constants.sol";
+import {Math} from "@libraries/Math.sol";
+import {EfficientHash} from "@libraries/EfficientHash.sol";
+import {Errors} from "@libraries/Errors.sol";
+// OpenZeppelin libraries
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+// Custom types
+import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
+import {LiquidityChunk} from "@types/LiquidityChunk.sol";
+import {TokenId} from "@types/TokenId.sol";
+import {RiskParameters} from "@types/RiskParameters.sol";
+
+/// @title Compute general math quantities relevant to Panoptic and AMM pool management.
+/// @notice Contains Panoptic-specific helpers and math functions.
+/// @author Axicon Labs Limited
+library PanopticMath {
+    using Math for uint256;
+
+    /// @notice This is equivalent to `type(uint256).max` — used in assembly blocks as a replacement.
+    uint256 internal constant MAX_UINT256 = 2 ** 256 - 1;
+
+    /// @notice Masks 16-bit tickSpacing and 8 bits of vegoid out of 64-bit `[16-bit tickspacing][8-bit vegoid][40-bit poolPattern]` format poolId.
+    uint64 internal constant TICKSPACING_VEGOID_MASK = 0xFFFFFF0000000000;
+
+    uint256 internal constant PRIME_MODULUS_248 =
+        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff13;
+
+    uint256 internal constant PRIME_MODULUS_124_0 = 0xfffffffffffffffffffffffffffffc5; // 2**124 - 59
+    uint256 internal constant PRIME_MODULUS_124_1 = 0xffffffffffffffffffffffffffffd99; // 2**124 - 615
+
+    // Mask for isolating a 124-bit lane
+    uint256 internal constant LANE_MASK_124 = 0xfffffffffffffffffffffffffffffff;
+
+    uint256 internal constant UPPER_120BITS_MASK =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000;
+
+    uint256 internal constant BITMASK_UINT88 = 0xFFFFFFFFFFFFFFFFFFFFFF;
+    uint256 internal constant BITMASK_UINT22 = 0x3FFFFF;
+
+    /*//////////////////////////////////////////////////////////////
+                              UTILITIES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Increments the pool pattern (first 48 bits) of a poolId by 1.
+    /// @param poolId The 64-bit pool ID
+    /// @return The provided `poolId` with its pool pattern slot incremented by 1
+    function incrementPoolPattern(uint64 poolId) internal pure returns (uint64) {
+        unchecked {
+            return (poolId & TICKSPACING_VEGOID_MASK) + (uint40(poolId + 1));
+        }
+    }
+
+    /// @notice Get the number of leading hex characters in an address.
+    //     0x0000bababaab...     0xababababab...
+    //          ▲                 ▲
+    //          │                 │
+    //     4 leading hex      0 leading hex
+    //    character zeros    character zeros
+    //
+    /// @param addr The address to get the number of leading zero hex characters for
+    /// @return The number of leading zero hex characters in the address
+    function numberOfLeadingHexZeros(address addr) external pure returns (uint256) {
+        unchecked {
+            return addr == address(0) ? 40 : 39 - Math.mostSignificantNibble(uint160(addr));
+        }
+    }
+
+    /// @notice Returns ERC20 symbol of `token`.
+    /// @param token The address of the token to get the symbol of
+    /// @return The symbol of `token` or "???" if not supported
+    function safeERC20Symbol(address token) external view returns (string memory) {
+        // not guaranteed that token supports metadata extension
+        // so we need to let call fail and return placeholder if not
+        try IERC20Metadata(token).symbol() returns (string memory symbol) {
+            return symbol;
+        } catch {
+            return "???";
+        }
+    }
+
+    /// @notice Converts `fee` to a string with "bps" appended.
+    /// @dev The lowest supported value of `fee` is 1 (`="0.01bps"`).
+    /// @param fee The fee to convert to a string (in hundredths of basis points)
+    /// @return Stringified version of `fee` with "bps" appended
+    function uniswapFeeToString(uint24 fee) internal pure returns (string memory) {
+        return
+            string.concat(
+                Strings.toString(fee / 100),
+                fee % 100 == 0
+                    ? ""
+                    : string.concat(
+                        ".",
+                        Strings.toString((fee / 10) % 10),
+                        Strings.toString(fee % 10)
+                    ),
+                "bps"
+            );
+    }
+
+    /// @notice Update an existing account's "positions hash" with a new `tokenId`.
+    /// @notice The positions hash contains a fingerprint of all open positions created by an account/user and a count of the legs across those positions.
+    /// @dev The "fingerprint" portion of the hash is given by XORing the hashed `tokenId` of each position the user has open together.
+    /// @param existingHash The existing position hash representing a list of positions and the count of the legs across those positions
+    /// @param tokenId The new position to modify the existing hash with: `existingHash = uint248(existingHash) ^ uint248(hashOf(tokenId))`
+    /// @param addFlag Whether to mint (add) the tokenId to the count of positions or burn (subtract) it from the count `(existingHash >> 248) +/- tokenId.countLegs()`
+    /// @return newHash The updated position hash with the new tokenId XORed in and the leg count incremented/decremented
+    function updatePositionsHash(
+        uint256 existingHash,
+        TokenId tokenId,
+        bool addFlag
+    ) internal pure returns (uint256) {
+        // update hash by using the homomorphicHash method
+        uint256 updatedHash = homomorphicHash(existingHash, TokenId.unwrap(tokenId), addFlag);
+
+        // increment the upper 8 bits (leg counter) if addFlag=true, decrement otherwise
+        uint8 numberOfLegs = uint8(tokenId.countLegs());
+        if (numberOfLegs == 0) revert Errors.TokenIdHasZeroLegs();
+
+        // unchecked, so reverts if overflow
+        uint256 newLegCount = addFlag
+            ? uint8(existingHash >> 248) + numberOfLegs
+            : uint8(existingHash >> 248) - numberOfLegs;
+
+        unchecked {
+            return uint256(updatedHash) + (newLegCount << 248);
+        }
+    }
+
+    /// @notice Computes a homomorphic hash by adding or subtracting an item from an existing hash
+    /// @dev Uses XOR-based homomorphic hashing (XHASH). The hash of the item is XORed with the
+    ///      existing hash. Since XOR is its own inverse (A ⊕ B ⊕ B = A), both addition and
+    ///      subtraction operations use the same XOR operation. This ensures the operation is
+    ///      reversible and order-independent for the same set of items.
+    ///      OR
+    ///      Uses additive homomorphic hashing (AdHash) over a 248-bit prime field. The hash of the item
+    ///      is either added to or subtracted from the existing hash using modular arithmetic.
+    ///      Subtraction is implemented as addition of the modular inverse: hash + (PRIME - itemHash) mod PRIME.
+    ///      This ensures the operation is reversible and order-independent for the same set of items.
+    ///      OR
+    ///      Uses LtHash (Lattice-based Hash) with k=2 lanes for improved collision resistance.
+    ///      The 248-bit hash space is divided into two 124-bit lanes, each operating under
+    ///      modular arithmetic with a 124-bit prime. The item hash is split into two 124-bit
+    ///      chunks and each chunk is added/subtracted from its corresponding lane independently.
+    ///      Subtraction is implemented as addition of the modular inverse: lane + (PRIME - chunk) mod PRIME.
+    ///      This parallel lane approach provides better security properties than single-lane hashing
+    ///      while maintaining homomorphic properties (order-independence and reversibility).
+    /// @param hash The existing hash value (only lower 248 bits are used)
+    /// @param item The item to be hashed and added/subtracted (typically a TokenId cast to uint256)
+    /// @param addFlag True to add the item to the hash, false to subtract it
+    /// @return The updated homomorphic hash as a uint256 (but only lower 248 bits contain the hash)
+    function homomorphicHash(
+        uint256 hash,
+        uint256 item,
+        bool addFlag
+    ) internal pure returns (uint256) {
+        /*
+        {
+            // XHASH
+            return
+                uint248(hash) ^
+                (uint248(uint256(EfficientHash.efficientKeccak256(abi.encode(item)))));
+        }
+        {
+            // AdHash
+            uint256 itemHash = uint256(EfficientHash.efficientKeccak256(abi.encode(item)));
+            return
+                addFlag
+                    ? addmod(uint248(hash), uint248(itemHash), PRIME_MODULUS_248)
+                    : addmod(
+                        uint248(hash),
+                        PRIME_MODULUS_248 - (itemHash % PRIME_MODULUS_248),
+                        PRIME_MODULUS_248
+                    );
+        }
+        */
+        unchecked {
+            // LtHash, k=2
+            uint256 itemHash = uint256(EfficientHash.efficientKeccak256(abi.encode(item)));
+
+            // Pre-calculate the 124-bit chunks for the item to be added/removed
+            uint256 item_h0 = itemHash & LANE_MASK_124;
+            uint256 item_h1 = (itemHash >> 124) & LANE_MASK_124;
+
+            uint256 lane0 = hash & LANE_MASK_124;
+            uint256 newItem_h0 = addFlag
+                ? item_h0
+                : PRIME_MODULUS_124_0 - (item_h0 % PRIME_MODULUS_124_0);
+            uint256 hash0 = addmod(lane0, newItem_h0, PRIME_MODULUS_124_0);
+
+            uint256 lane1 = (hash >> 124) & LANE_MASK_124;
+            uint256 newItem_h1 = addFlag
+                ? item_h1
+                : PRIME_MODULUS_124_1 - (item_h1 % PRIME_MODULUS_124_1);
+            uint256 hash1 = addmod(lane1, newItem_h1, PRIME_MODULUS_124_1);
+
+            return hash0 + (hash1 << 124);
+        }
+    }
+
+    /// @notice Checks if an array of TokenIds contains any duplicate values
+    /// @dev Uses assembly for gas optimization. Performs O(n²) comparison by checking each element
+    ///      against all subsequent elements. Returns false immediately upon finding the first duplicate.
+    ///      Arrays with 0 or 1 elements are considered to have no duplicates.
+    /// @param arr The array of TokenIds to check for duplicates
+    /// @return True if the array contains no duplicate TokenIds, false if duplicates are found
+    function hasNoDuplicateTokenIds(TokenId[] calldata arr) external pure returns (bool) {
+        assembly {
+            let len := arr.length
+            let offset := arr.offset
+
+            // Early return for 0 or 1 elements
+            if lt(len, 2) {
+                mstore(0x00, 1)
+                return(0x00, 0x20)
+            }
+
+            // Check for duplicates
+            for {
+                let i := 0
+            } lt(i, len) {
+                i := add(i, 1)
+            } {
+                let val := calldataload(add(offset, mul(i, 0x20)))
+                for {
+                    let j := add(i, 1)
+                } lt(j, len) {
+                    j := add(j, 1)
+                } {
+                    if eq(val, calldataload(add(offset, mul(j, 0x20)))) {
+                        mstore(0x00, 0)
+                        return(0x00, 0x20)
+                    }
+                }
+            }
+
+            mstore(0x00, 1)
+            return(0x00, 0x20)
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          ORACLE CALCULATIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Returns the median of the last `cardinality` average prices over `period` observations from `univ3pool`.
+    /// @dev Used when we need a manipulation-resistant TWAP price.
+    /// @dev Uniswap observations snapshot the closing price of the last block before the first interaction of a given block.
+    /// @dev The maximum frequency of observations is 1 per block, but there is no guarantee that the pool will be observed at every block.
+    /// @dev Each period has a minimum length of `blocktime * period`, but may be longer if the Uniswap pool is relatively inactive.
+    /// @dev The final price used in the array (of length `cardinality`) is the average of `cardinality` observations spaced by `period` (which is itself a number of observations).
+    /// @dev Thus, the minimum total time window is `cardinality * period * blocktime`.
+    /// @param univ3pool The Uniswap pool to get the median observation from
+    /// @param observationIndex The index of the last observation in the pool
+    /// @param observationCardinality The number of observations in the pool
+    /// @param cardinality The number of `periods` to in the median price array, should be odd
+    /// @param period The number of observations to average to compute one entry in the median price array
+    /// @return The median of `cardinality` observations spaced by `period` in the Uniswap pool
+    /// @return The latest observation in the Uniswap pool
+    function computeMedianObservedPrice(
+        IUniswapV3Pool univ3pool,
+        uint256 observationIndex,
+        uint256 observationCardinality,
+        uint256 cardinality,
+        uint256 period
+    ) internal view returns (int24, int24) {
+        unchecked {
+            int256[] memory tickCumulatives = new int256[](cardinality + 1);
+
+            uint256[] memory timestamps = new uint256[](cardinality + 1);
+            // get the last "cardinality" timestamps/tickCumulatives (if observationIndex < cardinality, the index will wrap back from observationCardinality)
+            for (uint256 i = 0; i < cardinality + 1; ++i) {
+                (timestamps[i], tickCumulatives[i], , ) = univ3pool.observations(
+                    uint256(
+                        (int256(observationIndex) - int256(i * period)) +
+                            int256(observationCardinality)
+                    ) % observationCardinality
+                );
+            }
+
+            int256[] memory ticks = new int256[](cardinality);
+            // use cardinality periods given by cardinality + 1 accumulator observations to compute the last cardinality observed ticks spaced by period
+            for (uint256 i = 0; i < cardinality; ++i) {
+                ticks[i] =
+                    (tickCumulatives[i] - tickCumulatives[i + 1]) /
+                    int256(timestamps[i] - timestamps[i + 1]);
+            }
+
+            // the `ticks` array descends from the most recent Uniswap observation prior to the sort
+            int24 latestTick = int24(ticks[0]);
+
+            // get the median of the `ticks` array (assuming `cardinality` is odd)
+            return (int24(Math.sort(ticks)[cardinality / 2]), latestTick);
+        }
+    }
+
+    /// @notice Computes the TWAP of a Uniswap V3 pool using data from its oracle.
+    /// @dev Note that our definition of TWAP differs from a typical mean of prices over a time window.
+    /// @dev We instead observe the average price over a series of time intervals, and define the TWAP as the median of those averages.
+    /// @param univ3pool The Uniswap pool from which to compute the TWAP
+    /// @param twapWindow The time window to compute the TWAP over
+    /// @return The final calculated TWAP tick
+    function twapFilter(IUniswapV3Pool univ3pool, uint32 twapWindow) external view returns (int24) {
+        uint32[] memory secondsAgos = new uint32[](20);
+
+        int256[] memory twapMeasurement = new int256[](19);
+
+        unchecked {
+            // construct the time slots
+            for (uint256 i = 0; i < 20; ++i) {
+                secondsAgos[i] = uint32(((i + 1) * twapWindow) / 20);
+            }
+
+            // observe the tickCumulative at the 20 pre-defined time slots
+            (int56[] memory tickCumulatives, ) = univ3pool.observe(secondsAgos);
+
+            // compute the average tick per 30s window
+            for (uint256 i = 0; i < 19; ++i) {
+                twapMeasurement[i] = int24(
+                    (tickCumulatives[i] - tickCumulatives[i + 1]) / int56(uint56(twapWindow / 20))
+                );
+            }
+
+            // sort the tick measurements
+            int256[] memory sortedTicks = Math.sort(twapMeasurement);
+
+            // Get the median value
+            return int24(sortedTicks[9]);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          LIQUIDITY CHUNK MATH
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice For a given option position (`tokenId`), leg index within that position (`legIndex`), and `positionSize` get the tick range spanned and its
+    /// liquidity (share ownership) in the Uniswap V3 pool; this is a liquidity chunk.
+    //          Liquidity chunk  (defined by tick upper, tick lower, and its size/amount: the liquidity)
+    //   liquidity    │
+    //         ▲      │
+    //         │     ┌▼┐
+    //         │  ┌──┴─┴──┐
+    //         │  │       │
+    //         │  │       │
+    //         └──┴───────┴────► price
+    //         Uniswap V3 Pool
+    /// @param tokenId The option position id
+    /// @param legIndex The leg index of the option position, can be {0,1,2,3}
+    /// @param positionSize The number of contracts held by this leg
+    /// @return A LiquidityChunk with `tickLower`, `tickUpper`, and `liquidity`
+    function getLiquidityChunk(
+        TokenId tokenId,
+        uint256 legIndex,
+        uint128 positionSize
+    ) internal pure returns (LiquidityChunk) {
+        // get the tick range for this leg
+        (int24 tickLower, int24 tickUpper) = tokenId.asTicks(legIndex);
+
+        // Get the amount of liquidity owned by this leg in the Uniswap V3 pool in the above tick range
+        // Background:
+        //
+        //  In Uniswap V3, the amount of liquidity received for a given amount of token0 when the price is
+        //  not in range is given by:
+        //     Liquidity = amount0 * (sqrt(upper) * sqrt(lower)) / (sqrt(upper) - sqrt(lower))
+        //  For token1, it is given by:
+        //     Liquidity = amount1 / (sqrt(upper) - sqrt(lower))
+        //
+        //  However, in Panoptic, each position has a asset parameter. The asset is the "basis" of the position.
+        //  In TradFi, the asset is always cash and selling a $1000 put requires the user to lock $1000, and selling
+        //  a call requires the user to lock 1 unit of asset.
+        //
+        //  Because Uniswap V3 chooses token0 and token1 from the alphanumeric order, there is no consistency as to whether token0 is
+        //  stablecoin, ETH, or an ERC20. Some pools may want ETH to be the asset (e.g. ETH-DAI) and some may wish the stablecoin to
+        //  be the asset (e.g. DAI-ETH) so that K asset is moved for puts and 1 asset is moved for calls.
+        //  But since the convention is to force the order always we have no say in this.
+        //
+        //  To solve this, we encode the asset value in tokenId. This parameter specifies which of token0 or token1 is the
+        //  asset, such that:
+        //     when asset=0, then amount0 moved at strike K =1.0001**currentTick is 1, amount1 moved to strike K is K
+        //     when asset=1, then amount1 moved at strike K =1.0001**currentTick is K, amount0 moved to strike K is 1/K
+        //
+        //  The following function takes this into account when computing the liquidity of the leg and switches between
+        //  the definition for getLiquidityForAmount0 or getLiquidityForAmount1 when relevant.
+
+        uint256 amount = positionSize * tokenId.optionRatio(legIndex);
+        if (tokenId.asset(legIndex) == 0) {
+            return Math.getLiquidityForAmount0(tickLower, tickUpper, amount);
+        } else {
+            return Math.getLiquidityForAmount1(tickLower, tickUpper, amount);
+        }
+    }
+
+    /// @notice Extract the tick range specified by `strike` and `width` for the given `tickSpacing`.
+    /// @param strike The strike price of the option
+    /// @param width The width of the option
+    /// @param tickSpacing The tick spacing of the underlying Uniswap V3 pool
+    /// @return The lower tick of the liquidity chunk
+    /// @return The upper tick of the liquidity chunk
+    function getTicks(
+        int24 strike,
+        int24 width,
+        int24 tickSpacing
+    ) internal pure returns (int24, int24) {
+        (int24 rangeDown, int24 rangeUp) = PanopticMath.getRangesFromStrike(width, tickSpacing);
+
+        unchecked {
+            return (strike - rangeDown, strike + rangeUp);
+        }
+    }
+
+    /// @notice Returns the distances of the upper and lower ticks from the strike for a position with the given width and tickSpacing.
+    /// @dev Given `r = (width * tickSpacing) / 2`, `tickLower = strike - floor(r)` and `tickUpper = strike + ceil(r)`.
+    /// @param width The width of the leg
+    /// @param tickSpacing The tick spacing of the underlying pool
+    /// @return The distance of the lower tick from the strike
+    /// @return The distance of the upper tick from the strike
+    function getRangesFromStrike(
+        int24 width,
+        int24 tickSpacing
+    ) internal pure returns (int24, int24) {
+        return (
+            (width * tickSpacing) / 2,
+            int24(int256(Math.unsafeDivRoundingUp(uint24(width) * uint24(tickSpacing), 2)))
+        );
+    }
+
+    /// @notice Computes the chunk key for a given leg of a position.
+    /// @dev The chunk key uniquely identifies a liquidity chunk by its strike, width, and token type.
+    /// @param tokenId The option position
+    /// @param leg The leg index within the position
+    /// @return chunkKey The keccak256 hash identifying this chunk
+    function getChunkKey(TokenId tokenId, uint256 leg) internal pure returns (bytes32 chunkKey) {
+        chunkKey = EfficientHash.efficientKeccak256(
+            abi.encodePacked(tokenId.strike(leg), tokenId.width(leg), tokenId.tokenType(leg))
+        );
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         TOKEN CONVERSION LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Compute the amount of notional value underlying an option position.
+    /// @param tokenId The option position id
+    /// @param positionSize The number of contracts of the option
+    /// @param opening Whether you need the token0s and token1s moved while opening the position, or while closing
+    /// @return longAmounts Left-right packed word where rightSlot = token0 and leftSlot = token1 held against borrowed Uniswap liquidity for long legs
+    /// @return shortAmounts Left-right packed word where where rightSlot = token0 and leftSlot = token1 borrowed to create short legs
+    function computeExercisedAmounts(
+        TokenId tokenId,
+        uint128 positionSize,
+        bool opening
+    ) internal pure returns (LeftRightSigned longAmounts, LeftRightSigned shortAmounts) {
+        uint256 numLegs = tokenId.countLegs();
+        for (uint256 leg = 0; leg < numLegs; ) {
+            (LeftRightSigned longs, LeftRightSigned shorts) = calculateIOAmounts(
+                tokenId,
+                positionSize,
+                leg,
+                opening
+            );
+
+            longAmounts = longAmounts.add(longs);
+            shortAmounts = shortAmounts.add(shorts);
+            unchecked {
+                ++leg;
+            }
+        }
+    }
+
+    /// @notice Convert an amount of token0 into an amount of token1 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
+    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks
+    /// @param amount The amount of token0 to convert into token1
+    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token0 into token1
+    /// @return The converted `amount` of token0 represented in terms of token1
+    function convert0to1(uint256 amount, uint160 sqrtPriceX96) internal pure returns (uint256) {
+        unchecked {
+            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
+            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
+            if (sqrtPriceX96 < type(uint128).max) {
+                return Math.mulDiv192(amount, uint256(sqrtPriceX96) ** 2);
+            } else {
+                return Math.mulDiv128(amount, Math.mulDiv64(sqrtPriceX96, sqrtPriceX96));
+            }
+        }
+    }
+
+    /// @notice Convert an amount of token0 into an amount of token1 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
+    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks
+    /// @param amount The amount of token0 to convert into token1
+    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token0 into token1
+    /// @return The converted `amount` of token0 represented in terms of token1
+    function convert0to1RoundingUp(
+        uint256 amount,
+        uint160 sqrtPriceX96
+    ) internal pure returns (uint256) {
+        unchecked {
+            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
+            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
+            if (sqrtPriceX96 < type(uint128).max) {
+                return Math.mulDiv192RoundingUp(amount, uint256(sqrtPriceX96) ** 2);
+            } else {
+                return Math.mulDiv128RoundingUp(amount, Math.mulDiv64(sqrtPriceX96, sqrtPriceX96));
+            }
+        }
+    }
+
+    /// @notice Convert an amount of token1 into an amount of token0 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
+    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
+    /// @param amount The amount of token1 to convert into token0
+    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token1 into token0
+    /// @return The converted `amount` of token1 represented in terms of token0
+    function convert1to0(uint256 amount, uint160 sqrtPriceX96) internal pure returns (uint256) {
+        unchecked {
+            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
+            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
+            if (sqrtPriceX96 < type(uint128).max) {
+                return Math.mulDiv(amount, 2 ** 192, uint256(sqrtPriceX96) ** 2);
+            } else {
+                return Math.mulDiv(amount, 2 ** 128, Math.mulDiv64(sqrtPriceX96, sqrtPriceX96));
+            }
+        }
+    }
+
+    /// @notice Convert an amount of token1 into an amount of token0 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
+    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
+    /// @param amount The amount of token1 to convert into token0
+    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token1 into token0
+    /// @return The converted `amount` of token1 represented in terms of token0
+    function convert1to0RoundingUp(
+        uint256 amount,
+        uint160 sqrtPriceX96
+    ) internal pure returns (uint256) {
+        unchecked {
+            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
+            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
+            if (sqrtPriceX96 < type(uint128).max) {
+                return Math.mulDivRoundingUp(amount, 2 ** 192, uint256(sqrtPriceX96) ** 2);
+            } else {
+                return
+                    Math.mulDivRoundingUp(
+                        amount,
+                        2 ** 128,
+                        Math.mulDiv64(sqrtPriceX96, sqrtPriceX96)
+                    );
+            }
+        }
+    }
+
+    /// @notice Convert an amount of token0 into an amount of token1 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
+    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
+    /// @param amount The amount of token0 to convert into token1
+    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token0 into token1
+    /// @return The converted `amount` of token0 represented in terms of token1
+    function convert0to1(int256 amount, uint160 sqrtPriceX96) internal pure returns (int256) {
+        unchecked {
+            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
+            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
+            if (sqrtPriceX96 < type(uint128).max) {
+                int256 absResult = Math
+                    .mulDiv192(Math.absUint(amount), uint256(sqrtPriceX96) ** 2)
+                    .toInt256();
+                return amount < 0 ? -absResult : absResult;
+            } else {
+                int256 absResult = Math
+                    .mulDiv128(Math.absUint(amount), Math.mulDiv64(sqrtPriceX96, sqrtPriceX96))
+                    .toInt256();
+                return amount < 0 ? -absResult : absResult;
+            }
+        }
+    }
+
+    /// @notice Convert an amount of token0 into an amount of token1 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
+    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
+    /// @param amount The amount of token0 to convert into token1
+    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token0 into token1
+    /// @return The converted `amount` of token0 represented in terms of token1
+    function convert0to1RoundingUp(
+        int256 amount,
+        uint160 sqrtPriceX96
+    ) internal pure returns (int256) {
+        unchecked {
+            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
+            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
+            if (sqrtPriceX96 < type(uint128).max) {
+                int256 absResult = Math
+                    .mulDiv192RoundingUp(Math.absUint(amount), uint256(sqrtPriceX96) ** 2)
+                    .toInt256();
+                return amount < 0 ? -absResult : absResult;
+            } else {
+                int256 absResult = Math
+                    .mulDiv128RoundingUp(
+                        Math.absUint(amount),
+                        Math.mulDiv64(sqrtPriceX96, sqrtPriceX96)
+                    )
+                    .toInt256();
+                return amount < 0 ? -absResult : absResult;
+            }
+        }
+    }
+
+    /// @notice Convert an amount of token1 into an amount of token0 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
+    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
+    /// @param amount The amount of token1 to convert into token0
+    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token1 into token0
+    /// @return The converted `amount` of token1 represented in terms of token0
+    function convert1to0(int256 amount, uint160 sqrtPriceX96) internal pure returns (int256) {
+        unchecked {
+            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
+            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
+            if (sqrtPriceX96 < type(uint128).max) {
+                int256 absResult = Math
+                    .mulDiv(Math.absUint(amount), 2 ** 192, uint256(sqrtPriceX96) ** 2)
+                    .toInt256();
+                return amount < 0 ? -absResult : absResult;
+            } else {
+                int256 absResult = Math
+                    .mulDiv(
+                        Math.absUint(amount),
+                        2 ** 128,
+                        Math.mulDiv64(sqrtPriceX96, sqrtPriceX96)
+                    )
+                    .toInt256();
+                return amount < 0 ? -absResult : absResult;
+            }
+        }
+    }
+
+    /// @notice Convert an amount of token1 into an amount of token0 given the sqrtPriceX96 in a Uniswap pool defined as `sqrt(1/0)*2^96`.
+    /// @dev Uses reduced precision after tick 443636 in order to accommodate the full range of ticks.
+    /// @param amount The amount of token1 to convert into token0
+    /// @param sqrtPriceX96 The square root of the price at which to convert `amount` of token1 into token0
+    /// @return The converted `amount` of token1 represented in terms of token0
+    function convert1to0RoundingUp(
+        int256 amount,
+        uint160 sqrtPriceX96
+    ) internal pure returns (int256) {
+        unchecked {
+            // the tick 443636 is the maximum price where (price) * 2**192 fits into a uint256 (< 2**256-1)
+            // above that tick, we are forced to reduce the amount of decimals in the final price by 2**64 to 2**128
+            if (sqrtPriceX96 < type(uint128).max) {
+                int256 absResult = Math
+                    .mulDivRoundingUp(Math.absUint(amount), 2 ** 192, uint256(sqrtPriceX96) ** 2)
+                    .toInt256();
+                return amount < 0 ? -absResult : absResult;
+            } else {
+                int256 absResult = Math
+                    .mulDivRoundingUp(
+                        Math.absUint(amount),
+                        2 ** 128,
+                        Math.mulDiv64(sqrtPriceX96, sqrtPriceX96)
+                    )
+                    .toInt256();
+                return amount < 0 ? -absResult : absResult;
+            }
+        }
+    }
+
+    /// @notice Get a single collateral balance and requirement in terms of the lowest-priced token for a given set of (token0/token1) collateral balances and requirements.
+    /// @param tokenData0 LeftRight encoded word with balance of token0 in the right slot, and required balance in left slot
+    /// @param tokenData1 LeftRight encoded word with balance of token1 in the right slot, and required balance in left slot
+    /// @param sqrtPriceX96 The price at which to compute the collateral value and requirements
+    /// @return The combined collateral balance of `tokenData0` and `tokenData1` in terms of (token0 if `price(token1/token0) < 1` and vice versa)
+    /// @return The combined required collateral threshold of `tokenData0` and `tokenData1` in terms of (token0 if `price(token1/token0) < 1` and vice versa)
+    function getCrossBalances(
+        LeftRightUnsigned tokenData0,
+        LeftRightUnsigned tokenData1,
+        uint160 sqrtPriceX96
+    ) internal pure returns (uint256, uint256) {
+        // convert values to the highest precision (lowest price) of the two tokens (token0 if price token1/token0 < 1 and vice versa)
+        if (sqrtPriceX96 < Constants.FP96) {
+            return (
+                tokenData0.rightSlot() +
+                    PanopticMath.convert1to0(tokenData1.rightSlot(), sqrtPriceX96),
+                tokenData0.leftSlot() +
+                    PanopticMath.convert1to0RoundingUp(tokenData1.leftSlot(), sqrtPriceX96)
+            );
+        }
+
+        return (
+            PanopticMath.convert0to1(tokenData0.rightSlot(), sqrtPriceX96) + tokenData1.rightSlot(),
+            PanopticMath.convert0to1RoundingUp(tokenData0.leftSlot(), sqrtPriceX96) +
+                tokenData1.leftSlot()
+        );
+    }
+
+    /// @notice Compute the notional value (for `tokenType = 0` and `tokenType = 1`) represented by a given leg in an option position.
+    /// @param tokenId The option position identifier
+    /// @param positionSize The number of option contracts held in this position (each contract can control multiple tokens)
+    /// @param legIndex The leg index of the option contract, can be {0,1,2,3}
+    /// @param opening Whether this position is being opened or closed
+    /// @return A LeftRight encoded variable containing the amount0 and the amount1 value controlled by this option position's leg
+    function getAmountsMoved(
+        TokenId tokenId,
+        uint128 positionSize,
+        uint256 legIndex,
+        bool opening
+    ) internal pure returns (LeftRightUnsigned) {
+        uint128 amount0;
+        uint128 amount1;
+
+        bool hasWidth = tokenId.width(legIndex) != 0;
+        // if the width is zero, add 1 to the width to allow liquidity amounts to be computes
+        /// @dev this is just for accounting purposes, the actual tokenId will remain with a width = 0
+        if (!hasWidth) {
+            tokenId = tokenId.addWidth(2, legIndex);
+        }
+
+        LiquidityChunk liquidityChunk = getLiquidityChunk(tokenId, legIndex, positionSize);
+
+        // Shorts round UP to ensure user pays enough (conservative for protocol)
+        // Longs round DOWN to ensure user receives correct amount (conservative for protocol)
+        if (
+            (tokenId.isLong(legIndex) == 0 && opening) ||
+            (tokenId.isLong(legIndex) != 0 && !opening) ||
+            !hasWidth
+        ) {
+            amount0 = uint128(Math.getAmount0ForLiquidityUp(liquidityChunk));
+            amount1 = uint128(Math.getAmount1ForLiquidityUp(liquidityChunk));
+        } else {
+            amount0 = uint128(Math.getAmount0ForLiquidity(liquidityChunk));
+            amount1 = uint128(Math.getAmount1ForLiquidity(liquidityChunk));
+        }
+        return LeftRightUnsigned.wrap(amount0).addToLeftSlot(amount1);
+    }
+
+    /// @notice Compute the amount of funds that are moved to or removed from the Panoptic Pool when `tokenId` is created.
+    /// @param tokenId The option position identifier
+    /// @param positionSize The number of positions minted
+    /// @param legIndex The leg index minted in this position, can be {0,1,2,3}
+    /// @param opening Whether this position is being opened or closed
+    /// @return longs A LeftRight-packed word containing the total amount of long positions
+    /// @return shorts A LeftRight-packed word containing the amount of short positions
+    function calculateIOAmounts(
+        TokenId tokenId,
+        uint128 positionSize,
+        uint256 legIndex,
+        bool opening
+    ) internal pure returns (LeftRightSigned longs, LeftRightSigned shorts) {
+        LeftRightUnsigned amountsMoved = getAmountsMoved(tokenId, positionSize, legIndex, opening);
+
+        bool isShort = tokenId.isLong(legIndex) == 0;
+
+        if (tokenId.tokenType(legIndex) == 0) {
+            if (isShort) {
+                // if option is short, increment shorts by contracts
+                shorts = LeftRightSigned.wrap(0).addToRightSlot(
+                    Math.toInt128(amountsMoved.rightSlot())
+                );
+            } else {
+                // is option is long, increment longs by contracts
+                longs = LeftRightSigned.wrap(0).addToRightSlot(
+                    Math.toInt128(amountsMoved.rightSlot())
+                );
+            }
+        } else {
+            if (isShort) {
+                // if option is short, increment shorts by notional
+                shorts = LeftRightSigned.wrap(0).addToLeftSlot(
+                    Math.toInt128(amountsMoved.leftSlot())
+                );
+            } else {
+                // if option is long, increment longs by notional
+                longs = LeftRightSigned.wrap(0).addToLeftSlot(
+                    Math.toInt128(amountsMoved.leftSlot())
+                );
+            }
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v4.8.0) (utils/Strings.sol)
+
+pragma solidity ^0.8.0;
+
+import "./math/Math.sol";
+
+/**
+ * @dev String operations.
+ */
+library Strings {
+    bytes16 private constant _SYMBOLS = "0123456789abcdef";
+    uint8 private constant _ADDRESS_LENGTH = 20;
+
+    /**
+     * @dev Converts a `uint256` to its ASCII `string` decimal representation.
+     */
+    function toString(uint256 value) internal pure returns (string memory) {
+        unchecked {
+            uint256 length = Math.log10(value) + 1;
+            string memory buffer = new string(length);
+            uint256 ptr;
+            /// @solidity memory-safe-assembly
+            assembly {
+                ptr := add(buffer, add(32, length))
+            }
+            while (true) {
+                ptr--;
+                /// @solidity memory-safe-assembly
+                assembly {
+                    mstore8(ptr, byte(mod(value, 10), _SYMBOLS))
+                }
+                value /= 10;
+                if (value == 0) break;
+            }
+            return buffer;
+        }
+    }
+
+    /**
+     * @dev Converts a `uint256` to its ASCII `string` hexadecimal representation.
+     */
+    function toHexString(uint256 value) internal pure returns (string memory) {
+        unchecked {
+            return toHexString(value, Math.log256(value) + 1);
+        }
+    }
+
+    /**
+     * @dev Converts a `uint256` to its ASCII `string` hexadecimal representation with fixed length.
+     */
+    function toHexString(uint256 value, uint256 length) internal pure returns (string memory) {
+        bytes memory buffer = new bytes(2 * length + 2);
+        buffer[0] = "0";
+        buffer[1] = "x";
+        for (uint256 i = 2 * length + 1; i > 1; --i) {
+            buffer[i] = _SYMBOLS[value & 0xf];
+            value >>= 4;
+        }
+        require(value == 0, "Strings: hex length insufficient");
+        return string(buffer);
+    }
+
+    /**
+     * @dev Converts an `address` with fixed length of 20 bytes to its not checksummed ASCII `string` hexadecimal representation.
+     */
+    function toHexString(address addr) internal pure returns (string memory) {
+        return toHexString(uint256(uint160(addr)), _ADDRESS_LENGTH);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {IERC20Minimal} from "../interfaces/external/IERC20Minimal.sol";
+import {CustomRevert} from "../libraries/CustomRevert.sol";
+
+type Currency is address;
+
+using {greaterThan as >, lessThan as <, greaterThanOrEqualTo as >=, equals as ==} for Currency global;
+using CurrencyLibrary for Currency global;
+
+function equals(Currency currency, Currency other) pure returns (bool) {
+    return Currency.unwrap(currency) == Currency.unwrap(other);
+}
+
+function greaterThan(Currency currency, Currency other) pure returns (bool) {
+    return Currency.unwrap(currency) > Currency.unwrap(other);
+}
+
+function lessThan(Currency currency, Currency other) pure returns (bool) {
+    return Currency.unwrap(currency) < Currency.unwrap(other);
+}
+
+function greaterThanOrEqualTo(Currency currency, Currency other) pure returns (bool) {
+    return Currency.unwrap(currency) >= Currency.unwrap(other);
+}
+
+/// @title CurrencyLibrary
+/// @dev This library allows for transferring and holding native tokens and ERC20 tokens
+library CurrencyLibrary {
+    /// @notice Additional context for ERC-7751 wrapped error when a native transfer fails
+    error NativeTransferFailed();
+
+    /// @notice Additional context for ERC-7751 wrapped error when an ERC20 transfer fails
+    error ERC20TransferFailed();
+
+    /// @notice A constant to represent the native currency
+    Currency public constant ADDRESS_ZERO = Currency.wrap(address(0));
+
+    function transfer(Currency currency, address to, uint256 amount) internal {
+        // altered from https://github.com/transmissions11/solmate/blob/44a9963d4c78111f77caa0e65d677b8b46d6f2e6/src/utils/SafeTransferLib.sol
+        // modified custom error selectors
+
+        bool success;
+        if (currency.isAddressZero()) {
+            assembly ("memory-safe") {
+                // Transfer the ETH and revert if it fails.
+                success := call(gas(), to, amount, 0, 0, 0, 0)
+            }
+            // revert with NativeTransferFailed, containing the bubbled up error as an argument
+            if (!success) {
+                CustomRevert.bubbleUpAndRevertWith(to, bytes4(0), NativeTransferFailed.selector);
+            }
+        } else {
+            assembly ("memory-safe") {
+                // Get a pointer to some free memory.
+                let fmp := mload(0x40)
+
+                // Write the abi-encoded calldata into memory, beginning with the function selector.
+                mstore(fmp, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
+                mstore(add(fmp, 4), and(to, 0xffffffffffffffffffffffffffffffffffffffff)) // Append and mask the "to" argument.
+                mstore(add(fmp, 36), amount) // Append the "amount" argument. Masking not required as it's a full 32 byte type.
+
+                success :=
+                    and(
+                        // Set success to whether the call reverted, if not we check it either
+                        // returned exactly 1 (can't just be non-zero data), or had no return data.
+                        or(and(eq(mload(0), 1), gt(returndatasize(), 31)), iszero(returndatasize())),
+                        // We use 68 because the length of our calldata totals up like so: 4 + 32 * 2.
+                        // We use 0 and 32 to copy up to 32 bytes of return data into the scratch space.
+                        // Counterintuitively, this call must be positioned second to the or() call in the
+                        // surrounding and() call or else returndatasize() will be zero during the computation.
+                        call(gas(), currency, 0, fmp, 68, 0, 32)
+                    )
+
+                // Now clean the memory we used
+                mstore(fmp, 0) // 4 byte `selector` and 28 bytes of `to` were stored here
+                mstore(add(fmp, 0x20), 0) // 4 bytes of `to` and 28 bytes of `amount` were stored here
+                mstore(add(fmp, 0x40), 0) // 4 bytes of `amount` were stored here
+            }
+            // revert with ERC20TransferFailed, containing the bubbled up error as an argument
+            if (!success) {
+                CustomRevert.bubbleUpAndRevertWith(
+                    Currency.unwrap(currency), IERC20Minimal.transfer.selector, ERC20TransferFailed.selector
+                );
+            }
+        }
+    }
+
+    function balanceOfSelf(Currency currency) internal view returns (uint256) {
+        if (currency.isAddressZero()) {
+            return address(this).balance;
+        } else {
+            return IERC20Minimal(Currency.unwrap(currency)).balanceOf(address(this));
+        }
+    }
+
+    function balanceOf(Currency currency, address owner) internal view returns (uint256) {
+        if (currency.isAddressZero()) {
+            return owner.balance;
+        } else {
+            return IERC20Minimal(Currency.unwrap(currency)).balanceOf(owner);
+        }
+    }
+
+    function isAddressZero(Currency currency) internal pure returns (bool) {
+        return Currency.unwrap(currency) == Currency.unwrap(ADDRESS_ZERO);
+    }
+
+    function toId(Currency currency) internal pure returns (uint256) {
+        return uint160(Currency.unwrap(currency));
+    }
+
+    // If the upper 12 bytes are non-zero, they will be zero-ed out
+    // Therefore, fromId() and toId() are not inverses of each other
+    function fromId(uint256 id) internal pure returns (Currency) {
+        return Currency.wrap(address(uint160(id)));
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+type MarketState is uint256;
+using MarketStateLibrary for MarketState global;
+
+/// @title A Panoptic Market State. Tracks the data of a given CollateralTracker market.
+/// @author Axicon Labs Limited
+//
+//
+// PACKING RULES FOR A MARKETSTATE:
+// =================================================================================================
+//  From the LSB to the MSB:
+// (0) borrowIndex          80 bits : Global borrow index in WAD (starts at 1e18). 2**80 = 1.75 years at 800% interest
+// (1) marketEpoch          32 bits : Last interaction epoch for that market (1 epoch = block.timestamp/4)
+// (2) rateAtTarget         38 bits : The rateAtTarget value in WAD (2**38 = 800% interest rate)
+// (3) unrealizedInterest   106bits : Accumulated unrealized interest that hasn't been distributed (max deposit is 2**104)
+// Total                    256bits  : Total bits used by a MarketState.
+// ===============================================================================================
+//
+// The bit pattern is therefore:
+//
+//          (3)                 (2)                 (1)                 (0)
+//    <---- 106 bits ----><---- 38 bits ----><---- 32 bits ----><---- 80 bits ---->
+//     unrealizedInterest    rateAtTarget        marketEpoch        borrowIndex
+//
+//    <--- most significant bit                              least significant bit --->
+//
+library MarketStateLibrary {
+    // =============================================================
+    // CONSTANTS (MASKS)
+    // =============================================================
+    // We define "Positive Masks" (1s where the data is, 0s elsewhere).
+    // We will use NOT(MASK) to clear data.
+
+    // Bits 0-79 (80 bits)
+    uint256 internal constant BORROW_INDEX_MASK = (1 << 80) - 1;
+
+    // Bits 80-111 (32 bits)
+    uint256 internal constant EPOCH_MASK = ((1 << 32) - 1) << 80;
+
+    // Bits 112-149 (38 bits)
+    uint256 internal constant TARGET_RATE_MASK = ((1 << 38) - 1) << 112;
+
+    // Bits 150-255 (106 bits)
+    uint256 internal constant UNREALIZED_INTEREST_MASK =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFC0000000000000000000000000000000000000;
+
+    /*//////////////////////////////////////////////////////////////
+                                ENCODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Create a new `MarketState` object.
+    /// @param _borrowIndex The global index (uint80)
+    /// @param _marketEpoch The market's epoch (uint32)
+    /// @param _rateAtTarget The rateAtTarget (uint38)
+    /// @param _unrealizedInterest The unrealized interest (uint106)
+    /// @return result The new MarketState object
+    function storeMarketState(
+        uint256 _borrowIndex,
+        uint256 _marketEpoch,
+        uint256 _rateAtTarget,
+        uint256 _unrealizedInterest
+    ) internal pure returns (MarketState result) {
+        assembly {
+            result := add(
+                add(add(_borrowIndex, shl(80, _marketEpoch)), shl(112, _rateAtTarget)),
+                shl(150, _unrealizedInterest)
+            )
+        }
+    }
+
+    /// @notice Update the Global Borrow Index (Lowest 80 bits)
+    /// @param self The MarketState to update
+    /// @param newIndex The new borrow index value
+    /// @return result The updated MarketState with the new borrow index
+    function updateBorrowIndex(
+        MarketState self,
+        uint80 newIndex
+    ) internal pure returns (MarketState result) {
+        assembly {
+            // 1. Clear the lowest 80 bits using not(BORROW_INDEX_MASK)
+            let cleared := and(self, not(BORROW_INDEX_MASK))
+            // 2. OR with the new value (no shift needed, it's at 0)
+            result := or(cleared, newIndex)
+        }
+    }
+
+    /// @notice Update the Market Epoch (Bits 80-111)
+    /// @param self The MarketState to update
+    /// @param newEpoch The new market epoch value
+    /// @return result The updated MarketState with the new market epoch
+    function updateMarketEpoch(
+        MarketState self,
+        uint32 newEpoch
+    ) internal pure returns (MarketState result) {
+        assembly {
+            // 1. Clear bits 80-111
+            let cleared := and(self, not(EPOCH_MASK))
+            // 2. Shift new value to 80 and combine
+            result := or(cleared, shl(80, newEpoch))
+        }
+    }
+
+    /// @notice Update the Rate At Target (Bits 112-149)
+    /// @param self The MarketState to update
+    /// @param newRate The new rate at target value
+    /// @return result The updated MarketState with the new rate at target
+    function updateRateAtTarget(
+        MarketState self,
+        uint40 newRate
+    ) internal pure returns (MarketState result) {
+        assembly {
+            // 1. Clear bits 112-149
+            let cleared := and(self, not(TARGET_RATE_MASK))
+
+            // 2. Safety: Mask the input to ensure it fits in 38 bits (0x3FFFFFFFFF)
+            //    This prevents 'newRate' from corrupting the neighbor if it > 38 bits.
+            let safeRate := and(newRate, 0x3FFFFFFFFF)
+
+            // 3. Shift to 112 and combine
+            result := or(cleared, shl(112, safeRate))
+        }
+    }
+
+    /// @notice Update the Unrealized Interest (Bits 150-255)
+    /// @param self The MarketState to update
+    /// @param newInterest The new unrealized interest value
+    /// @return result The updated MarketState with the new unrealized interest
+    function updateUnrealizedInterest(
+        MarketState self,
+        uint128 newInterest
+    ) internal pure returns (MarketState result) {
+        assembly {
+            // 1. Clear bits 150-255
+            let cleared := and(self, not(UNREALIZED_INTEREST_MASK))
+
+            // 2. Safety: Mask input to 106 bits
+            //    (1 << 106) - 1
+            let max106 := sub(shl(106, 1), 1)
+            let safeInterest := and(newInterest, max106)
+
+            // 3. Shift to 150 and combine
+            result := or(cleared, shl(150, safeInterest))
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                DECODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the borrowIndex of `self`.
+    /// @param self The MarketState to retrieve the borrowIndex state from
+    /// @return result The borrowIndex of `self`
+    function borrowIndex(MarketState self) internal pure returns (uint80 result) {
+        assembly {
+            result := and(self, 0xFFFFFFFFFFFFFFFFFFFF)
+        }
+    }
+
+    /// @notice Get the marketEpoch of `self`.
+    /// @param self The MarketState to retrieve the marketEpoch from
+    /// @return result The marketEpoch of `self`
+    function marketEpoch(MarketState self) internal pure returns (uint32 result) {
+        assembly {
+            result := and(shr(80, self), 0xFFFFFFFF)
+        }
+    }
+
+    /// @notice Get the rateAtTarget of `self`.
+    /// @param self The MarketState to retrieve the rateAtTarget from
+    /// @return result The rateAtTarget of `self`
+    function rateAtTarget(MarketState self) internal pure returns (uint40 result) {
+        assembly {
+            result := and(shr(112, self), 0x3FFFFFFFFF)
+        }
+    }
+
+    /// @notice Get the unrealizedInterest of `self`.
+    /// @param self The MarketState to retrieve the unrealizedInterest from
+    /// @return result The unrealizedInterest of `self`
+    function unrealizedInterest(MarketState self) internal pure returns (uint128 result) {
+        assembly {
+            result := shr(150, self)
+        }
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.24;
+
+// Interfaces
+import {CollateralTracker} from "@contracts/CollateralTracker.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IERC20Partial} from "@tokens/interfaces/IERC20Partial.sol";
+import {ISemiFungiblePositionManager} from "@contracts/interfaces/ISemiFungiblePositionManager.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PanopticPool} from "@contracts/PanopticPool.sol";
+// Libraries
+import {PanopticMath} from "@libraries/PanopticMath.sol";
+import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
+import {TokenId} from "@types/TokenId.sol";
+import {RiskParameters} from "@types/RiskParameters.sol";
+import {EfficientHash} from "@libraries/EfficientHash.sol";
+
+/// @title InteractionHelper - contains helper functions for external interactions such as approvals.
+/// @notice Used to delegate logic with multiple external calls.
+/// @dev Generally employed when there is a need to save or reuse bytecode size
+/// on a core contract.
+/// @author Axicon Labs Limited
+library InteractionHelper {
+    /// @notice Function that performs approvals on behalf of the PanopticPool for CollateralTracker and SemiFungiblePositionManager.
+    /// @param sfpm The SemiFungiblePositionManager being approved for both token0 and token1
+    /// @param ct0 The CollateralTracker (token0) being approved for token0
+    /// @param ct1 The CollateralTracker (token1) being approved for token1
+    /// @param token0 The token0 (in Uniswap) being approved for
+    /// @param token1 The token1 (in Uniswap) being approved for
+    /// @param poolManager The Uniswap V4 pool manager address (zero address if using V3)
+    function doApprovals(
+        ISemiFungiblePositionManager sfpm,
+        CollateralTracker ct0,
+        CollateralTracker ct1,
+        address token0,
+        address token1,
+        address poolManager
+    ) external {
+        if (poolManager == address(0)) {
+            // Approve transfers of Panoptic Pool funds by SFPM
+            IERC20Partial(token0).approve(address(sfpm), type(uint256).max);
+            IERC20Partial(token1).approve(address(sfpm), type(uint256).max);
+
+            // Approve transfers of Panoptic Pool funds by Collateral token
+            IERC20Partial(token0).approve(address(ct0), type(uint256).max);
+            IERC20Partial(token1).approve(address(ct1), type(uint256).max);
+        } else {
+            IPoolManager(poolManager).setOperator(address(sfpm), true);
+            IPoolManager(poolManager).setOperator(address(ct0), true);
+            IPoolManager(poolManager).setOperator(address(ct1), true);
+        }
+    }
+
+    /// @notice Computes the name of a CollateralTracker based on the token composition and fee of the underlying Uniswap Pool.
+    /// @dev Some tokens do not have proper symbols so error handling is required - this logic takes up significant bytecode size, which is why it is in a library.
+    /// @param token0 The token0 of the Uniswap Pool
+    /// @param token1 The token1 of the Uniswap Pool
+    /// @param isToken0 Whether the collateral token computing the name is for token0 or token1
+    /// @param fee The fee of the Uniswap pool in hundredths of basis points
+    /// @param prefix A constant string appended to the start of the token name
+    /// @return The complete name of the collateral token calling this function
+    function computeName(
+        address token0,
+        address token1,
+        bool isToken0,
+        uint24 fee,
+        string memory prefix
+    ) external view returns (string memory) {
+        string memory symbol0 = PanopticMath.safeERC20Symbol(token0);
+        string memory symbol1 = PanopticMath.safeERC20Symbol(token1);
+
+        unchecked {
+            return
+                string.concat(
+                    prefix,
+                    " ",
+                    isToken0 ? symbol0 : symbol1,
+                    " LP on ",
+                    symbol0,
+                    "/",
+                    symbol1,
+                    " ",
+                    PanopticMath.uniswapFeeToString(fee)
+                );
+        }
+    }
+
+    /// @notice Returns collateral token symbol as `prefix` + `underlying token symbol`.
+    /// @param token The address of the underlying token used to compute the symbol
+    /// @param prefix A constant string prepended to the symbol of the underlying token to create the final symbol
+    /// @return The symbol of the collateral token
+    function computeSymbol(
+        address token,
+        string memory prefix
+    ) external view returns (string memory) {
+        return string.concat(prefix, PanopticMath.safeERC20Symbol(token));
+    }
+
+    /// @notice Returns decimals of underlying token (0 if not present).
+    /// @param token The address of the underlying token used to compute the decimals
+    /// @return The decimals of the token
+    function computeDecimals(address token) external view returns (uint8) {
+        // not guaranteed that token supports metadata extension
+        // so we need to let call fail and return placeholder if not
+        try IERC20Metadata(token).decimals() returns (uint8 _decimals) {
+            return _decimals;
+        } catch {
+            return 0;
+        }
+    }
+
+    function settleAmounts(
+        address liquidatee,
+        TokenId[] memory positionIdList,
+        LeftRightUnsigned haircutTotal,
+        LeftRightSigned[4][] memory haircutPerLeg,
+        LeftRightSigned[4][] memory premiasByLeg,
+        CollateralTracker ct0,
+        CollateralTracker ct1,
+        mapping(bytes32 chunkKey => LeftRightUnsigned settledTokens) storage settledTokens
+    ) external {
+        unchecked {
+            for (uint256 i = 0; i < positionIdList.length; i++) {
+                TokenId tokenId = positionIdList[i];
+                for (uint256 leg = 0; leg < tokenId.countLegs(); ++leg) {
+                    if (
+                        tokenId.isLong(leg) == 1 &&
+                        LeftRightSigned.unwrap(premiasByLeg[i][leg]) != 0
+                    ) {
+                        bytes32 chunkKey = EfficientHash.efficientKeccak256(
+                            abi.encodePacked(
+                                tokenId.strike(leg),
+                                tokenId.width(leg),
+                                tokenId.tokenType(leg)
+                            )
+                        );
+
+                        emit PanopticPool.PremiumSettled(
+                            liquidatee,
+                            tokenId,
+                            leg,
+                            LeftRightSigned.wrap(0).sub(haircutPerLeg[i][leg])
+                        );
+
+                        // The long premium is not committed to storage during the liquidation, so we add the entire adjusted amount
+                        // for the haircut directly to the accumulator
+                        settledTokens[chunkKey] = settledTokens[chunkKey].add(
+                            (LeftRightSigned.wrap(0).sub(premiasByLeg[i][leg])).subRect(
+                                haircutPerLeg[i][leg]
+                            )
+                        );
+                    }
+                }
+            }
+
+            if (haircutTotal.rightSlot() != 0)
+                ct0.settleBurn(
+                    liquidatee,
+                    0,
+                    0,
+                    0,
+                    int128(haircutTotal.rightSlot()),
+                    RiskParameters.wrap(0)
+                );
+            if (haircutTotal.leftSlot() != 0)
+                ct1.settleBurn(
+                    liquidatee,
+                    0,
+                    0,
+                    0,
+                    int128(haircutTotal.leftSlot()),
+                    RiskParameters.wrap(0)
+                );
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+// Libraries
+import {Errors} from "@libraries/Errors.sol";
+import {Math} from "@libraries/Math.sol";
+
+type LeftRightUnsigned is uint256;
+using LeftRightLibrary for LeftRightUnsigned global;
+
+type LeftRightSigned is int256;
+using LeftRightLibrary for LeftRightSigned global;
+
+/// @title Pack two separate data (each of 128bit) into a single 256-bit slot; 256bit-to-128bit packing methods.
+/// @author Axicon Labs Limited
+/// @notice Simple data type that divides a 256-bit word into two 128-bit slots.
+library LeftRightLibrary {
+    using Math for uint256;
+
+    /// @notice AND bitmask to isolate the left half of a uint256.
+    uint256 internal constant LEFT_HALF_BIT_MASK =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000;
+
+    /// @notice AND bitmask to isolate the left half of an int256.
+    int256 internal constant LEFT_HALF_BIT_MASK_INT =
+        int256(uint256(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000));
+
+    /// @notice AND bitmask to isolate the right half of an int256.
+    int256 internal constant RIGHT_HALF_BIT_MASK = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+
+    /*//////////////////////////////////////////////////////////////
+                               RIGHT SLOT
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the "right" slot from a bit pattern.
+    /// @param self The 256 bit value to extract the right half from
+    /// @return The right half of `self`
+    function rightSlot(LeftRightUnsigned self) internal pure returns (uint128) {
+        return uint128(LeftRightUnsigned.unwrap(self));
+    }
+
+    /// @notice Get the "right" slot from a bit pattern.
+    /// @param self The 256 bit value to extract the right half from
+    /// @return The right half of `self`
+    function rightSlot(LeftRightSigned self) internal pure returns (int128) {
+        return int128(LeftRightSigned.unwrap(self));
+    }
+
+    // All addToRightSlot functions add bits to the right slot without clearing it first
+    // Typically, the slot is already clear when writing to it, but if it is not, the bits will be added to the existing bits
+    // Therefore, the assumption must not be made that the bits will be cleared while using these helpers
+    // Note that the values *within* the slots are allowed to overflow, but overflows are contained and will not leak into the other slot
+
+    /// @notice Add to the "right" slot in a 256-bit pattern.
+    /// @param self The 256-bit pattern to be written to
+    /// @param right The value to be added to the right slot
+    /// @return `self` with `right` added (not overwritten, but added) to the value in its right 128 bits
+    function addToRightSlot(
+        LeftRightUnsigned self,
+        uint128 right
+    ) internal pure returns (LeftRightUnsigned) {
+        unchecked {
+            // prevent the right slot from leaking into the left one in the case of an overflow
+            // ff + 1 = (1)00, but we want just ff + 1 = 00
+            return
+                LeftRightUnsigned.wrap(
+                    (LeftRightUnsigned.unwrap(self) & LEFT_HALF_BIT_MASK) +
+                        uint256(uint128(LeftRightUnsigned.unwrap(self)) + right)
+                );
+        }
+    }
+
+    /// @notice Add to the "right" slot in a 256-bit pattern.
+    /// @param self The 256-bit pattern to be written to
+    /// @param right The value to be added to the right slot
+    /// @return `self` with `right` added (not overwritten, but added) to the value in its right 128 bits
+    function addToRightSlot(
+        LeftRightSigned self,
+        int128 right
+    ) internal pure returns (LeftRightSigned) {
+        // bit mask needed in case rightHalfBitPattern < 0 due to 2's complement
+        unchecked {
+            // prevent the right slot from leaking into the left one in the case of a positive sign change
+            // ff + 1 = (1)00, but we want just ff + 1 = 00
+            return
+                LeftRightSigned.wrap(
+                    (LeftRightSigned.unwrap(self) & LEFT_HALF_BIT_MASK_INT) +
+                        (int256(int128(LeftRightSigned.unwrap(self)) + right) & RIGHT_HALF_BIT_MASK)
+                );
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                               LEFT SLOT
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the "left" slot from a bit pattern.
+    /// @param self The 256 bit value to extract the left half from
+    /// @return The left half of `self`
+    function leftSlot(LeftRightUnsigned self) internal pure returns (uint128) {
+        return uint128(LeftRightUnsigned.unwrap(self) >> 128);
+    }
+
+    /// @notice Get the "left" slot from a bit pattern.
+    /// @param self The 256 bit value to extract the left half from
+    /// @return The left half of `self`
+    function leftSlot(LeftRightSigned self) internal pure returns (int128) {
+        return int128(LeftRightSigned.unwrap(self) >> 128);
+    }
+
+    /// All addToLeftSlot functions add bits to the left slot without clearing it first
+    // Typically, the slot is already clear when writing to it, but if it is not, the bits will be added to the existing bits
+    // Therefore, the assumption must not be made that the bits will be cleared while using these helpers
+    // Note that the values *within* the slots are allowed to overflow, but overflows are contained and will not leak into the other slot
+
+    /// @notice Add to the "left" slot in a 256-bit pattern.
+    /// @param self The 256-bit pattern to be written to
+    /// @param left The value to be added to the left slot
+    /// @return `self` with `left` added (not overwritten, but added) to the value in its left 128 bits
+    function addToLeftSlot(
+        LeftRightUnsigned self,
+        uint128 left
+    ) internal pure returns (LeftRightUnsigned) {
+        unchecked {
+            return LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(self) + (uint256(left) << 128));
+        }
+    }
+
+    /// @notice Add to the "left" slot in a 256-bit pattern.
+    /// @param self The 256-bit pattern to be written to
+    /// @param left The value to be added to the left slot
+    /// @return `self` with `left` added (not overwritten, but added) to the value in its left 128 bits
+    function addToLeftSlot(
+        LeftRightSigned self,
+        int128 left
+    ) internal pure returns (LeftRightSigned) {
+        unchecked {
+            return LeftRightSigned.wrap(LeftRightSigned.unwrap(self) + (int256(left) << 128));
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             MATH FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The augend
+    /// @param y The addend
+    /// @return z The sum `x + y`
+    function add(
+        LeftRightUnsigned x,
+        LeftRightUnsigned y
+    ) internal pure returns (LeftRightUnsigned z) {
+        unchecked {
+            // adding leftRight packed uint128's is same as just adding the values explicitly
+            // given that we check for overflows of the left and right values
+            z = LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(x) + LeftRightUnsigned.unwrap(y));
+
+            // on overflow z will be less than either x or y
+            // type cast z to uint128 to isolate the right slot and if it's lower than a value it's comprised of (x)
+            // then an overflow has occurred
+            if (
+                LeftRightUnsigned.unwrap(z) < LeftRightUnsigned.unwrap(x) ||
+                (uint128(LeftRightUnsigned.unwrap(z)) < uint128(LeftRightUnsigned.unwrap(x)))
+            ) revert Errors.UnderOverFlow();
+        }
+    }
+
+    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference `x - y`
+    function sub(
+        LeftRightUnsigned x,
+        LeftRightUnsigned y
+    ) internal pure returns (LeftRightUnsigned z) {
+        unchecked {
+            // subtracting leftRight packed uint128's is same as just subtracting the values explicitly
+            // given that we check for underflows of the left and right values
+            z = LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(x) - LeftRightUnsigned.unwrap(y));
+
+            // on underflow z will be greater than either x or y
+            // type cast z to uint128 to isolate the right slot and if it's higher than a value that was subtracted from (x)
+            // then an underflow has occurred
+            if (
+                LeftRightUnsigned.unwrap(z) > LeftRightUnsigned.unwrap(x) ||
+                (uint128(LeftRightUnsigned.unwrap(z)) > uint128(LeftRightUnsigned.unwrap(x)))
+            ) revert Errors.UnderOverFlow();
+        }
+    }
+
+    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The augend
+    /// @param y The addend
+    /// @return z The sum `x + y`
+    function add(LeftRightUnsigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
+        unchecked {
+            int256 left = int256(uint256(x.leftSlot())) + y.leftSlot();
+            int128 left128 = int128(left);
+
+            if (left128 != left) revert Errors.UnderOverFlow();
+
+            int256 right = int256(uint256(x.rightSlot())) + y.rightSlot();
+            int128 right128 = int128(right);
+
+            if (right128 != right) revert Errors.UnderOverFlow();
+
+            return z.addToRightSlot(right128).addToLeftSlot(left128);
+        }
+    }
+
+    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The augend
+    /// @param y The addend
+    /// @return z The sum `x + y`
+    function add(LeftRightSigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
+        unchecked {
+            int256 left256 = int256(x.leftSlot()) + y.leftSlot();
+            int128 left128 = int128(left256);
+
+            int256 right256 = int256(x.rightSlot()) + y.rightSlot();
+            int128 right128 = int128(right256);
+
+            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
+
+            return z.addToRightSlot(right128).addToLeftSlot(left128);
+        }
+    }
+
+    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference `x - y`
+    function sub(LeftRightSigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
+        unchecked {
+            int256 left256 = int256(x.leftSlot()) - y.leftSlot();
+            int128 left128 = int128(left256);
+
+            int256 right256 = int256(x.rightSlot()) - y.rightSlot();
+            int128 right128 = int128(right256);
+
+            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
+
+            return z.addToRightSlot(right128).addToLeftSlot(left128);
+        }
+    }
+
+    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference `x - y`
+    function sub(LeftRightSigned x, LeftRightUnsigned y) internal pure returns (LeftRightSigned z) {
+        unchecked {
+            int256 left256 = int256(x.leftSlot()) - int256(uint256(y.leftSlot()));
+            int128 left128 = int128(left256);
+
+            int256 right256 = int256(x.rightSlot()) - int256(uint256(y.rightSlot()));
+            int128 right128 = int128(right256);
+
+            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
+
+            return z.addToRightSlot(right128).addToLeftSlot(left128);
+        }
+    }
+
+    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
+    /// @notice For each slot, rectify difference `x - y` to 0 if negative.
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference `x - y`
+    function subRect(
+        LeftRightSigned x,
+        LeftRightSigned y
+    ) internal pure returns (LeftRightUnsigned z) {
+        unchecked {
+            int256 left256 = int256(x.leftSlot()) - y.leftSlot();
+            int128 left128 = int128(left256);
+
+            int256 right256 = int256(x.rightSlot()) - y.rightSlot();
+            int128 right128 = int128(right256);
+
+            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
+
+            return
+                z.addToRightSlot(uint128(uint256((Math.max(right128, 0))))).addToLeftSlot(
+                    uint128(uint256((Math.max(left128, 0))))
+                );
+        }
+    }
+
+    /// @notice Adds two sets of LeftRight-encoded words, freezing both right slots if either overflows, and vice versa.
+    /// @dev Used for linked accumulators, so if the accumulator for one side overflows for a token, both cease to accumulate.
+    /// @param x The first augend
+    /// @param dx The addend for `x`
+    /// @param y The second augend
+    /// @param dy The addend for `y`
+    /// @return The sum `x + dx`
+    /// @return The sum `y + dy`
+    function addCapped(
+        LeftRightUnsigned x,
+        LeftRightUnsigned dx,
+        LeftRightUnsigned y,
+        LeftRightUnsigned dy
+    ) internal pure returns (LeftRightUnsigned, LeftRightUnsigned) {
+        uint128 z_xR = (uint256(x.rightSlot()) + dx.rightSlot()).toUint128Capped();
+        uint128 z_xL = (uint256(x.leftSlot()) + dx.leftSlot()).toUint128Capped();
+        uint128 z_yR = (uint256(y.rightSlot()) + dy.rightSlot()).toUint128Capped();
+        uint128 z_yL = (uint256(y.leftSlot()) + dy.leftSlot()).toUint128Capped();
+
+        bool r_Enabled = !(z_xR == type(uint128).max || z_yR == type(uint128).max);
+        bool l_Enabled = !(z_xL == type(uint128).max || z_yL == type(uint128).max);
+
+        return (
+            LeftRightUnsigned.wrap(r_Enabled ? z_xR : x.rightSlot()).addToLeftSlot(
+                l_Enabled ? z_xL : x.leftSlot()
+            ),
+            LeftRightUnsigned.wrap(r_Enabled ? z_yR : y.rightSlot()).addToLeftSlot(
+                l_Enabled ? z_yL : y.leftSlot()
+            )
+        );
     }
 }
 
@@ -8421,6 +8383,97 @@ contract Clone {
             )
         }
     }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+/// @title Multicall
+/// @notice Enables calling multiple methods in a single call to the contract.
+/// @dev Helpful for performing batch operations such as an "emergency exit", or simply creating advanced positions.
+/// @author Axicon Labs Limited
+abstract contract Multicall {
+    /// @notice Performs multiple calls on the inheritor in a single transaction, and returns the data from each call.
+    /// @param data The calldata for each call
+    /// @return results The data returned by each call
+    function multicall(bytes[] calldata data) public payable returns (bytes[] memory results) {
+        results = new bytes[](data.length);
+        for (uint256 i = 0; i < data.length; ) {
+            (bool success, bytes memory result) = address(this).delegatecall(data[i]);
+
+            if (!success) {
+                // Bubble up the revert reason
+                // The bytes type is ABI encoded as a length-prefixed byte array
+                // So we simply need to add 32 to the pointer to get the start of the data
+                // And then revert with the size loaded from the first 32 bytes
+                // Other solutions will do work to differentiate the revert reasons and provide parenthetical information
+                // However, we have chosen to simply replicate the the normal behavior of the call
+                // NOTE: memory-safe because it reads from memory already allocated by solidity (the bytes memory result)
+                assembly ("memory-safe") {
+                    revert(add(result, 32), mload(result))
+                }
+            }
+
+            results[i] = result;
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {Currency} from "../types/Currency.sol";
+import {PoolId} from "../types/PoolId.sol";
+import {PoolKey} from "../types/PoolKey.sol";
+
+/// @notice Interface for all protocol-fee related functions in the pool manager
+interface IProtocolFees {
+    /// @notice Thrown when protocol fee is set too high
+    error ProtocolFeeTooLarge(uint24 fee);
+
+    /// @notice Thrown when collectProtocolFees or setProtocolFee is not called by the controller.
+    error InvalidCaller();
+
+    /// @notice Thrown when collectProtocolFees is attempted on a token that is synced.
+    error ProtocolFeeCurrencySynced();
+
+    /// @notice Emitted when the protocol fee controller address is updated in setProtocolFeeController.
+    event ProtocolFeeControllerUpdated(address indexed protocolFeeController);
+
+    /// @notice Emitted when the protocol fee is updated for a pool.
+    event ProtocolFeeUpdated(PoolId indexed id, uint24 protocolFee);
+
+    /// @notice Given a currency address, returns the protocol fees accrued in that currency
+    /// @param currency The currency to check
+    /// @return amount The amount of protocol fees accrued in the currency
+    function protocolFeesAccrued(Currency currency) external view returns (uint256 amount);
+
+    /// @notice Sets the protocol fee for the given pool
+    /// @param key The key of the pool to set a protocol fee for
+    /// @param newProtocolFee The fee to set
+    function setProtocolFee(PoolKey memory key, uint24 newProtocolFee) external;
+
+    /// @notice Sets the protocol fee controller
+    /// @param controller The new protocol fee controller
+    function setProtocolFeeController(address controller) external;
+
+    /// @notice Collects the protocol fees for a given recipient and currency, returning the amount collected
+    /// @dev This will revert if the contract is unlocked
+    /// @param recipient The address to receive the protocol fees
+    /// @param currency The currency to withdraw
+    /// @param amount The amount of currency to withdraw
+    /// @return amountCollected The amount of currency successfully withdrawn
+    function collectProtocolFees(address recipient, Currency currency, uint256 amount)
+        external
+        returns (uint256 amountCollected);
+
+    /// @notice Returns the current protocol fee controller address
+    /// @return address The current protocol fee controller address
+    function protocolFeeController() external view returns (address);
 }
 
 // SPDX-License-Identifier: MIT
@@ -8546,68 +8599,179 @@ library CurrencyLibrary {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-/// @notice Interface for claims over a contract balance, wrapped as a ERC6909
-interface IERC6909Claims {
-    /*//////////////////////////////////////////////////////////////
-                                 EVENTS
-    //////////////////////////////////////////////////////////////*/
+/// @notice Interface for functions to access any storage slot in a contract
+interface IExtsload {
+    /// @notice Called by external contracts to access granular pool state
+    /// @param slot Key of slot to sload
+    /// @return value The value of the slot as bytes32
+    function extsload(bytes32 slot) external view returns (bytes32 value);
 
-    event OperatorSet(address indexed owner, address indexed operator, bool approved);
+    /// @notice Called by external contracts to access granular pool state
+    /// @param startSlot Key of slot to start sloading from
+    /// @param nSlots Number of slots to load into return value
+    /// @return values List of loaded values.
+    function extsload(bytes32 startSlot, uint256 nSlots) external view returns (bytes32[] memory values);
 
-    event Approval(address indexed owner, address indexed spender, uint256 indexed id, uint256 amount);
+    /// @notice Called by external contracts to access sparse pool state
+    /// @param slots List of slots to SLOAD from.
+    /// @return values List of loaded values.
+    function extsload(bytes32[] calldata slots) external view returns (bytes32[] memory values);
+}
 
-    event Transfer(address caller, address indexed from, address indexed to, uint256 indexed id, uint256 amount);
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    /*//////////////////////////////////////////////////////////////
-                                 FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
+import {PoolKey} from "../types/PoolKey.sol";
+import {BalanceDelta} from "../types/BalanceDelta.sol";
+import {IPoolManager} from "./IPoolManager.sol";
+import {BeforeSwapDelta} from "../types/BeforeSwapDelta.sol";
 
-    /// @notice Owner balance of an id.
-    /// @param owner The address of the owner.
-    /// @param id The id of the token.
-    /// @return amount The balance of the token.
-    function balanceOf(address owner, uint256 id) external view returns (uint256 amount);
+/// @notice V4 decides whether to invoke specific hooks by inspecting the least significant bits
+/// of the address that the hooks contract is deployed to.
+/// For example, a hooks contract deployed to address: 0x0000000000000000000000000000000000002400
+/// has the lowest bits '10 0100 0000 0000' which would cause the 'before initialize' and 'after add liquidity' hooks to be used.
+/// See the Hooks library for the full spec.
+/// @dev Should only be callable by the v4 PoolManager.
+interface IHooks {
+    /// @notice The hook called before the state of a pool is initialized
+    /// @param sender The initial msg.sender for the initialize call
+    /// @param key The key for the pool being initialized
+    /// @param sqrtPriceX96 The sqrt(price) of the pool as a Q64.96
+    /// @return bytes4 The function selector for the hook
+    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) external returns (bytes4);
 
-    /// @notice Spender allowance of an id.
-    /// @param owner The address of the owner.
-    /// @param spender The address of the spender.
-    /// @param id The id of the token.
-    /// @return amount The allowance of the token.
-    function allowance(address owner, address spender, uint256 id) external view returns (uint256 amount);
+    /// @notice The hook called after the state of a pool is initialized
+    /// @param sender The initial msg.sender for the initialize call
+    /// @param key The key for the pool being initialized
+    /// @param sqrtPriceX96 The sqrt(price) of the pool as a Q64.96
+    /// @param tick The current tick after the state of a pool is initialized
+    /// @return bytes4 The function selector for the hook
+    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
+        external
+        returns (bytes4);
 
-    /// @notice Checks if a spender is approved by an owner as an operator
-    /// @param owner The address of the owner.
-    /// @param spender The address of the spender.
-    /// @return approved The approval status.
-    function isOperator(address owner, address spender) external view returns (bool approved);
+    /// @notice The hook called before liquidity is added
+    /// @param sender The initial msg.sender for the add liquidity call
+    /// @param key The key for the pool
+    /// @param params The parameters for adding liquidity
+    /// @param hookData Arbitrary data handed into the PoolManager by the liquidity provider to be passed on to the hook
+    /// @return bytes4 The function selector for the hook
+    function beforeAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external returns (bytes4);
 
-    /// @notice Transfers an amount of an id from the caller to a receiver.
-    /// @param receiver The address of the receiver.
-    /// @param id The id of the token.
-    /// @param amount The amount of the token.
-    /// @return bool True, always, unless the function reverts
-    function transfer(address receiver, uint256 id, uint256 amount) external returns (bool);
+    /// @notice The hook called after liquidity is added
+    /// @param sender The initial msg.sender for the add liquidity call
+    /// @param key The key for the pool
+    /// @param params The parameters for adding liquidity
+    /// @param delta The caller's balance delta after adding liquidity; the sum of principal delta, fees accrued, and hook delta
+    /// @param feesAccrued The fees accrued since the last time fees were collected from this position
+    /// @param hookData Arbitrary data handed into the PoolManager by the liquidity provider to be passed on to the hook
+    /// @return bytes4 The function selector for the hook
+    /// @return BalanceDelta The hook's delta in token0 and token1. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
+    function afterAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta);
 
-    /// @notice Transfers an amount of an id from a sender to a receiver.
-    /// @param sender The address of the sender.
-    /// @param receiver The address of the receiver.
-    /// @param id The id of the token.
-    /// @param amount The amount of the token.
-    /// @return bool True, always, unless the function reverts
-    function transferFrom(address sender, address receiver, uint256 id, uint256 amount) external returns (bool);
+    /// @notice The hook called before liquidity is removed
+    /// @param sender The initial msg.sender for the remove liquidity call
+    /// @param key The key for the pool
+    /// @param params The parameters for removing liquidity
+    /// @param hookData Arbitrary data handed into the PoolManager by the liquidity provider to be be passed on to the hook
+    /// @return bytes4 The function selector for the hook
+    function beforeRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external returns (bytes4);
 
-    /// @notice Approves an amount of an id to a spender.
-    /// @param spender The address of the spender.
-    /// @param id The id of the token.
-    /// @param amount The amount of the token.
-    /// @return bool True, always
-    function approve(address spender, uint256 id, uint256 amount) external returns (bool);
+    /// @notice The hook called after liquidity is removed
+    /// @param sender The initial msg.sender for the remove liquidity call
+    /// @param key The key for the pool
+    /// @param params The parameters for removing liquidity
+    /// @param delta The caller's balance delta after removing liquidity; the sum of principal delta, fees accrued, and hook delta
+    /// @param feesAccrued The fees accrued since the last time fees were collected from this position
+    /// @param hookData Arbitrary data handed into the PoolManager by the liquidity provider to be be passed on to the hook
+    /// @return bytes4 The function selector for the hook
+    /// @return BalanceDelta The hook's delta in token0 and token1. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
+    function afterRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta);
 
-    /// @notice Sets or removes an operator for the caller.
-    /// @param operator The address of the operator.
-    /// @param approved The approval status.
-    /// @return bool True, always
-    function setOperator(address operator, bool approved) external returns (bool);
+    /// @notice The hook called before a swap
+    /// @param sender The initial msg.sender for the swap call
+    /// @param key The key for the pool
+    /// @param params The parameters for the swap
+    /// @param hookData Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook
+    /// @return bytes4 The function selector for the hook
+    /// @return BeforeSwapDelta The hook's delta in specified and unspecified currencies. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
+    /// @return uint24 Optionally override the lp fee, only used if three conditions are met: 1. the Pool has a dynamic fee, 2. the value's 2nd highest bit is set (23rd bit, 0x400000), and 3. the value is less than or equal to the maximum fee (1 million)
+    function beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) external returns (bytes4, BeforeSwapDelta, uint24);
+
+    /// @notice The hook called after a swap
+    /// @param sender The initial msg.sender for the swap call
+    /// @param key The key for the pool
+    /// @param params The parameters for the swap
+    /// @param delta The amount owed to the caller (positive) or owed to the pool (negative)
+    /// @param hookData Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook
+    /// @return bytes4 The function selector for the hook
+    /// @return int128 The hook's delta in unspecified currency. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
+    function afterSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external returns (bytes4, int128);
+
+    /// @notice The hook called before donate
+    /// @param sender The initial msg.sender for the donate call
+    /// @param key The key for the pool
+    /// @param amount0 The amount of token0 being donated
+    /// @param amount1 The amount of token1 being donated
+    /// @param hookData Arbitrary data handed into the PoolManager by the donor to be be passed on to the hook
+    /// @return bytes4 The function selector for the hook
+    function beforeDonate(
+        address sender,
+        PoolKey calldata key,
+        uint256 amount0,
+        uint256 amount1,
+        bytes calldata hookData
+    ) external returns (bytes4);
+
+    /// @notice The hook called after donate
+    /// @param sender The initial msg.sender for the donate call
+    /// @param key The key for the pool
+    /// @param amount0 The amount of token0 being donated
+    /// @param amount1 The amount of token1 being donated
+    /// @param hookData Arbitrary data handed into the PoolManager by the donor to be be passed on to the hook
+    /// @return bytes4 The function selector for the hook
+    function afterDonate(
+        address sender,
+        PoolKey calldata key,
+        uint256 amount0,
+        uint256 amount1,
+        bytes calldata hookData
+    ) external returns (bytes4);
 }
 
 // SPDX-License-Identifier: MIT
@@ -8657,29 +8821,6 @@ interface IERC20Minimal {
     /// @param spender The account for which the spending allowance was modified
     /// @param value The new allowance from the owner to the spender
     event Approval(address indexed owner, address indexed spender, uint256 value);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import {Currency} from "./Currency.sol";
-import {IHooks} from "../interfaces/IHooks.sol";
-import {PoolIdLibrary} from "./PoolId.sol";
-
-using PoolIdLibrary for PoolKey global;
-
-/// @notice Returns the key for identifying a pool
-struct PoolKey {
-    /// @notice The lower currency of the pool, sorted numerically
-    Currency currency0;
-    /// @notice The higher currency of the pool, sorted numerically
-    Currency currency1;
-    /// @notice The pool LP fee, capped at 1_000_000. If the highest bit is 1, the pool has a dynamic fee and must be exactly equal to 0x800000
-    uint24 fee;
-    /// @notice Ticks that involve positions must be a multiple of tick spacing
-    int24 tickSpacing;
-    /// @notice The hooks of the pool
-    IHooks hooks;
 }
 
 // SPDX-License-Identifier: MIT
@@ -8962,305 +9103,122 @@ interface IHooks {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {PoolKey} from "./PoolKey.sol";
+/// @title Library for reverting with custom errors efficiently
+/// @notice Contains functions for reverting with custom errors with different argument types efficiently
+/// @dev To use this library, declare `using CustomRevert for bytes4;` and replace `revert CustomError()` with
+/// `CustomError.selector.revertWith()`
+/// @dev The functions may tamper with the free memory pointer but it is fine since the call context is exited immediately
+library CustomRevert {
+    /// @dev ERC-7751 error for wrapping bubbled up reverts
+    error WrappedError(address target, bytes4 selector, bytes reason, bytes details);
 
-type PoolId is bytes32;
-
-/// @notice Library for computing the ID of a pool
-library PoolIdLibrary {
-    /// @notice Returns value equal to keccak256(abi.encode(poolKey))
-    function toId(PoolKey memory poolKey) internal pure returns (PoolId poolId) {
+    /// @dev Reverts with the selector of a custom error in the scratch space
+    function revertWith(bytes4 selector) internal pure {
         assembly ("memory-safe") {
-            // 0xa0 represents the total size of the poolKey struct (5 slots of 32 bytes)
-            poolId := keccak256(poolKey, 0xa0)
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
-
-/// @notice Interface for functions to access any transient storage slot in a contract
-interface IExttload {
-    /// @notice Called by external contracts to access transient storage of the contract
-    /// @param slot Key of slot to tload
-    /// @return value The value of the slot as bytes32
-    function exttload(bytes32 slot) external view returns (bytes32 value);
-
-    /// @notice Called by external contracts to access sparse transient pool state
-    /// @param slots List of slots to tload
-    /// @return values List of loaded values
-    function exttload(bytes32[] calldata slots) external view returns (bytes32[] memory values);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import {PoolKey} from "../types/PoolKey.sol";
-import {BalanceDelta} from "../types/BalanceDelta.sol";
-import {IPoolManager} from "./IPoolManager.sol";
-import {BeforeSwapDelta} from "../types/BeforeSwapDelta.sol";
-
-/// @notice V4 decides whether to invoke specific hooks by inspecting the least significant bits
-/// of the address that the hooks contract is deployed to.
-/// For example, a hooks contract deployed to address: 0x0000000000000000000000000000000000002400
-/// has the lowest bits '10 0100 0000 0000' which would cause the 'before initialize' and 'after add liquidity' hooks to be used.
-/// See the Hooks library for the full spec.
-/// @dev Should only be callable by the v4 PoolManager.
-interface IHooks {
-    /// @notice The hook called before the state of a pool is initialized
-    /// @param sender The initial msg.sender for the initialize call
-    /// @param key The key for the pool being initialized
-    /// @param sqrtPriceX96 The sqrt(price) of the pool as a Q64.96
-    /// @return bytes4 The function selector for the hook
-    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) external returns (bytes4);
-
-    /// @notice The hook called after the state of a pool is initialized
-    /// @param sender The initial msg.sender for the initialize call
-    /// @param key The key for the pool being initialized
-    /// @param sqrtPriceX96 The sqrt(price) of the pool as a Q64.96
-    /// @param tick The current tick after the state of a pool is initialized
-    /// @return bytes4 The function selector for the hook
-    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
-        external
-        returns (bytes4);
-
-    /// @notice The hook called before liquidity is added
-    /// @param sender The initial msg.sender for the add liquidity call
-    /// @param key The key for the pool
-    /// @param params The parameters for adding liquidity
-    /// @param hookData Arbitrary data handed into the PoolManager by the liquidity provider to be passed on to the hook
-    /// @return bytes4 The function selector for the hook
-    function beforeAddLiquidity(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
-        bytes calldata hookData
-    ) external returns (bytes4);
-
-    /// @notice The hook called after liquidity is added
-    /// @param sender The initial msg.sender for the add liquidity call
-    /// @param key The key for the pool
-    /// @param params The parameters for adding liquidity
-    /// @param delta The caller's balance delta after adding liquidity; the sum of principal delta, fees accrued, and hook delta
-    /// @param feesAccrued The fees accrued since the last time fees were collected from this position
-    /// @param hookData Arbitrary data handed into the PoolManager by the liquidity provider to be passed on to the hook
-    /// @return bytes4 The function selector for the hook
-    /// @return BalanceDelta The hook's delta in token0 and token1. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
-    function afterAddLiquidity(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
-        BalanceDelta delta,
-        BalanceDelta feesAccrued,
-        bytes calldata hookData
-    ) external returns (bytes4, BalanceDelta);
-
-    /// @notice The hook called before liquidity is removed
-    /// @param sender The initial msg.sender for the remove liquidity call
-    /// @param key The key for the pool
-    /// @param params The parameters for removing liquidity
-    /// @param hookData Arbitrary data handed into the PoolManager by the liquidity provider to be be passed on to the hook
-    /// @return bytes4 The function selector for the hook
-    function beforeRemoveLiquidity(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
-        bytes calldata hookData
-    ) external returns (bytes4);
-
-    /// @notice The hook called after liquidity is removed
-    /// @param sender The initial msg.sender for the remove liquidity call
-    /// @param key The key for the pool
-    /// @param params The parameters for removing liquidity
-    /// @param delta The caller's balance delta after removing liquidity; the sum of principal delta, fees accrued, and hook delta
-    /// @param feesAccrued The fees accrued since the last time fees were collected from this position
-    /// @param hookData Arbitrary data handed into the PoolManager by the liquidity provider to be be passed on to the hook
-    /// @return bytes4 The function selector for the hook
-    /// @return BalanceDelta The hook's delta in token0 and token1. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
-    function afterRemoveLiquidity(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
-        BalanceDelta delta,
-        BalanceDelta feesAccrued,
-        bytes calldata hookData
-    ) external returns (bytes4, BalanceDelta);
-
-    /// @notice The hook called before a swap
-    /// @param sender The initial msg.sender for the swap call
-    /// @param key The key for the pool
-    /// @param params The parameters for the swap
-    /// @param hookData Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook
-    /// @return bytes4 The function selector for the hook
-    /// @return BeforeSwapDelta The hook's delta in specified and unspecified currencies. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
-    /// @return uint24 Optionally override the lp fee, only used if three conditions are met: 1. the Pool has a dynamic fee, 2. the value's 2nd highest bit is set (23rd bit, 0x400000), and 3. the value is less than or equal to the maximum fee (1 million)
-    function beforeSwap(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        bytes calldata hookData
-    ) external returns (bytes4, BeforeSwapDelta, uint24);
-
-    /// @notice The hook called after a swap
-    /// @param sender The initial msg.sender for the swap call
-    /// @param key The key for the pool
-    /// @param params The parameters for the swap
-    /// @param delta The amount owed to the caller (positive) or owed to the pool (negative)
-    /// @param hookData Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook
-    /// @return bytes4 The function selector for the hook
-    /// @return int128 The hook's delta in unspecified currency. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
-    function afterSwap(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        BalanceDelta delta,
-        bytes calldata hookData
-    ) external returns (bytes4, int128);
-
-    /// @notice The hook called before donate
-    /// @param sender The initial msg.sender for the donate call
-    /// @param key The key for the pool
-    /// @param amount0 The amount of token0 being donated
-    /// @param amount1 The amount of token1 being donated
-    /// @param hookData Arbitrary data handed into the PoolManager by the donor to be be passed on to the hook
-    /// @return bytes4 The function selector for the hook
-    function beforeDonate(
-        address sender,
-        PoolKey calldata key,
-        uint256 amount0,
-        uint256 amount1,
-        bytes calldata hookData
-    ) external returns (bytes4);
-
-    /// @notice The hook called after donate
-    /// @param sender The initial msg.sender for the donate call
-    /// @param key The key for the pool
-    /// @param amount0 The amount of token0 being donated
-    /// @param amount1 The amount of token1 being donated
-    /// @param hookData Arbitrary data handed into the PoolManager by the donor to be be passed on to the hook
-    /// @return bytes4 The function selector for the hook
-    function afterDonate(
-        address sender,
-        PoolKey calldata key,
-        uint256 amount0,
-        uint256 amount1,
-        bytes calldata hookData
-    ) external returns (bytes4);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-/// @notice Interface for functions to access any storage slot in a contract
-interface IExtsload {
-    /// @notice Called by external contracts to access granular pool state
-    /// @param slot Key of slot to sload
-    /// @return value The value of the slot as bytes32
-    function extsload(bytes32 slot) external view returns (bytes32 value);
-
-    /// @notice Called by external contracts to access granular pool state
-    /// @param startSlot Key of slot to start sloading from
-    /// @param nSlots Number of slots to load into return value
-    /// @return values List of loaded values.
-    function extsload(bytes32 startSlot, uint256 nSlots) external view returns (bytes32[] memory values);
-
-    /// @notice Called by external contracts to access sparse pool state
-    /// @param slots List of slots to SLOAD from.
-    /// @return values List of loaded values.
-    function extsload(bytes32[] calldata slots) external view returns (bytes32[] memory values);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-// Return type of the beforeSwap hook.
-// Upper 128 bits is the delta in specified tokens. Lower 128 bits is delta in unspecified tokens (to match the afterSwap hook)
-type BeforeSwapDelta is int256;
-
-// Creates a BeforeSwapDelta from specified and unspecified
-function toBeforeSwapDelta(int128 deltaSpecified, int128 deltaUnspecified)
-    pure
-    returns (BeforeSwapDelta beforeSwapDelta)
-{
-    assembly ("memory-safe") {
-        beforeSwapDelta := or(shl(128, deltaSpecified), and(sub(shl(128, 1), 1), deltaUnspecified))
-    }
-}
-
-/// @notice Library for getting the specified and unspecified deltas from the BeforeSwapDelta type
-library BeforeSwapDeltaLibrary {
-    /// @notice A BeforeSwapDelta of 0
-    BeforeSwapDelta public constant ZERO_DELTA = BeforeSwapDelta.wrap(0);
-
-    /// extracts int128 from the upper 128 bits of the BeforeSwapDelta
-    /// returned by beforeSwap
-    function getSpecifiedDelta(BeforeSwapDelta delta) internal pure returns (int128 deltaSpecified) {
-        assembly ("memory-safe") {
-            deltaSpecified := sar(128, delta)
+            mstore(0, selector)
+            revert(0, 0x04)
         }
     }
 
-    /// extracts int128 from the lower 128 bits of the BeforeSwapDelta
-    /// returned by beforeSwap and afterSwap
-    function getUnspecifiedDelta(BeforeSwapDelta delta) internal pure returns (int128 deltaUnspecified) {
+    /// @dev Reverts with a custom error with an address argument in the scratch space
+    function revertWith(bytes4 selector, address addr) internal pure {
         assembly ("memory-safe") {
-            deltaUnspecified := signextend(15, delta)
+            mstore(0, selector)
+            mstore(0x04, and(addr, 0xffffffffffffffffffffffffffffffffffffffff))
+            revert(0, 0x24)
         }
     }
-}
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+    /// @dev Reverts with a custom error with an int24 argument in the scratch space
+    function revertWith(bytes4 selector, int24 value) internal pure {
+        assembly ("memory-safe") {
+            mstore(0, selector)
+            mstore(0x04, signextend(2, value))
+            revert(0, 0x24)
+        }
+    }
 
-import {Currency} from "../types/Currency.sol";
-import {PoolId} from "../types/PoolId.sol";
-import {PoolKey} from "../types/PoolKey.sol";
+    /// @dev Reverts with a custom error with a uint160 argument in the scratch space
+    function revertWith(bytes4 selector, uint160 value) internal pure {
+        assembly ("memory-safe") {
+            mstore(0, selector)
+            mstore(0x04, and(value, 0xffffffffffffffffffffffffffffffffffffffff))
+            revert(0, 0x24)
+        }
+    }
 
-/// @notice Interface for all protocol-fee related functions in the pool manager
-interface IProtocolFees {
-    /// @notice Thrown when protocol fee is set too high
-    error ProtocolFeeTooLarge(uint24 fee);
+    /// @dev Reverts with a custom error with two int24 arguments
+    function revertWith(bytes4 selector, int24 value1, int24 value2) internal pure {
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            mstore(fmp, selector)
+            mstore(add(fmp, 0x04), signextend(2, value1))
+            mstore(add(fmp, 0x24), signextend(2, value2))
+            revert(fmp, 0x44)
+        }
+    }
 
-    /// @notice Thrown when collectProtocolFees or setProtocolFee is not called by the controller.
-    error InvalidCaller();
+    /// @dev Reverts with a custom error with two uint160 arguments
+    function revertWith(bytes4 selector, uint160 value1, uint160 value2) internal pure {
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            mstore(fmp, selector)
+            mstore(add(fmp, 0x04), and(value1, 0xffffffffffffffffffffffffffffffffffffffff))
+            mstore(add(fmp, 0x24), and(value2, 0xffffffffffffffffffffffffffffffffffffffff))
+            revert(fmp, 0x44)
+        }
+    }
 
-    /// @notice Thrown when collectProtocolFees is attempted on a token that is synced.
-    error ProtocolFeeCurrencySynced();
+    /// @dev Reverts with a custom error with two address arguments
+    function revertWith(bytes4 selector, address value1, address value2) internal pure {
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            mstore(fmp, selector)
+            mstore(add(fmp, 0x04), and(value1, 0xffffffffffffffffffffffffffffffffffffffff))
+            mstore(add(fmp, 0x24), and(value2, 0xffffffffffffffffffffffffffffffffffffffff))
+            revert(fmp, 0x44)
+        }
+    }
 
-    /// @notice Emitted when the protocol fee controller address is updated in setProtocolFeeController.
-    event ProtocolFeeControllerUpdated(address indexed protocolFeeController);
+    /// @notice bubble up the revert message returned by a call and revert with a wrapped ERC-7751 error
+    /// @dev this method can be vulnerable to revert data bombs
+    function bubbleUpAndRevertWith(
+        address revertingContract,
+        bytes4 revertingFunctionSelector,
+        bytes4 additionalContext
+    ) internal pure {
+        bytes4 wrappedErrorSelector = WrappedError.selector;
+        assembly ("memory-safe") {
+            // Ensure the size of the revert data is a multiple of 32 bytes
+            let encodedDataSize := mul(div(add(returndatasize(), 31), 32), 32)
 
-    /// @notice Emitted when the protocol fee is updated for a pool.
-    event ProtocolFeeUpdated(PoolId indexed id, uint24 protocolFee);
+            let fmp := mload(0x40)
 
-    /// @notice Given a currency address, returns the protocol fees accrued in that currency
-    /// @param currency The currency to check
-    /// @return amount The amount of protocol fees accrued in the currency
-    function protocolFeesAccrued(Currency currency) external view returns (uint256 amount);
-
-    /// @notice Sets the protocol fee for the given pool
-    /// @param key The key of the pool to set a protocol fee for
-    /// @param newProtocolFee The fee to set
-    function setProtocolFee(PoolKey memory key, uint24 newProtocolFee) external;
-
-    /// @notice Sets the protocol fee controller
-    /// @param controller The new protocol fee controller
-    function setProtocolFeeController(address controller) external;
-
-    /// @notice Collects the protocol fees for a given recipient and currency, returning the amount collected
-    /// @dev This will revert if the contract is unlocked
-    /// @param recipient The address to receive the protocol fees
-    /// @param currency The currency to withdraw
-    /// @param amount The amount of currency to withdraw
-    /// @return amountCollected The amount of currency successfully withdrawn
-    function collectProtocolFees(address recipient, Currency currency, uint256 amount)
-        external
-        returns (uint256 amountCollected);
-
-    /// @notice Returns the current protocol fee controller address
-    /// @return address The current protocol fee controller address
-    function protocolFeeController() external view returns (address);
+            // Encode wrapped error selector, address, function selector, offset, additional context, size, revert reason
+            mstore(fmp, wrappedErrorSelector)
+            mstore(add(fmp, 0x04), and(revertingContract, 0xffffffffffffffffffffffffffffffffffffffff))
+            mstore(
+                add(fmp, 0x24),
+                and(revertingFunctionSelector, 0xffffffff00000000000000000000000000000000000000000000000000000000)
+            )
+            // offset revert reason
+            mstore(add(fmp, 0x44), 0x80)
+            // offset additional context
+            mstore(add(fmp, 0x64), add(0xa0, encodedDataSize))
+            // size revert reason
+            mstore(add(fmp, 0x84), returndatasize())
+            // revert reason
+            returndatacopy(add(fmp, 0xa4), 0, returndatasize())
+            // size additional context
+            mstore(add(fmp, add(0xa4, encodedDataSize)), 0x04)
+            // additional context
+            mstore(
+                add(fmp, add(0xc4, encodedDataSize)),
+                and(additionalContext, 0xffffffff00000000000000000000000000000000000000000000000000000000)
+            )
+            revert(fmp, add(0xe4, encodedDataSize))
+        }
+    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -9327,6 +9285,45 @@ library SafeCast {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+// Return type of the beforeSwap hook.
+// Upper 128 bits is the delta in specified tokens. Lower 128 bits is delta in unspecified tokens (to match the afterSwap hook)
+type BeforeSwapDelta is int256;
+
+// Creates a BeforeSwapDelta from specified and unspecified
+function toBeforeSwapDelta(int128 deltaSpecified, int128 deltaUnspecified)
+    pure
+    returns (BeforeSwapDelta beforeSwapDelta)
+{
+    assembly ("memory-safe") {
+        beforeSwapDelta := or(shl(128, deltaSpecified), and(sub(shl(128, 1), 1), deltaUnspecified))
+    }
+}
+
+/// @notice Library for getting the specified and unspecified deltas from the BeforeSwapDelta type
+library BeforeSwapDeltaLibrary {
+    /// @notice A BeforeSwapDelta of 0
+    BeforeSwapDelta public constant ZERO_DELTA = BeforeSwapDelta.wrap(0);
+
+    /// extracts int128 from the upper 128 bits of the BeforeSwapDelta
+    /// returned by beforeSwap
+    function getSpecifiedDelta(BeforeSwapDelta delta) internal pure returns (int128 deltaSpecified) {
+        assembly ("memory-safe") {
+            deltaSpecified := sar(128, delta)
+        }
+    }
+
+    /// extracts int128 from the lower 128 bits of the BeforeSwapDelta
+    /// returned by beforeSwap and afterSwap
+    function getUnspecifiedDelta(BeforeSwapDelta delta) internal pure returns (int128 deltaUnspecified) {
+        assembly ("memory-safe") {
+            deltaUnspecified := signextend(15, delta)
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
 /// @title Minimal ERC20 interface for Uniswap
 /// @notice Contains a subset of the full ERC20 interface that is used in Uniswap V3
 interface IERC20Minimal {
@@ -9371,6 +9368,24 @@ interface IERC20Minimal {
     /// @param spender The account for which the spending allowance was modified
     /// @param value The new allowance from the owner to the spender
     event Approval(address indexed owner, address indexed spender, uint256 value);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {PoolKey} from "./PoolKey.sol";
+
+type PoolId is bytes32;
+
+/// @notice Library for computing the ID of a pool
+library PoolIdLibrary {
+    /// @notice Returns value equal to keccak256(abi.encode(poolKey))
+    function toId(PoolKey memory poolKey) internal pure returns (PoolId poolId) {
+        assembly ("memory-safe") {
+            // 0xa0 represents the total size of the poolKey struct (5 slots of 32 bytes)
+            poolId := keccak256(poolKey, 0xa0)
+        }
+    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -9449,122 +9464,107 @@ library BalanceDeltaLibrary {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-/// @title Library for reverting with custom errors efficiently
-/// @notice Contains functions for reverting with custom errors with different argument types efficiently
-/// @dev To use this library, declare `using CustomRevert for bytes4;` and replace `revert CustomError()` with
-/// `CustomError.selector.revertWith()`
-/// @dev The functions may tamper with the free memory pointer but it is fine since the call context is exited immediately
-library CustomRevert {
-    /// @dev ERC-7751 error for wrapping bubbled up reverts
-    error WrappedError(address target, bytes4 selector, bytes reason, bytes details);
+/// @notice Interface for claims over a contract balance, wrapped as a ERC6909
+interface IERC6909Claims {
+    /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
 
-    /// @dev Reverts with the selector of a custom error in the scratch space
-    function revertWith(bytes4 selector) internal pure {
-        assembly ("memory-safe") {
-            mstore(0, selector)
-            revert(0, 0x04)
-        }
-    }
+    event OperatorSet(address indexed owner, address indexed operator, bool approved);
 
-    /// @dev Reverts with a custom error with an address argument in the scratch space
-    function revertWith(bytes4 selector, address addr) internal pure {
-        assembly ("memory-safe") {
-            mstore(0, selector)
-            mstore(0x04, and(addr, 0xffffffffffffffffffffffffffffffffffffffff))
-            revert(0, 0x24)
-        }
-    }
+    event Approval(address indexed owner, address indexed spender, uint256 indexed id, uint256 amount);
 
-    /// @dev Reverts with a custom error with an int24 argument in the scratch space
-    function revertWith(bytes4 selector, int24 value) internal pure {
-        assembly ("memory-safe") {
-            mstore(0, selector)
-            mstore(0x04, signextend(2, value))
-            revert(0, 0x24)
-        }
-    }
+    event Transfer(address caller, address indexed from, address indexed to, uint256 indexed id, uint256 amount);
 
-    /// @dev Reverts with a custom error with a uint160 argument in the scratch space
-    function revertWith(bytes4 selector, uint160 value) internal pure {
-        assembly ("memory-safe") {
-            mstore(0, selector)
-            mstore(0x04, and(value, 0xffffffffffffffffffffffffffffffffffffffff))
-            revert(0, 0x24)
-        }
-    }
+    /*//////////////////////////////////////////////////////////////
+                                 FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
-    /// @dev Reverts with a custom error with two int24 arguments
-    function revertWith(bytes4 selector, int24 value1, int24 value2) internal pure {
-        assembly ("memory-safe") {
-            let fmp := mload(0x40)
-            mstore(fmp, selector)
-            mstore(add(fmp, 0x04), signextend(2, value1))
-            mstore(add(fmp, 0x24), signextend(2, value2))
-            revert(fmp, 0x44)
-        }
-    }
+    /// @notice Owner balance of an id.
+    /// @param owner The address of the owner.
+    /// @param id The id of the token.
+    /// @return amount The balance of the token.
+    function balanceOf(address owner, uint256 id) external view returns (uint256 amount);
 
-    /// @dev Reverts with a custom error with two uint160 arguments
-    function revertWith(bytes4 selector, uint160 value1, uint160 value2) internal pure {
-        assembly ("memory-safe") {
-            let fmp := mload(0x40)
-            mstore(fmp, selector)
-            mstore(add(fmp, 0x04), and(value1, 0xffffffffffffffffffffffffffffffffffffffff))
-            mstore(add(fmp, 0x24), and(value2, 0xffffffffffffffffffffffffffffffffffffffff))
-            revert(fmp, 0x44)
-        }
-    }
+    /// @notice Spender allowance of an id.
+    /// @param owner The address of the owner.
+    /// @param spender The address of the spender.
+    /// @param id The id of the token.
+    /// @return amount The allowance of the token.
+    function allowance(address owner, address spender, uint256 id) external view returns (uint256 amount);
 
-    /// @dev Reverts with a custom error with two address arguments
-    function revertWith(bytes4 selector, address value1, address value2) internal pure {
-        assembly ("memory-safe") {
-            let fmp := mload(0x40)
-            mstore(fmp, selector)
-            mstore(add(fmp, 0x04), and(value1, 0xffffffffffffffffffffffffffffffffffffffff))
-            mstore(add(fmp, 0x24), and(value2, 0xffffffffffffffffffffffffffffffffffffffff))
-            revert(fmp, 0x44)
-        }
-    }
+    /// @notice Checks if a spender is approved by an owner as an operator
+    /// @param owner The address of the owner.
+    /// @param spender The address of the spender.
+    /// @return approved The approval status.
+    function isOperator(address owner, address spender) external view returns (bool approved);
 
-    /// @notice bubble up the revert message returned by a call and revert with a wrapped ERC-7751 error
-    /// @dev this method can be vulnerable to revert data bombs
-    function bubbleUpAndRevertWith(
-        address revertingContract,
-        bytes4 revertingFunctionSelector,
-        bytes4 additionalContext
-    ) internal pure {
-        bytes4 wrappedErrorSelector = WrappedError.selector;
-        assembly ("memory-safe") {
-            // Ensure the size of the revert data is a multiple of 32 bytes
-            let encodedDataSize := mul(div(add(returndatasize(), 31), 32), 32)
+    /// @notice Transfers an amount of an id from the caller to a receiver.
+    /// @param receiver The address of the receiver.
+    /// @param id The id of the token.
+    /// @param amount The amount of the token.
+    /// @return bool True, always, unless the function reverts
+    function transfer(address receiver, uint256 id, uint256 amount) external returns (bool);
 
-            let fmp := mload(0x40)
+    /// @notice Transfers an amount of an id from a sender to a receiver.
+    /// @param sender The address of the sender.
+    /// @param receiver The address of the receiver.
+    /// @param id The id of the token.
+    /// @param amount The amount of the token.
+    /// @return bool True, always, unless the function reverts
+    function transferFrom(address sender, address receiver, uint256 id, uint256 amount) external returns (bool);
 
-            // Encode wrapped error selector, address, function selector, offset, additional context, size, revert reason
-            mstore(fmp, wrappedErrorSelector)
-            mstore(add(fmp, 0x04), and(revertingContract, 0xffffffffffffffffffffffffffffffffffffffff))
-            mstore(
-                add(fmp, 0x24),
-                and(revertingFunctionSelector, 0xffffffff00000000000000000000000000000000000000000000000000000000)
-            )
-            // offset revert reason
-            mstore(add(fmp, 0x44), 0x80)
-            // offset additional context
-            mstore(add(fmp, 0x64), add(0xa0, encodedDataSize))
-            // size revert reason
-            mstore(add(fmp, 0x84), returndatasize())
-            // revert reason
-            returndatacopy(add(fmp, 0xa4), 0, returndatasize())
-            // size additional context
-            mstore(add(fmp, add(0xa4, encodedDataSize)), 0x04)
-            // additional context
-            mstore(
-                add(fmp, add(0xc4, encodedDataSize)),
-                and(additionalContext, 0xffffffff00000000000000000000000000000000000000000000000000000000)
-            )
-            revert(fmp, add(0xe4, encodedDataSize))
-        }
-    }
+    /// @notice Approves an amount of an id to a spender.
+    /// @param spender The address of the spender.
+    /// @param id The id of the token.
+    /// @param amount The amount of the token.
+    /// @return bool True, always
+    function approve(address spender, uint256 id, uint256 amount) external returns (bool);
+
+    /// @notice Sets or removes an operator for the caller.
+    /// @param operator The address of the operator.
+    /// @param approved The approval status.
+    /// @return bool True, always
+    function setOperator(address operator, bool approved) external returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+/// @notice Interface for functions to access any transient storage slot in a contract
+interface IExttload {
+    /// @notice Called by external contracts to access transient storage of the contract
+    /// @param slot Key of slot to tload
+    /// @return value The value of the slot as bytes32
+    function exttload(bytes32 slot) external view returns (bytes32 value);
+
+    /// @notice Called by external contracts to access sparse transient pool state
+    /// @param slots List of slots to tload
+    /// @return values List of loaded values
+    function exttload(bytes32[] calldata slots) external view returns (bytes32[] memory values);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {Currency} from "./Currency.sol";
+import {IHooks} from "../interfaces/IHooks.sol";
+import {PoolIdLibrary} from "./PoolId.sol";
+
+using PoolIdLibrary for PoolKey global;
+
+/// @notice Returns the key for identifying a pool
+struct PoolKey {
+    /// @notice The lower currency of the pool, sorted numerically
+    Currency currency0;
+    /// @notice The higher currency of the pool, sorted numerically
+    Currency currency1;
+    /// @notice The pool LP fee, capped at 1_000_000. If the highest bit is 1, the pool has a dynamic fee and must be exactly equal to 0x800000
+    uint24 fee;
+    /// @notice Ticks that involve positions must be a multiple of tick spacing
+    int24 tickSpacing;
+    /// @notice The hooks of the pool
+    IHooks hooks;
 }
 
 
@@ -9574,28 +9574,1558 @@ library CustomRevert {
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.24;
 
-/// @title Library of Constants used in Panoptic.
+type LiquidityChunk is uint256;
+using LiquidityChunkLibrary for LiquidityChunk global;
+
+/// @title A Panoptic Liquidity Chunk. Tracks Tick Range and Liquidity Information for a "chunk." Used to track movement of chunks.
 /// @author Axicon Labs Limited
-/// @notice This library provides constants used in Panoptic.
-library Constants {
-    /// @notice Fixed point multiplier: 2**96
-    uint256 internal constant FP96 = 0x1000000000000000000000000;
+///
+/// @notice A liquidity chunk is an amount of `liquidity` deployed between two ticks: `tickLower` and `tickUpper`
+/// into a concentrated liquidity AMM.
+//
+//                liquidity
+//                    ▲      liquidity chunk
+//                    │        │
+//                    │    ┌───▼────┐   ▲
+//                    │    │        │   │ liquidity/size
+//      Other AMM     │  ┌─┴────────┴─┐ ▼ of chunk
+//      liquidity  ───┼──┼─►          │
+//                    │  │            │
+//                    └──┴─▲────────▲─┴──► price ticks
+//                         │        │
+//                         │        │
+//                    tickLower     │
+//                              tickUpper
+//
+// PACKING RULES FOR A LIQUIDITYCHUNK:
+// =================================================================================================
+//  From the LSB to the MSB:
+// (1) Liquidity        128bits  : The liquidity within the chunk (uint128).
+// ( ) (Zero-bits)       80bits  : Zero-bits to match a total uint256.
+// (2) tick Upper        24bits  : The upper tick of the chunk (int24).
+// (3) tick Lower        24bits  : The lower tick of the chunk (int24).
+// Total                256bits  : Total bits used by a chunk.
+// ===============================================================================================
+//
+// The bit pattern is therefore:
+//
+//           (3)             (2)             ( )                (1)
+//    <-- 24 bits -->  <-- 24 bits -->  <-- 80 bits -->   <-- 128 bits -->
+//        tickLower       tickUpper         Zeros             Liquidity
+//
+//        <--- most significant bit        least significant bit --->
+//
+library LiquidityChunkLibrary {
+    /// @notice AND mask to strip the `tickLower` value from a packed LiquidityChunk.
+    uint256 internal constant CLEAR_TL_MASK =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
 
-    /// @notice Minimum possible price tick in a Uniswap V3 pool
-    int24 internal constant MIN_POOL_TICK = -887272;
+    /// @notice AND mask to strip the `tickUpper` value from a packed LiquidityChunk.
+    uint256 internal constant CLEAR_TU_MASK =
+        0xFFFFFF000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
 
-    /// @notice Maximum possible price tick in a Uniswap V3 pool
-    int24 internal constant MAX_POOL_TICK = 887272;
+    /*//////////////////////////////////////////////////////////////
+                                ENCODING
+    //////////////////////////////////////////////////////////////*/
 
-    /// @notice Minimum possible sqrtPriceX96 in a Uniswap V3 pool
-    uint160 internal constant MIN_POOL_SQRT_RATIO = 4295128739;
+    /// @notice Create a new `LiquidityChunk` given by its bounding ticks and its liquidity.
+    /// @param _tickLower The lower tick of the chunk
+    /// @param _tickUpper The upper tick of the chunk
+    /// @param amount The amount of liquidity to add to the chunk
+    /// @return The new chunk with the given liquidity and tick range
+    function createChunk(
+        int24 _tickLower,
+        int24 _tickUpper,
+        uint128 amount
+    ) internal pure returns (LiquidityChunk) {
+        unchecked {
+            // casting to 'uint256' is safe because _tickUpper/_tickLower is always < 2**24
+            // forge-lint: disable-next-line(unsafe-typecast)
+            return
+                LiquidityChunk.wrap(
+                    // casting to 'uint24' is safe because _tickLower/_tickUpper is always < 2**24
+                    // forge-lint: disable-next-line(unsafe-typecast)
+                    (uint256(uint24(_tickLower)) << 232) +
+                        (uint256(uint24(_tickUpper)) << 208) +
+                        uint256(amount)
+                );
+        }
+    }
 
-    /// @notice Maximum possible sqrtPriceX96 in a Uniswap V3 pool
-    uint160 internal constant MAX_POOL_SQRT_RATIO =
-        1461446703485210103287273052203988822378723970342;
+    /// @notice Add liquidity to `self`.
+    /// @param self The LiquidityChunk to add liquidity to
+    /// @param amount The amount of liquidity to add to `self`
+    /// @return `self` with added liquidity `amount`
+    function addLiquidity(
+        LiquidityChunk self,
+        uint128 amount
+    ) internal pure returns (LiquidityChunk) {
+        unchecked {
+            return LiquidityChunk.wrap(LiquidityChunk.unwrap(self) + amount);
+        }
+    }
 
-    /// @notice The maximum amount of change, in ticks, permitted before TICK_OFFSET is updated.
-    int24 internal constant MAX_RESIDUAL_THRESHOLD = 1024;
+    /// @notice Add the lower tick to `self`.
+    /// @param self The LiquidityChunk to add the lower tick to
+    /// @param _tickLower The lower tick to add to `self`
+    /// @return `self` with added lower tick `_tickLower`
+    function addTickLower(
+        LiquidityChunk self,
+        int24 _tickLower
+    ) internal pure returns (LiquidityChunk) {
+        unchecked {
+            return
+                LiquidityChunk.wrap(
+                    LiquidityChunk.unwrap(self) + (uint256(uint24(_tickLower)) << 232)
+                );
+        }
+    }
+
+    /// @notice Add the upper tick to `self`.
+    /// @param self The LiquidityChunk to add the upper tick to
+    /// @param _tickUpper The upper tick to add to `self`
+    /// @return `self` with added upper tick `_tickUpper`
+    function addTickUpper(
+        LiquidityChunk self,
+        int24 _tickUpper
+    ) internal pure returns (LiquidityChunk) {
+        unchecked {
+            return
+                LiquidityChunk.wrap(
+                    LiquidityChunk.unwrap(self) + ((uint256(uint24(_tickUpper))) << 208)
+                );
+        }
+    }
+
+    /// @notice Overwrites the lower tick on `self`.
+    /// @param self The LiquidityChunk to overwrite the lower tick on
+    /// @param _tickLower The lower tick to overwrite `self` with
+    /// @return `self` with `_tickLower` as the new lower tick
+    function updateTickLower(
+        LiquidityChunk self,
+        int24 _tickLower
+    ) internal pure returns (LiquidityChunk) {
+        unchecked {
+            return
+                LiquidityChunk.wrap(LiquidityChunk.unwrap(self) & CLEAR_TL_MASK).addTickLower(
+                    _tickLower
+                );
+        }
+    }
+
+    /// @notice Overwrites the upper tick on `self`.
+    /// @param self The LiquidityChunk to overwrite the upper tick on
+    /// @param _tickUpper The upper tick to overwrite `self` with
+    /// @return `self` with `_tickUpper` as the new upper tick
+    function updateTickUpper(
+        LiquidityChunk self,
+        int24 _tickUpper
+    ) internal pure returns (LiquidityChunk) {
+        unchecked {
+            return
+                LiquidityChunk.wrap(LiquidityChunk.unwrap(self) & CLEAR_TU_MASK).addTickUpper(
+                    _tickUpper
+                );
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                DECODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the lower tick of `self`.
+    /// @param self The LiquidityChunk to get the lower tick from
+    /// @return The lower tick of `self`
+    function tickLower(LiquidityChunk self) internal pure returns (int24) {
+        unchecked {
+            return int24(int256(LiquidityChunk.unwrap(self) >> 232));
+        }
+    }
+
+    /// @notice Get the upper tick of `self`.
+    /// @param self The LiquidityChunk to get the upper tick from
+    /// @return The upper tick of `self`
+    function tickUpper(LiquidityChunk self) internal pure returns (int24) {
+        unchecked {
+            return int24(int256(LiquidityChunk.unwrap(self) >> 208));
+        }
+    }
+
+    /// @notice Get the amount of liquidity/size of `self`.
+    /// @param self The LiquidityChunk to get the liquidity from
+    /// @return The liquidity of `self`
+    function liquidity(LiquidityChunk self) internal pure returns (uint128) {
+        unchecked {
+            return uint128(LiquidityChunk.unwrap(self));
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+// Custom types
+// Adjust these import paths to match your project structure
+import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
+import {TokenId} from "@types/TokenId.sol";
+
+interface ISemiFungiblePositionManager {
+    /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emitted when a position is destroyed/burned.
+    event TokenizedPositionBurnt(
+        address indexed recipient,
+        TokenId indexed tokenId,
+        uint128 positionSize
+    );
+
+    /// @notice Emitted when a position is created/minted.
+    event TokenizedPositionMinted(
+        address indexed caller,
+        TokenId indexed tokenId,
+        uint128 positionSize
+    );
+
+    /*//////////////////////////////////////////////////////////////
+                         CORE MINT/BURN LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Create a new position `tokenId` containing up to 4 legs.
+    /// @dev Both V3 and V4 implementations use `bytes poolKey` to abstract the underlying pool.
+    /// @param poolKey The ABI-encoded pool key (V3: address, V4: PoolKey)
+    /// @param tokenId The tokenId of the minted position
+    /// @param positionSize The number of contracts minted
+    /// @param slippageTickLimitLow Lower price bound
+    /// @param slippageTickLimitHigh Upper price bound
+    /// @return collectedByLeg Fees collected per leg
+    /// @return totalMoved Net amount moved to/from AMM
+    /// @return finalTick The tick at the end of the mint/burn operation
+    function mintTokenizedPosition(
+        bytes calldata poolKey,
+        TokenId tokenId,
+        uint128 positionSize,
+        int24 slippageTickLimitLow,
+        int24 slippageTickLimitHigh
+    )
+        external
+        returns (
+            LeftRightUnsigned[4] memory collectedByLeg,
+            LeftRightSigned totalMoved,
+            int24 finalTick
+        );
+
+    /// @notice Burn an existing position containing up to 4 legs.
+    function burnTokenizedPosition(
+        bytes calldata poolKey,
+        TokenId tokenId,
+        uint128 positionSize,
+        int24 slippageTickLimitLow,
+        int24 slippageTickLimitHigh
+    )
+        external
+        returns (
+            LeftRightUnsigned[4] memory collectedByLeg,
+            LeftRightSigned totalMoved,
+            int24 finalTick
+        );
+
+    /*//////////////////////////////////////////////////////////////
+                             VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    // NOTE: To strictly adhere to this interface, your V4 contract needs
+    // to add overloads that accept `bytes calldata poolKey`.
+
+    function getAccountLiquidity(
+        bytes calldata poolKey,
+        address owner,
+        uint256 tokenType,
+        int24 tickLower,
+        int24 tickUpper
+    ) external view returns (LeftRightUnsigned accountLiquidities);
+
+    function getAccountPremium(
+        bytes calldata poolKey,
+        address owner,
+        uint256 tokenType,
+        int24 tickLower,
+        int24 tickUpper,
+        int24 atTick,
+        uint256 isLong,
+        uint256 vegoid
+    ) external view returns (uint128 premium0, uint128 premium1);
+
+    function getPoolId(bytes memory id, uint8 vegoid) external view returns (uint64 poolId);
+
+    function getEnforcedTickLimits(uint64 poolId) external view returns (int24, int24);
+
+    function getCurrentTick(bytes memory poolKey) external view returns (int24 currentTick);
+
+    function expandEnforcedTickRange(uint64 poolId) external;
+
+    /*//////////////////////////////////////////////////////////////
+                            ERC1155 SUPPORT
+    //////////////////////////////////////////////////////////////*/
+
+    function safeTransferFrom(
+        address from,
+        address to,
+        uint256 id,
+        uint256 amount,
+        bytes calldata data
+    ) external;
+
+    function safeBatchTransferFrom(
+        address from,
+        address to,
+        uint256[] calldata ids,
+        uint256[] calldata amounts,
+        bytes calldata data
+    ) external;
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+// Libraries
+import {Constants} from "@libraries/Constants.sol";
+import {Errors} from "@libraries/Errors.sol";
+import {PanopticMath} from "@libraries/PanopticMath.sol";
+
+type TokenId is uint256;
+using TokenIdLibrary for TokenId global;
+
+/// @title Panoptic's tokenId: the fundamental options position.
+/// @author Axicon Labs Limited
+/// @notice This is the token ID used in the ERC1155 representation of the option position in the SFPM.
+/// @notice The SFPM "overloads" the ERC1155 `id` by storing all option information in said `id`.
+/// @notice Contains methods for packing and unpacking a Panoptic options position into a uint256 bit pattern.
+// PACKING RULES FOR A TOKENID:
+// this is how the token Id is packed into its bit-constituents containing position information.
+// the following is a diagram to be read top-down in a little endian format
+// (so (1) below occupies the first 64 least significant bits, e.g.):
+// From the LSB to the MSB:
+// ===== 1 time (same for all legs) ==============================================================
+//      Property         Size      Offset      Comment
+// (0) univ3pool        40bits     0bits      : first 5 bytes representing the Uniswap pool  (first 40 bits; little-endian), plus an incrementing number in the event of a collision
+// (1) vegoid           8bits      40bits     : vegoid for the sfpm pool
+// (2) tickSpacing      16bits     48bits     : tickSpacing for the univ3pool. Up to 16 bits
+// ===== 4 times (one for each leg) ==============================================================
+// (3) asset             1bit      0bits      : Specifies the asset (0: token0, 1: token1)
+// (4) optionRatio       7bits     1bits      : number of contracts per leg
+// (5) isLong            1bit      8bits      : long==1 means liquidity is removed, long==0 -> liquidity is added
+// (6) tokenType         1bit      9bits      : put/call: which token is moved when deployed (0 -> token0, 1 -> token1)
+// (7) riskPartner       2bits     10bits     : normally its own index. Partner in defined risk position otherwise
+// (8) strike           24bits     12bits     : strike price; defined as (tickUpper + tickLower) / 2
+// (9) width            12bits     36bits     : width; defined as (tickUpper - tickLower) / tickSpacing
+// Total                48bits                : Each leg takes up this many bits
+// ===============================================================================================
+//
+// The bit pattern is therefore, in general:
+//
+//                        (strike price tick of the 3rd leg)
+//                            |             (width of the 2nd leg)
+//                            |                   |
+// (9)(8)(7)(6)(5)(4)(3)  (9)(8)(7)(6)(5)(4)(3)  (9)(8)(7)(6)(5)(4)(3)   (9)(8)(7)(6)(5)(4)(3)       (2)          (1)           (0)
+//  <---- 48 bits ---->    <---- 48 bits ---->    <---- 48 bits ---->     <---- 48 bits ---->   <- 16 bits -> <- 8 bits ->  <- 40 bits ->
+//         Leg 4                  Leg 3                  Leg 2                   Leg 1           tickSpacing   vegoid    Uniswap Pool Pattern
+//
+//  <--- most significant bit                                                                             least significant bit --->
+//
+// Some rules of how legs behave (we enforce these in a `validate()` function):
+//   - a leg is inactive if it's not part of the position. Technically it means that all bits are zero.
+//   - a leg is active if it has an optionRatio > 0 since this must always be set for an active leg.
+//   - if a leg is active (e.g. leg 1) there can be no gaps in other legs meaning: if leg 1 is active then leg 3 cannot be active if leg 2 is inactive.
+//
+// Examples:
+//  We can think of the bit pattern as an array starting at bit index 0 going to bit index 255 (so 256 total bits)
+//  We also refer to the legs via their index, so leg number 2 has leg index 1 (legIndex) (counting from zero), and in general leg number N has leg index N-1.
+//  - the underlying strike price of the 2nd leg (leg index = 1) in this option position starts at bit index  (64 + 12 + 48 * (leg index=1))=123
+//  - the tokenType of the 4th leg in this option position starts at bit index 64+9+48*3=217
+//  - the Uniswap V3 pool id starts at bit index 0 and ends at bit index 63 (and thus takes up 64 bits).
+//  - the width of the 3rd leg in this option position starts at bit index 64+36+48*2=196
+library TokenIdLibrary {
+    /// @notice AND mask to extract all `isLong` bits for each leg from a TokenId.
+    uint256 internal constant LONG_MASK =
+        0x100_000000000100_000000000100_000000000100_0000000000000000;
+
+    /// @notice AND mask to clear `poolId` from a TokenId.
+    uint256 internal constant CLEAR_POOLID_MASK =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_0000000000000000;
+
+    /// @notice AND mask to clear all bits except for the option ratios of the legs.
+    uint256 internal constant OPTION_RATIO_MASK =
+        0x0000000000FE_0000000000FE_0000000000FE_0000000000FE_0000000000000000;
+
+    /// @notice AND mask to clear all bits except for the components of the chunk key (strike, width, tokenType) for each leg.
+    uint256 internal constant CHUNK_MASK =
+        0xFFFFFFFFF200_FFFFFFFFF200_FFFFFFFFF200_FFFFFFFFF200_0000000000000000;
+
+    /// @notice AND mask to cut a sign-extended int256 back to an int24.
+    int256 internal constant BITMASK_INT24 = 0xFFFFFF;
+
+    /*//////////////////////////////////////////////////////////////
+                                DECODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice The full poolId (Uniswap pool identifier + pool pattern) of this option position.
+    /// @param self The TokenId to extract `poolId` from
+    /// @return The `poolId` (Panoptic's pool fingerprint, contains the whole 64 bit sequence with the tickSpacing) of the Uniswap V3 pool
+    function poolId(TokenId self) internal pure returns (uint64) {
+        unchecked {
+            return uint64(TokenId.unwrap(self));
+        }
+    }
+
+    /// @notice The vegoid of this option position.
+    /// @param self The TokenId to extract `vegoid` from
+    /// @return The `vegoid` of the Uniswap V3 pool
+    function vegoid(TokenId self) internal pure returns (uint8) {
+        unchecked {
+            return uint8((TokenId.unwrap(self) >> 40) % 2 ** 8);
+        }
+    }
+
+    /// @notice The tickSpacing of this option position.
+    /// @param self The TokenId to extract `tickSpacing` from
+    /// @return The `tickSpacing` of the Uniswap V3 pool
+    function tickSpacing(TokenId self) internal pure returns (int24) {
+        unchecked {
+            return int24(uint24((TokenId.unwrap(self) >> 48) % 2 ** 16));
+        }
+    }
+
+    /// @notice Get the asset basis for this TokenId.
+    /// @dev Which token is the asset - can be token0 (return 0) or token1 (return 1).
+    /// @param self The TokenId to extract `asset` from
+    /// @param legIndex The leg index of this position (in {0,1,2,3}) to extract `asset` from
+    /// @return 0 if asset is token0, 1 if asset is token1
+    function asset(TokenId self, uint256 legIndex) internal pure returns (uint256) {
+        unchecked {
+            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48)) % 2);
+        }
+    }
+
+    /// @notice Get the number of contracts multiplier for leg `legIndex`.
+    /// @param self The TokenId to extract `optionRatio` at `legIndex` from
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return The number of contracts multiplier for leg `legIndex`
+    function optionRatio(TokenId self, uint256 legIndex) internal pure returns (uint256) {
+        unchecked {
+            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 1)) % 128);
+        }
+    }
+
+    /// @notice Return 1 if the nth leg (leg index `legIndex`) is a long position.
+    /// @param self The TokenId to extract `isLong` at `legIndex` from
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return 1 if long; 0 if not long
+    function isLong(TokenId self, uint256 legIndex) internal pure returns (uint256) {
+        unchecked {
+            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 8)) % 2);
+        }
+    }
+
+    /// @notice Get the type of token moved for a given leg (implies a call or put). Either Token0 or Token1.
+    /// @param self The TokenId to extract `tokenType` at `legIndex` from
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return 1 if the token moved is token1 or 0 if the token moved is token0
+    function tokenType(TokenId self, uint256 legIndex) internal pure returns (uint256) {
+        unchecked {
+            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 9)) % 2);
+        }
+    }
+
+    /// @notice Get the associated risk partner of the leg index (generally another leg index in the position if enabled or the same leg index if no partner).
+    /// @param self The TokenId to extract `riskPartner` at `legIndex` from
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return The leg index of `legIndex`'s risk partner
+    function riskPartner(TokenId self, uint256 legIndex) internal pure returns (uint256) {
+        unchecked {
+            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 10)) % 4);
+        }
+    }
+
+    /// @notice Get the strike price tick of the nth leg (with index `legIndex`).
+    /// @param self The TokenId to extract `strike` at `legIndex` from
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return The strike price tick of the leg
+    function strike(TokenId self, uint256 legIndex) internal pure returns (int24) {
+        unchecked {
+            return int24(int256(TokenId.unwrap(self) >> (64 + legIndex * 48 + 12)));
+        }
+    }
+
+    /// @notice Get the width (distance between upper and lower ticks) of the nth leg (index `legIndex`).
+    /// @dev The width is always positive; it is returned as an int24 for internal consistency with strike operations.
+    /// @param self The TokenId to extract `width` at `legIndex` from
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return The width of the position
+    function width(TokenId self, uint256 legIndex) internal pure returns (int24) {
+        unchecked {
+            return int24(int256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 36)) % 4096));
+        } // "% 4096" = take last (2 ** 12 = 4096) 12 bits
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                ENCODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Add the Uniswap pool identifier corresponding to this option position (contains the entropy and tickSpacing).
+    /// @param self The TokenId to add `_poolId` to
+    /// @param _poolId The PoolID to add to `self`
+    /// @return `self` with `_poolId` added to the PoolID slot
+    function addPoolId(TokenId self, uint64 _poolId) internal pure returns (TokenId) {
+        unchecked {
+            return TokenId.wrap(TokenId.unwrap(self) + _poolId);
+        }
+    }
+
+    /// @notice Add the `tickSpacing` to the PoolID for `self`.
+    /// @param self The TokenId to add `_tickSpacing` to
+    /// @param _tickSpacing The tickSpacing to add to `self`
+    /// @return `self` with `_tickSpacing` added to the TickSpacing slot in the PoolID
+    function addTickSpacing(TokenId self, int24 _tickSpacing) internal pure returns (TokenId) {
+        unchecked {
+            return TokenId.wrap(TokenId.unwrap(self) + (uint256(uint24(_tickSpacing)) << 48));
+        }
+    }
+
+    /// @notice Add the asset basis for this position.
+    /// @param self The TokenId to add `_asset` to
+    /// @param _asset The asset to add to the Asset slot in `self` for `legIndex`
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return `self` with `_asset` added to the Asset slot
+    function addAsset(
+        TokenId self,
+        uint256 _asset,
+        uint256 legIndex
+    ) internal pure returns (TokenId) {
+        unchecked {
+            return
+                TokenId.wrap(TokenId.unwrap(self) + (uint256(_asset % 2) << (64 + legIndex * 48)));
+        }
+    }
+
+    /// @notice Add the number of contracts multiplier to leg index `legIndex`.
+    /// @param self The TokenId to add `_optionRatio` to
+    /// @param _optionRatio The number of contracts multiplier to add to the OptionRatio slot in `self` for LegIndex
+    /// @param legIndex The leg index of the position (in {0,1,2,3})
+    /// @return `self` with `_optionRatio` added to the OptionRatio slot for `legIndex`
+    function addOptionRatio(
+        TokenId self,
+        uint256 _optionRatio,
+        uint256 legIndex
+    ) internal pure returns (TokenId) {
+        unchecked {
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) + (uint256(_optionRatio % 128) << (64 + legIndex * 48 + 1))
+                );
+        }
+    }
+
+    /// @notice Add "isLong" parameter indicating whether a leg is long (isLong=1) or short (isLong=0).
+    /// @param self The TokenId to add `_isLong` to
+    /// @param _isLong The isLong parameter to add to the IsLong slot in `self` for `legIndex`
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return `self` with `_isLong` added to the IsLong slot for `legIndex`
+    function addIsLong(
+        TokenId self,
+        uint256 _isLong,
+        uint256 legIndex
+    ) internal pure returns (TokenId) {
+        unchecked {
+            return TokenId.wrap(TokenId.unwrap(self) + ((_isLong % 2) << (64 + legIndex * 48 + 8)));
+        }
+    }
+
+    /// @notice Add the type of token moved for a given leg (implies a call or put). Either Token0 or Token1.
+    /// @param self The TokenId to add `_tokenType` to
+    /// @param _tokenType The tokenType to add to the TokenType slot in `self` for `legIndex`
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return `self` with `_tokenType` added to the TokenType slot for `legIndex`
+    function addTokenType(
+        TokenId self,
+        uint256 _tokenType,
+        uint256 legIndex
+    ) internal pure returns (TokenId) {
+        unchecked {
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) + (uint256(_tokenType % 2) << (64 + legIndex * 48 + 9))
+                );
+        }
+    }
+
+    /// @notice Add the associated risk partner of the leg index.
+    /// @param self The TokenId to add `_riskPartner` to
+    /// @param _riskPartner The riskPartner to add to the RiskPartner slot in `self` for `legIndex`
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return `self` with `_riskPartner` added to the RiskPartner slot for `legIndex`
+    function addRiskPartner(
+        TokenId self,
+        uint256 _riskPartner,
+        uint256 legIndex
+    ) internal pure returns (TokenId) {
+        unchecked {
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) + (uint256(_riskPartner % 4) << (64 + legIndex * 48 + 10))
+                );
+        }
+    }
+
+    /// @notice Add the strike price tick of the nth leg (index `legIndex`).
+    /// @param self The TokenId to add `_strike` to
+    /// @param _strike The strike price tick to add to the Strike slot in `self` for `legIndex`
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return `self` with `_strike` added to the Strike slot for `legIndex`
+    function addStrike(
+        TokenId self,
+        int24 _strike,
+        uint256 legIndex
+    ) internal pure returns (TokenId) {
+        unchecked {
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) +
+                        uint256((int256(_strike) & BITMASK_INT24) << (64 + legIndex * 48 + 12))
+                );
+        }
+    }
+
+    /// @notice Add the width of the nth leg (index `legIndex`).
+    /// @param self The TokenId to add `_width` to
+    /// @param _width The width to add to the Width slot in `self` for `legIndex`
+    /// @param legIndex The leg index of this position (in {0,1,2,3})
+    /// @return `self` with `_width` added to the Width slot for `legIndex`
+    function addWidth(
+        TokenId self,
+        int24 _width,
+        uint256 legIndex
+    ) internal pure returns (TokenId) {
+        // % 4096 -> take 12 bits from the incoming 24 bits (there's no uint12)
+        unchecked {
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) +
+                        (uint256(uint24(_width) % 4096) << (64 + legIndex * 48 + 36))
+                );
+        }
+    }
+
+    /// @notice Add a leg to a TokenId.
+    /// @param self The tokenId in the SFPM representing an option position
+    /// @param legIndex The leg index of this position (in {0,1,2,3}) to add
+    /// @param _optionRatio The relative size of the leg
+    /// @param _asset The asset of the leg
+    /// @param _isLong Whether the leg is long
+    /// @param _tokenType The type of token moved for the leg
+    /// @param _riskPartner The associated risk partner of the leg
+    /// @param _strike The strike price tick of the leg
+    /// @param _width The width of the leg
+    /// @return tokenId The tokenId with the leg added
+    function addLeg(
+        TokenId self,
+        uint256 legIndex,
+        uint256 _optionRatio,
+        uint256 _asset,
+        uint256 _isLong,
+        uint256 _tokenType,
+        uint256 _riskPartner,
+        int24 _strike,
+        int24 _width
+    ) internal pure returns (TokenId tokenId) {
+        tokenId = addOptionRatio(self, _optionRatio, legIndex);
+        tokenId = addAsset(tokenId, _asset, legIndex);
+        tokenId = addIsLong(tokenId, _isLong, legIndex);
+        tokenId = addTokenType(tokenId, _tokenType, legIndex);
+        tokenId = addRiskPartner(tokenId, _riskPartner, legIndex);
+        tokenId = addStrike(tokenId, _strike, legIndex);
+        tokenId = addWidth(tokenId, _width, legIndex);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Flip all the `isLong` positions in the legs in the `tokenId` option position.
+    /// @param self The TokenId to flip isLong for on all active legs
+    /// @return tokenId `self` with all `isLong` bits flipped
+    function flipToBurnToken(TokenId self) internal pure returns (TokenId) {
+        unchecked {
+            // NOTE: This is a hack to avoid blowing up the contract size.
+            // We need to ensure that only active legs are flipped
+            // In order to achieve this, we shift our long bit mask to the right by (4-# active legs)
+            // i.e the whole mask is used to flip all legs with 4 legs, but only the first leg is flipped with 1 leg so we shift by 3 legs
+            // We also clear the poolId area of the mask to ensure the bits that are shifted right into the area don't flip and cause issues
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) ^
+                        ((LONG_MASK >> (48 * (4 - self.countLegs()))) & CLEAR_POOLID_MASK)
+                );
+        }
+    }
+
+    /// @notice Count the number of legs (out of a maximum of 4) that are long positions.
+    /// @param self The TokenId to count longs for
+    /// @return The number of long positions in `self` (in the range {0,...,4})
+    function countLongs(TokenId self) internal pure returns (uint256) {
+        unchecked {
+            return self.isLong(0) + self.isLong(1) + self.isLong(2) + self.isLong(3);
+        }
+    }
+
+    /// @notice Get the option position's nth leg's (index `legIndex`) tick ranges (lower, upper).
+    /// @param self The TokenId to extract the tick range from
+    /// @param legIndex The leg index of the position (in {0,1,2,3})
+    /// @return legLowerTick The lower tick of the leg/liquidity chunk
+    /// @return legUpperTick The upper tick of the leg/liquidity chunk
+    function asTicks(
+        TokenId self,
+        uint256 legIndex
+    ) internal pure returns (int24 legLowerTick, int24 legUpperTick) {
+        (legLowerTick, legUpperTick) = PanopticMath.getTicks(
+            self.strike(legIndex),
+            self.width(legIndex),
+            self.tickSpacing()
+        );
+    }
+
+    /// @notice Return the number of active legs in the option position.
+    /// @dev ASSUMPTION: For any leg, the option ratio is always > 0 (the leg always has a number of contracts associated with it).
+    /// @param self The TokenId to count active legs for
+    /// @return numLegs The number of active legs in `self` (in the range {0,...,4})
+    function countLegs(TokenId self) internal pure returns (uint256 numLegs) {
+        // Strip all bits except for the option ratios
+        uint256 optionRatios = (TokenId.unwrap(self) & OPTION_RATIO_MASK) >> 64;
+
+        unchecked {
+            // forge-lint: disable-next-line(incorrect-shift)
+            while (optionRatios >= (1 << (48 * numLegs))) {
+                ++numLegs;
+            }
+        }
+    }
+
+    /// @notice Clear a leg in an option position at `legIndex`.
+    /// @dev NOTE: it's important that the caller fills in the leg details after.
+    //  - optionRatio is zeroed
+    //  - asset is zeroed
+    //  - width is zeroed
+    //  - strike is zeroed
+    //  - tokenType is zeroed
+    //  - isLong is zeroed
+    //  - riskPartner is zeroed
+    /// @param self The TokenId to clear the leg from
+    /// @param legIndex The leg index to reset, in {0,1,2,3}
+    /// @return `self` with the `legIndex`th leg zeroed
+    function clearLeg(TokenId self, uint256 legIndex) internal pure returns (TokenId) {
+        if (legIndex == 0)
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) &
+                        0xFFFFFFFFFFFF_FFFFFFFFFFFF_FFFFFFFFFFFF_000000000000_FFFFFFFFFFFFFFFF
+                );
+        if (legIndex == 1)
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) &
+                        0xFFFFFFFFFFFF_FFFFFFFFFFFF_000000000000_FFFFFFFFFFFF_FFFFFFFFFFFFFFFF
+                );
+        if (legIndex == 2)
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) &
+                        0xFFFFFFFFFFFF_000000000000_FFFFFFFFFFFF_FFFFFFFFFFFF_FFFFFFFFFFFFFFFF
+                );
+        if (legIndex == 3)
+            return
+                TokenId.wrap(
+                    TokenId.unwrap(self) &
+                        0x000000000000_FFFFFFFFFFFF_FFFFFFFFFFFF_FFFFFFFFFFFF_FFFFFFFFFFFFFFFF
+                );
+
+        return self;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                               VALIDATION
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Checks if a TokenId is valid and reverts with an error reflecting the incorrect parameter for invalid positions.
+    /// @param self The TokenId to validate
+    function validate(TokenId self) internal pure {
+        if (self.optionRatio(0) == 0) revert Errors.InvalidTokenIdParameter(1);
+
+        // loop through the 4 (possible) legs in the tokenId `self`
+        unchecked {
+            // extract strike, width, and tokenType
+            uint256 chunkData = (TokenId.unwrap(self) & CHUNK_MASK) >> 64;
+            for (uint256 i = 0; i < 4; ++i) {
+                if (self.optionRatio(i) == 0) {
+                    // final leg in this position identified;
+                    // make sure any leg above this are zero as well
+                    // (we don't allow gaps eg having legs 1 and 4 active without 2 and 3 is not allowed)
+                    if ((TokenId.unwrap(self) >> (64 + 48 * i)) != 0)
+                        revert Errors.InvalidTokenIdParameter(1);
+
+                    break; // we are done iterating over potential legs
+                }
+
+                // prevent legs touching the same chunks - all chunks in the position must be discrete
+                uint256 numLegs = self.countLegs();
+                for (uint256 j = i + 1; j < numLegs; ++j) {
+                    if (uint48(chunkData >> (48 * i)) == uint48(chunkData >> (48 * j))) {
+                        revert Errors.InvalidTokenIdParameter(6);
+                    }
+                }
+
+                // Strike cannot be MIN_TICK or MAX_TICK
+                if (
+                    (self.strike(i) == Constants.MIN_POOL_TICK) ||
+                    (self.strike(i) == Constants.MAX_POOL_TICK)
+                ) revert Errors.InvalidTokenIdParameter(4);
+
+                // In the following, we check whether the risk partner of this leg is itself
+                // or another leg in this position.
+                uint256 riskPartnerIndex = self.riskPartner(i);
+                if (riskPartnerIndex != i) {
+                    // Ensures that risk partners are mutual
+                    if (self.riskPartner(riskPartnerIndex) != i)
+                        revert Errors.InvalidTokenIdParameter(3);
+                }
+            }
+        }
+    }
+
+    /// @notice Check whether a position `self` contains at least one exercisable long leg.
+    /// @dev A leg is considered exercisable if it is:
+    ///      - long (isLong == 1), and
+    ///      - not a loan/credit leg (width != 0).
+    /// @dev This function does NOT check moneyness or price ranges.
+    /// @return hasExercisableLong Returns 1 if such a leg exists, 0 otherwise.
+    function validateIsExercisable(TokenId self) internal pure returns (uint256) {
+        unchecked {
+            uint256 numLegs = self.countLegs();
+            for (uint256 i = 0; i < numLegs; ++i) {
+                if (self.isLong(i) == 1 && self.width(i) != 0) return 1; // validated
+            }
+        }
+
+        // Fail if position has no legs that is far-out-of-the-money
+        return 0;
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+// Libraries
+import {Errors} from "@libraries/Errors.sol";
+
+/// @notice Safe ERC20 transfer library that gracefully handles missing return values.
+/// @author Axicon Labs Limited
+/// @author Modified from Solmate (https://github.com/Rari-Capital/solmate/blob/main/src/utils/SafeTransferLib.sol)
+/// @dev Caution! This library won't check that a token has code, responsibility is delegated to the caller.
+library SafeTransferLib {
+    /*//////////////////////////////////////////////////////////////
+                             ETH OPERATIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Safely transfers ETH to a specified address.
+    /// @param to The address to transfer ETH to
+    /// @param amount The amount of ETH to transfer
+    function safeTransferETH(address to, uint256 amount) internal {
+        bool success;
+
+        assembly {
+            // Transfer the ETH and store if it succeeded or not.
+            success := call(gas(), to, amount, 0, 0, 0, 0)
+        }
+
+        if (!success)
+            revert Errors.TransferFailed(address(0), address(this), amount, address(this).balance);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            ERC20 OPERATIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Safely transfers ERC20 tokens from one address to another.
+    /// @param token The address of the ERC20 token
+    /// @param from The address to transfer tokens from
+    /// @param to The address to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    function safeTransferFrom(address token, address from, address to, uint256 amount) internal {
+        bool success;
+
+        assembly ("memory-safe") {
+            // Get free memory pointer - we will store our calldata in scratch space starting at the offset specified here.
+            let p := mload(0x40)
+
+            // Write the abi-encoded calldata into memory, beginning with the function selector.
+            mstore(p, 0x23b872dd00000000000000000000000000000000000000000000000000000000)
+            mstore(add(4, p), from) // Append the "from" argument.
+            mstore(add(36, p), to) // Append the "to" argument.
+            mstore(add(68, p), amount) // Append the "amount" argument.
+
+            success := and(
+                // Set success to whether the call reverted, if not we check it either
+                // returned exactly 1 (can't just be non-zero data), or had no return data.
+                or(and(eq(mload(0), 1), gt(returndatasize(), 31)), iszero(returndatasize())),
+                // We use 100 because that's the total length of our calldata (4 + 32 * 3)
+                // Counterintuitively, this call() must be positioned after the or() in the
+                // surrounding and() because and() evaluates its arguments from right to left.
+                call(gas(), token, 0, p, 100, 0, 32)
+            )
+        }
+
+        if (!success) {
+            uint256 balance = balanceOfOrZero(token, from);
+            revert Errors.TransferFailed(token, from, amount, balance);
+        }
+    }
+
+    /// @notice Safely transfers ERC20 tokens to a specified address.
+    /// @param token The address of the ERC20 token
+    /// @param to The address to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    function safeTransfer(address token, address to, uint256 amount) internal {
+        bool success;
+
+        assembly ("memory-safe") {
+            // Get free memory pointer - we will store our calldata in scratch space starting at the offset specified here.
+            let p := mload(0x40)
+
+            // Write the abi-encoded calldata into memory, beginning with the function selector.
+            mstore(p, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
+            mstore(add(4, p), to) // Append the "to" argument.
+            mstore(add(36, p), amount) // Append the "amount" argument.
+
+            success := and(
+                // Set success to whether the call reverted, if not we check it either
+                // returned exactly 1 (can't just be non-zero data), or had no return data.
+                or(and(eq(mload(0), 1), gt(returndatasize(), 31)), iszero(returndatasize())),
+                // We use 68 because that's the total length of our calldata (4 + 32 * 2)
+                // Counterintuitively, this call() must be positioned after the or() in the
+                // surrounding and() because and() evaluates its arguments from right to left.
+                call(gas(), token, 0, p, 68, 0, 32)
+            )
+        }
+
+        if (!success) {
+            uint256 balance = balanceOfOrZero(token, address(this));
+            revert Errors.TransferFailed(token, address(this), amount, balance);
+        }
+    }
+
+    /// @notice Safely queries the balance of an ERC20 token, returning zero if the call fails.
+    /// @param token The address of the ERC20 token
+    /// @param who The address to query the balance for
+    /// @return bal The balance of the address, or zero if the call fails or returns invalid data
+    function balanceOfOrZero(address token, address who) internal view returns (uint256 bal) {
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            mstore(p, 0x70a0823100000000000000000000000000000000000000000000000000000000) // balanceOf(address)
+            mstore(add(p, 4), who)
+            // staticcall: token is already warm due to the prior call
+            if iszero(staticcall(gas(), token, p, 36, 0, 32)) {
+                bal := 0
+            }
+            // accept only full 32-byte returns; else treat as zero
+            if lt(returndatasize(), 32) {
+                bal := 0
+            }
+            // load into bal
+            bal := mload(0)
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+/// @title Efficient Keccak256 Library
+/// @notice Provides gas-efficient keccak256 hashing using inline assembly
+library EfficientHash {
+    /// @notice Efficiently compute keccak256 hash for position key (address, address, uint256, int24, int24)
+    /// @param univ3pool The Uniswap V3 pool address (20 bytes)
+    /// @param owner The owner address (20 bytes)
+    /// @param tokenType The token type (32 bytes)
+    /// @param tickLower The lower tick (3 bytes when packed)
+    /// @param tickUpper The upper tick (3 bytes when packed)
+    /// @return hash The keccak256 hash of the packed data
+    function efficientKeccak256(
+        address univ3pool,
+        address owner,
+        uint256 tokenType,
+        int24 tickLower,
+        int24 tickUpper
+    ) internal pure returns (bytes32 hash) {
+        assembly {
+            let freeMemPtr := mload(0x40)
+            // Pack: 20 + 20 + 32 + 3 + 3 = 78 bytes (0x4e)
+            mstore(freeMemPtr, shl(96, univ3pool)) // address at byte 0
+            mstore(add(freeMemPtr, 0x14), shl(96, owner)) // address at byte 20
+            mstore(add(freeMemPtr, 0x28), tokenType) // uint256 at byte 40
+            mstore(add(freeMemPtr, 0x48), shl(232, and(tickLower, 0xFFFFFF))) // int24 at byte 72
+            mstore(add(freeMemPtr, 0x4b), shl(232, and(tickUpper, 0xFFFFFF))) // int24 at byte 75
+
+            hash := keccak256(freeMemPtr, 0x4e)
+        }
+    }
+
+    /// @notice Efficiently compute keccak256 hash for chunk key (int24, int24, uint256)
+    /// @param strike The strike tick (3 bytes when packed)
+    /// @param width The width (3 bytes when packed)
+    /// @param tokenType The token type (32 bytes)
+    /// @return hash The keccak256 hash of the packed data
+    function efficientKeccak256(
+        int24 strike,
+        int24 width,
+        uint256 tokenType
+    ) internal pure returns (bytes32 hash) {
+        assembly {
+            let freeMemPtr := mload(0x40)
+            // Pack: 3 + 3 + 32 = 38 bytes (0x26)
+            mstore(freeMemPtr, shl(232, and(strike, 0xFFFFFF))) // int24 at byte 0
+            mstore(add(freeMemPtr, 0x03), shl(232, and(width, 0xFFFFFF))) // int24 at byte 3
+            mstore(add(freeMemPtr, 0x06), tokenType) // uint256 at byte 6
+
+            hash := keccak256(freeMemPtr, 0x26)
+        }
+    }
+
+    /// @notice Efficiently compute keccak256 hash for a uint256 array
+    /// @param data The uint256 array to hash
+    /// @return hash The keccak256 hash of the packed data
+    function efficientKeccak256(uint256[] memory data) internal pure returns (bytes32 hash) {
+        assembly {
+            // data layout in memory: [length][item0][item1]...
+            // Skip the length field (32 bytes) and hash the rest
+            let dataLength := mload(data)
+            let dataStart := add(data, 0x20)
+            let bytesToHash := mul(dataLength, 0x20)
+
+            hash := keccak256(dataStart, bytesToHash)
+        }
+    }
+
+    /// @notice Efficiently compute keccak256 hash for bytes memory
+    /// @param data The bytes to hash
+    /// @return hash The keccak256 hash of the data
+    function efficientKeccak256(bytes memory data) internal pure returns (bytes32 hash) {
+        assembly {
+            // bytes layout in memory: [length][data...]
+            let dataLength := mload(data)
+            let dataStart := add(data, 0x20)
+
+            hash := keccak256(dataStart, dataLength)
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+/// @title Minimal efficient ERC20 implementation without metadata
+/// @author Axicon Labs Limited
+/// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/v7/src/tokens/ERC20.sol)
+/// @dev The metadata must be set in the inheriting contract.
+/// @dev Do not manually set balances without updating _internalSupply, as the sum of all user balances must not exceed it.
+abstract contract ERC20Minimal {
+    /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emitted when tokens are transferred.
+    /// @param from The sender of the tokens
+    /// @param to The recipient of the tokens
+    /// @param amount The amount of tokens transferred
+    event Transfer(address indexed from, address indexed to, uint256 amount);
+
+    /// @notice Emitted when a user approves another user to spend tokens on their behalf.
+    /// @param owner The user who approved the spender
+    /// @param spender The user who was approved to spend tokens
+    /// @param amount The amount of tokens approved to spend
+    event Approval(address indexed owner, address indexed spender, uint256 amount);
+
+    /*//////////////////////////////////////////////////////////////
+                              ERC20 STORAGE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice The internal supply of tokens.
+    /// @dev This cannot exceed the max uint256 value.
+    uint256 internal _internalSupply;
+
+    /// @notice Token balances for each user.
+    mapping(address account => uint256 balance) public balanceOf;
+
+    /// @notice Stored allowances for each user.
+    /// @dev Indexed by owner, then by spender.
+    mapping(address owner => mapping(address spender => uint256 allowance)) public allowance;
+
+    /*//////////////////////////////////////////////////////////////
+                               ERC20 LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Approves a user to spend tokens on the caller's behalf.
+    /// @param spender The user to approve
+    /// @param amount The amount of tokens to approve
+    /// @return Whether the approval succeeded
+    function approve(address spender, uint256 amount) public returns (bool) {
+        allowance[msg.sender][spender] = amount;
+
+        emit Approval(msg.sender, spender, amount);
+
+        return true;
+    }
+
+    /// @notice Transfers tokens from the caller to another user.
+    /// @param to The user to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    /// @return Whether the transfer succeeded
+    function transfer(address to, uint256 amount) public virtual returns (bool) {
+        balanceOf[msg.sender] -= amount;
+
+        // Cannot overflow because the sum of all user
+        // balances can't exceed the max uint256 value.
+        unchecked {
+            balanceOf[to] += amount;
+        }
+
+        emit Transfer(msg.sender, to, amount);
+
+        return true;
+    }
+
+    /// @notice Transfers tokens from one user to another.
+    /// @dev Supports token approvals.
+    /// @param from The user to transfer tokens from
+    /// @param to The user to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    /// @return Whether the transfer succeeded
+    function transferFrom(address from, address to, uint256 amount) public virtual returns (bool) {
+        uint256 allowed = allowance[from][msg.sender]; // Saves gas for limited approvals.
+
+        if (allowed != type(uint256).max) allowance[from][msg.sender] = allowed - amount;
+
+        balanceOf[from] -= amount;
+
+        // Cannot overflow because the sum of all user
+        // balances can't exceed the max uint256 value.
+        unchecked {
+            balanceOf[to] += amount;
+        }
+
+        emit Transfer(from, to, amount);
+
+        return true;
+    }
+
+    /// @notice Internal utility to transfer tokens from one user to another.
+    /// @param from The user to transfer tokens from
+    /// @param to The user to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    function _transferFrom(address from, address to, uint256 amount) internal {
+        balanceOf[from] -= amount;
+
+        // Cannot overflow because the sum of all user
+        // balances can't exceed the max uint256 value.
+        unchecked {
+            balanceOf[to] += amount;
+        }
+
+        emit Transfer(from, to, amount);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        INTERNAL MINT/BURN LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Internal utility to mint tokens to a user's account.
+    /// @param to The user to mint tokens to
+    /// @param amount The amount of tokens to mint
+    function _mint(address to, uint256 amount) internal {
+        // Cannot overflow because the sum of all user
+        // balances can't exceed the max uint256 value.
+        unchecked {
+            balanceOf[to] += amount;
+        }
+
+        // keep checked to prevent overflows
+        _internalSupply += amount;
+
+        emit Transfer(address(0), to, amount);
+    }
+
+    /// @notice Internal utility to burn tokens from a user's account.
+    /// @param from The user to burn tokens from
+    /// @param amount The amount of tokens to burn
+    function _burn(address from, uint256 amount) internal {
+        balanceOf[from] -= amount;
+
+        // keep checked to prevent underflows
+        _internalSupply -= amount;
+
+        emit Transfer(from, address(0), amount);
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+/// @title Partial definition of the ERC20 interface as defined in the EIP
+/// @dev Does not include return values as certain tokens such as USDT fail to implement them.
+/// @dev Since the return value is not expected, this interface works with both compliant and non-compliant tokens.
+/// @dev Clients are recommended to consume and handle the return of negative success values.
+/// @dev However, we cannot productively handle a failed approval and such a situation would surely cause a revert later in execution.
+/// @dev In addition, no notable instances exist of tokens that both i) contain a failure case for `approve` and ii) return `false` instead of reverting.
+/// @author Axicon Labs Limited
+interface IERC20Partial {
+    /// @notice Returns the amount of tokens owned by `account`.
+    /// @dev This function is unchanged from the EIP.
+    /// @param account The address to query the balance of
+    /// @return The amount of tokens owned by `account`
+    function balanceOf(address account) external view returns (uint256);
+
+    /// @notice Sets `amount` as the allowance of `spender` over the caller's tokens.
+    /// @dev While this function is specified to return a boolean value in the EIP, this interface does not expect one.
+    /// @param spender The address which will spend the funds
+    /// @param amount The amount of tokens allowed to be spent
+    function approve(address spender, uint256 amount) external;
+
+    /// @notice Transfers tokens from the caller to another user.
+    /// @param to The user to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    function transfer(address to, uint256 amount) external;
+
+    /// @notice Returns the amount of tokens in existence.
+    function totalSupply() external view returns (uint256);
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.24;
+
+// Interfaces
+import {CollateralTracker} from "@contracts/CollateralTracker.sol";
+import {PanopticPool} from "@contracts/PanopticPool.sol";
+
+// Custom types
+import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
+import {PositionBalance} from "@types/PositionBalance.sol";
+import {RiskParameters} from "@types/RiskParameters.sol";
+import {TokenId} from "@types/TokenId.sol";
+import {OraclePack} from "@types/OraclePack.sol";
+import {MarketState} from "@types/MarketState.sol";
+
+/// @title Panoptic Risk Engine Interface
+/// @notice Interface for the central risk assessment and solvency calculator for the Panoptic Protocol.
+interface IRiskEngine {
+    /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emitted when a borrow rate is updated.
+    event BorrowRateUpdated(
+        address indexed collateralToken,
+        uint256 avgBorrowRate,
+        uint256 rateAtTarget
+    );
+
+    /// @notice Emitted when tokens are collected from the contract
+    /// @param token The address of the token collected
+    /// @param recipient The address receiving the tokens
+    /// @param amount The amount of tokens collected
+    event TokensCollected(address indexed token, address indexed recipient, uint256 amount);
+
+    /// @notice Emitted when the guardian updates the enforced safe mode.
+    /// @param lockMode True when safe mode is forcibly locked, false when the lock is lifted.
+    event GuardianSafeModeUpdated(bool lockMode);
+
+    /*//////////////////////////////////////////////////////////////
+                        PUBLIC STATE VARIABLES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Constant, in seconds, used to determine the max elapsed time between adaptive interest rate updates.
+    function IRM_MAX_ELAPSED_TIME() external view returns (int256);
+
+    /// @notice Curve steepness (scaled by WAD).
+    function CURVE_STEEPNESS() external view returns (int256);
+
+    /// @notice Minimum rate at target per second (scaled by WAD).
+    function MIN_RATE_AT_TARGET() external view returns (int256);
+
+    /// @notice Maximum rate at target per second (scaled by WAD).
+    function MAX_RATE_AT_TARGET() external view returns (int256);
+
+    /// @notice Target utilization (scaled by WAD).
+    function TARGET_UTILIZATION() external view returns (int256);
+
+    /// @notice Initial rate at target per second (scaled by WAD).
+    function INITIAL_RATE_AT_TARGET() external view returns (int256);
+
+    /// @notice Adjustment speed per second (scaled by WAD).
+    function ADJUSTMENT_SPEED() external view returns (int256);
+
+    /// @notice Address allowed to override the automatically computed safe mode.
+    function GUARDIAN() external view returns (address);
+
+    /*//////////////////////////////////////////////////////////////
+                                GUARDIAN
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Forces a PanopticPool into locked safe mode.
+    /// @param pool The PanopticPool to lock.
+    function lockPool(PanopticPool pool) external;
+
+    /// @notice Removes the forced safe-mode lock on a PanopticPool.
+    /// @param pool The PanopticPool to unlock.
+    function unlockPool(PanopticPool pool) external;
+
+    /*//////////////////////////////////////////////////////////////
+                                TRANSFERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Collects a specific amount of tokens from this contract
+    /// @param token The address of the ERC20 token to collect
+    /// @param recipient The address to send the tokens to
+    /// @param amount The amount of tokens to collect
+    function collect(address token, address recipient, uint256 amount) external;
+
+    /// @notice Collects all available tokens of a specific type from this contract
+    /// @param token The address of the ERC20 token to collect
+    /// @param recipient The address to send the tokens to
+    function collect(address token, address recipient) external;
+
+    /*//////////////////////////////////////////////////////////////
+                   LIQUIDATION/FORCE EXERCISE CALCULATIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Substitutes surplus tokens to a caller in exchange for any potential token shortages prior to revoking virtual shares from a payor.
+    /// @param payor The address of the user being exercised/settled
+    /// @param fees If applicable, fees to debit from caller (rightSlot = currency0 left = currency1), 0 for `settleLongPremium`
+    /// @param atTick The tick at which to convert between currency0/currency1 when redistributing the surplus tokens
+    /// @param ct0 The collateral tracker for currency0
+    /// @param ct1 The collateral tracker for currency1
+    /// @return The LeftRight-packed deltas for currency0/currency1 to move from the caller to the payor
+    function getRefundAmounts(
+        address payor,
+        LeftRightSigned fees,
+        int24 atTick,
+        CollateralTracker ct0,
+        CollateralTracker ct1
+    ) external view returns (LeftRightSigned);
+
+    /// @notice Get the cost of exercising an option. Used during a forced exercise.
+    /// @param currentTick The current price tick
+    /// @param oracleTick The price oracle tick
+    /// @param tokenId The position to be exercised
+    /// @param positionBalance The position data of the position to be exercised
+    /// @return exerciseFees The fees for exercising the option position
+    function exerciseCost(
+        int24 currentTick,
+        int24 oracleTick,
+        TokenId tokenId,
+        PositionBalance positionBalance
+    ) external view returns (LeftRightSigned exerciseFees);
+
+    /// @notice Compute the pre-haircut liquidation bonuses to be paid to the liquidator and the protocol loss caused by the liquidation (pre-haircut).
+    /// @param tokenData0 LeftRight encoded word with balance of token0 in the right slot, and required balance in left slot
+    /// @param tokenData1 LeftRight encoded word with balance of token1 in the right slot, and required balance in left slot
+    /// @param atSqrtPriceX96 The oracle price used to swap tokens between the liquidator/liquidatee and determine solvency for the liquidatee
+    /// @param netPaid The net amount of tokens paid/received by the liquidatee to close their portfolio of positions
+    /// @param shortPremium Total owed premium (prorated by available settled tokens) across all short legs being liquidated
+    /// @return The LeftRight-packed bonus amounts to be paid to the liquidator for both tokens
+    /// @return The LeftRight-packed protocol loss (pre-haircut) for both tokens
+    function getLiquidationBonus(
+        LeftRightUnsigned tokenData0,
+        LeftRightUnsigned tokenData1,
+        uint160 atSqrtPriceX96,
+        LeftRightSigned netPaid,
+        LeftRightUnsigned shortPremium
+    ) external pure returns (LeftRightSigned, LeftRightSigned);
+
+    /// @notice Haircut/clawback any premium paid by `liquidatee` on `positionIdList` over the protocol loss threshold during a liquidation.
+    /// @param liquidatee The address of the user being liquidated
+    /// @param positionIdList The list of position ids being liquidated
+    /// @param premiasByLeg The premium paid (or received) by the liquidatee for each leg of each position
+    /// @param collateralRemaining The remaining collateral after the liquidation (negative if protocol loss)
+    /// @param atSqrtPriceX96 The oracle price used to swap tokens between the liquidator/liquidatee and determine solvency for the liquidatee
+    /// @return bonusDeltas The delta, if any, to apply to the existing liquidation bonus
+    /// @return haircutTotal Total premium clawed back from the liquidatee
+    /// @return haircutPerLeg Per-position/per-leg haircut amounts
+    function haircutPremia(
+        address liquidatee,
+        TokenId[] memory positionIdList,
+        LeftRightSigned[4][] memory premiasByLeg,
+        LeftRightSigned collateralRemaining,
+        uint160 atSqrtPriceX96
+    )
+        external
+        returns (
+            LeftRightSigned bonusDeltas,
+            LeftRightUnsigned haircutTotal,
+            LeftRightSigned[4][] memory haircutPerLeg
+        );
+
+    /*//////////////////////////////////////////////////////////////
+                              ORACLE LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Computes and returns all oracle ticks.
+    /// @param currentTick The current tick in the Uniswap pool
+    /// @param _oraclePack The packed `s_oraclePack` storage slot containing the oracle's state
+    /// @return spotTick The fast oracle tick, sourced from the internal 10-minute EMA
+    /// @return medianTick The slow oracle tick, calculated as the median of the 8 stored price points in the internal oracle
+    /// @return latestTick The reconstructed absolute tick of the latest observation stored in the internal oracle
+    /// @return oraclePack The current value of the 8-slot internal observation queue
+    function getOracleTicks(
+        int24 currentTick,
+        OraclePack _oraclePack
+    )
+        external
+        view
+        returns (int24 spotTick, int24 medianTick, int24 latestTick, OraclePack oraclePack);
+
+    /// @notice Calculates a slow-moving, weighted average price from the on-chain EMAs.
+    /// @param oraclePack The packed `s_oraclePack` storage slot containing the oracle's state
+    /// @return The blended time-weighted average price, represented as an int24 tick
+    function twapEMA(OraclePack oraclePack) external pure returns (int24);
+
+    /// @notice Takes a packed structure representing a sorted 8-slot queue of ticks and returns the median of those values and an updated queue if another observation is warranted.
+    /// @param oraclePack The packed structure representing the sorted 8-slot queue of ticks
+    /// @param currentTick The current tick as return from slot0
+    /// @return medianTick The median of the provided 8-slot queue of ticks in `oraclePack`
+    /// @return updatedOraclePack The updated 8-slot queue of ticks with the latest observation inserted if the last entry is at least `period` seconds old
+    function computeInternalMedian(
+        OraclePack oraclePack,
+        int24 currentTick
+    ) external view returns (int24 medianTick, OraclePack updatedOraclePack);
+
+    /*//////////////////////////////////////////////////////////////
+                       HEALTH AND COLLATERAL TRACKING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Returns the risk parameters including safe mode status and fee recipients.
+    /// @param currentTick The current tick
+    /// @param oraclePack The oracle pack
+    /// @param builderCode The builder code to determine fee recipient
+    /// @return RiskParameters The packed risk parameters
+    function getRiskParameters(
+        int24 currentTick,
+        OraclePack oraclePack,
+        uint256 builderCode
+    ) external view returns (RiskParameters);
+
+    /// @notice computes the fee recipient address based on builder code and salt.
+    function getFeeRecipient(uint256 builderCode) external pure returns (uint128 feeRecipient);
+
+    /// @notice Checks for significant oracle deviation to determine if Safe Mode should be active.
+    /// @param currentTick The current tick
+    /// @param oraclePack The oracle pack
+    /// @return safeMode A number representing whether the protocol is in Safe Mode
+    function isSafeMode(
+        int24 currentTick,
+        OraclePack oraclePack
+    ) external pure returns (uint8 safeMode);
+
+    /// @notice Determines which ticks to check for solvency based on market volatility.
+    /// @param currentTick The current tick
+    /// @param _oraclePack The oracle pack
+    /// @return atTicks Array of ticks to check solvency at
+    /// @return oraclePack The oracle pack (potentially updated)
+    function getSolvencyTicks(
+        int24 currentTick,
+        OraclePack _oraclePack
+    ) external view returns (int24[] memory atTicks, OraclePack oraclePack);
+
+    /// @notice Get the collateral status/margin details of an account/user.
+    /// @param positionBalanceArray The list of all open positions held by the `optionOwner`
+    /// @param positionIdList The list of all option positions held by `user`
+    /// @param atTick The tick at which to evaluate the account's positions
+    /// @param user The account to check collateral/margin health for
+    /// @param shortPremia The total amount of premium owed to the short legs of `user`
+    /// @param longPremia The total amount of premium owed by the long legs of `user`
+    /// @param ct0 The Address of the CollateralTracker for token0
+    /// @param ct1 The Address of the CollateralTracker for token1
+    /// @param buffer The buffer to apply to the collateral requirement
+    /// @return Whether the account is solvent at the given tick
+    function isAccountSolvent(
+        PositionBalance[] calldata positionBalanceArray,
+        TokenId[] calldata positionIdList,
+        int24 atTick,
+        address user,
+        LeftRightUnsigned shortPremia,
+        LeftRightUnsigned longPremia,
+        CollateralTracker ct0,
+        CollateralTracker ct1,
+        uint256 buffer
+    ) external view returns (bool);
+
+    /// @notice Compute margin inputs for a user at a given tick.
+    /// @param positionBalanceArray Array of [balanceOrUtilAtMint] for all open positions of `user`
+    /// @param atTick Tick at which exposures are valued
+    /// @param user Account to evaluate
+    /// @param positionIdList The list of all option positions held by `user`
+    /// @param shortPremia Total short premia owed to `user`
+    /// @param longPremia Total long premia owed by `user`
+    /// @param ct0 CollateralTracker for token0
+    /// @param ct1 CollateralTracker for token1
+    /// @return tokenData0 LeftRightUnsigned for token0 with left = maintenance requirement, right = available balance
+    /// @return tokenData1 LeftRightUnsigned for token1 with left = maintenance requirement, right = available balance
+    /// @return globalUtilizations The max utilizations encountered in the position set
+    function getMargin(
+        PositionBalance[] calldata positionBalanceArray,
+        int24 atTick,
+        address user,
+        TokenId[] calldata positionIdList,
+        LeftRightUnsigned shortPremia,
+        LeftRightUnsigned longPremia,
+        CollateralTracker ct0,
+        CollateralTracker ct1
+    )
+        external
+        view
+        returns (
+            LeftRightUnsigned tokenData0,
+            LeftRightUnsigned tokenData1,
+            PositionBalance globalUtilizations
+        );
+
+    /*//////////////////////////////////////////////////////////////
+                        ADAPTIVE INTEREST RATE MODEL
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Calculates the interest rate based on utilization and accumulator state.
+    /// @param utilization The current pool utilization
+    /// @param interestRateAccumulator The current state of the interest rate accumulator
+    /// @return The calculated interest rate
+    function interestRate(
+        uint256 utilization,
+        MarketState interestRateAccumulator
+    ) external view returns (uint128);
+
+    /// @notice Calculates the interest rate and the new rate at target.
+    /// @param utilization The current pool utilization
+    /// @param interestRateAccumulator The current state of the interest rate accumulator
+    /// @return The average rate
+    /// @return The new rate at target
+    function updateInterestRate(
+        uint256 utilization,
+        MarketState interestRateAccumulator
+    ) external view returns (uint128, uint256);
+
+    /*//////////////////////////////////////////////////////////////
+                             QUERY HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Returns the stored VEGOID parameter
+    function vegoid() external view returns (uint8);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -10894,6 +12424,370 @@ library Math {
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.24;
+
+type PositionBalance is uint256;
+using PositionBalanceLibrary for PositionBalance global;
+
+/// @title A Panoptic Position Balance. Tracks the Position Size, the Pool Utilizations at mint, and the current/fastOracle/slowOracle/latestObserved ticks at mint.
+/// @author Axicon Labs Limited
+//
+//
+// PACKING RULES FOR A POSITIONBALANCE:
+// =================================================================================================
+//  From the LSB to the MSB:
+// (1) positionSize     128bits : The size of this position (uint128).
+// (2) poolUtilization0 16bits  : The pool utilization of token0, stored as (10000 * inAMM0)/totalAssets0 (uint16).
+// (3) poolUtilization1 16bits  : The pool utilization of token1, stored as (10000 * inAMM1)/totalAssets1 (uint16).
+// (4) currentTick      24bits  : The currentTick at mint (int24).
+// (5) fastOracleTick   24bits  : The fastOracleTick at mint (int24).
+// (6) slowOracleTick   24bits  : The slowOracleTick at mint (int24).
+// (7) lastObservedTick 24bits  : The lastObservedTick at mint (int24).
+// Total                256bits : Total bits used by a PositionBalance.
+// ===============================================================================================
+//
+// The bit pattern is therefore:
+//
+//           (7)             (6)            (5)             (4)             (3)             (2)             (1)
+//    <-- 24 bits --> <-- 24 bits --> <-- 24 bits --> <-- 24 bits --> <-- 16 bits --> <-- 16 bits --> <-- 128 bits -->
+//   lastObservedTick  slowOracleTick  fastOracleTick   currentTick     utilization1    utilization0    positionSize
+//
+//    <--- most significant bit                                                             least significant bit --->
+//
+library PositionBalanceLibrary {
+    /*//////////////////////////////////////////////////////////////
+                                ENCODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Create a new `PositionBalance` given by positionSize, utilizations, and its tickData.
+    /// @param _positionSize The amount of option minted
+    /// @param _utilizations Packed data containing pool utilizations for token0 and token1 at mint
+    /// @param _tickData Packed data containing ticks at mint (currentTick, fastOracleTick, slowOracleTick, lastObservedTick)
+    /// @return The new PositionBalance with the given positionSize, utilization, and tickData
+    function storeBalanceData(
+        uint128 _positionSize,
+        uint32 _utilizations,
+        uint96 _tickData
+    ) internal pure returns (PositionBalance) {
+        unchecked {
+            return
+                PositionBalance.wrap(
+                    (uint256(_tickData) << 160) +
+                        (uint256(_utilizations) << 128) +
+                        uint256(_positionSize)
+                );
+        }
+    }
+
+    /// @notice Concatenate all oracle ticks into a single uint96.
+    /// @param _currentTick The current tick
+    /// @param _fastOracleTick The fast oracle tick
+    /// @param _slowOracleTick The slow oracle tick
+    /// @param _lastObservedTick The last observed tick
+    /// @return A 96bit word concatenating all 4 input ticks
+    function packTickData(
+        int24 _currentTick,
+        int24 _fastOracleTick,
+        int24 _slowOracleTick,
+        int24 _lastObservedTick
+    ) internal pure returns (uint96) {
+        unchecked {
+            return
+                // casting to 'uint24' is safe because ticks are always < 2**24
+                // forge-lint: disable-next-line(unsafe-typecast)
+                uint96(uint24(_currentTick)) +
+                (uint96(uint24(_fastOracleTick)) << 24) +
+                (uint96(uint24(_slowOracleTick)) << 48) +
+                (uint96(uint24(_lastObservedTick)) << 72);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                DECODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the last observed tick of `self`.
+    /// @param self The PositionBalance to retrieve the last observed tick from
+    /// @return The last observed tick of `self`
+    function lastObservedTick(PositionBalance self) internal pure returns (int24) {
+        unchecked {
+            return int24(int256(PositionBalance.unwrap(self) >> 232));
+        }
+    }
+
+    /// @notice Get the slow oracle tick of `self`.
+    /// @param self The PositionBalance to retrieve the slow oracle tick from
+    /// @return The slow oracle tick of `self`
+    function slowOracleTick(PositionBalance self) internal pure returns (int24) {
+        unchecked {
+            return int24(int256(PositionBalance.unwrap(self) >> 208));
+        }
+    }
+
+    /// @notice Get the fast oracle tick of `self`.
+    /// @param self The PositionBalance to retrieve the fast oracle tick from
+    /// @return The fast oracle tick of `self`
+    function fastOracleTick(PositionBalance self) internal pure returns (int24) {
+        unchecked {
+            return int24(int256(PositionBalance.unwrap(self) >> 184));
+        }
+    }
+
+    /// @notice Get the current tick of `self`.
+    /// @param self The PositionBalance to retrieve the current tick from
+    /// @return The current tick of `self`
+    function currentTick(PositionBalance self) internal pure returns (int24) {
+        unchecked {
+            return int24(int256(PositionBalance.unwrap(self) >> 160));
+        }
+    }
+
+    /// @notice Get the tickData of `self`.
+    /// @param self The PositionBalance to retrieve the tickData from
+    /// @return The packed tickData (currentTick, fastOracleTick, slowOracleTick, lastObservedTick)
+    function tickData(PositionBalance self) internal pure returns (uint96) {
+        unchecked {
+            return uint96(PositionBalance.unwrap(self) >> 160);
+        }
+    }
+
+    /// @notice Unpack the current, last observed, and fast/slow oracle ticks from a 96-bit tickData encoding.
+    /// @param _tickData The packed tickData to unpack ticks from
+    /// @return The current tick contained in `_tickData`
+    /// @return The fast oracle tick contained in `_tickData`
+    /// @return The slow oracle tick contained in `_tickData`
+    /// @return The last observed tick contained in `_tickData`
+    function unpackTickData(uint96 _tickData) internal pure returns (int24, int24, int24, int24) {
+        PositionBalance self = PositionBalance.wrap(uint256(_tickData) << 160);
+        return (
+            int24(int256(PositionBalance.unwrap(self) >> 160)),
+            int24(int256(PositionBalance.unwrap(self) >> 184)),
+            int24(int256(PositionBalance.unwrap(self) >> 208)),
+            int24(int256(PositionBalance.unwrap(self) >> 232))
+        );
+    }
+
+    /// @notice Get token0 utilization of `self`.
+    /// @param self The PositionBalance to retrieve the token0 utilization from
+    /// @return The token0 utilization in basis points
+    function utilization0(PositionBalance self) internal pure returns (int256) {
+        unchecked {
+            return int256((PositionBalance.unwrap(self) >> 128) % 2 ** 16);
+        }
+    }
+
+    /// @notice Get token1 utilization of `self`.
+    /// @param self The PositionBalance to retrieve the token1 utilization from
+    /// @return The token1 utilization in basis points
+    function utilization1(PositionBalance self) internal pure returns (int256) {
+        unchecked {
+            return int256((PositionBalance.unwrap(self) >> 144) % 2 ** 16);
+        }
+    }
+
+    /// @notice Get both token0 and token1 utilizations of `self`.
+    /// @param self The PositionBalance to retrieve the utilizations from
+    /// @return The packed utilizations for token0 and token1 in basis points
+    function utilizations(PositionBalance self) internal pure returns (uint32) {
+        unchecked {
+            return uint32(PositionBalance.unwrap(self) >> 128);
+        }
+    }
+
+    /// @notice Get the positionSize of `self`.
+    /// @param self The PositionBalance to retrieve the positionSize from
+    /// @return The positionSize of `self`
+    function positionSize(PositionBalance self) internal pure returns (uint128) {
+        unchecked {
+            return uint128(PositionBalance.unwrap(self));
+        }
+    }
+
+    /// @notice Unpack all data from `self`.
+    /// @param self The PositionBalance to get all data from
+    /// @return currentTickAtMint `currentTick` at mint
+    /// @return fastOracleTickAtMint Fast oracle tick at mint
+    /// @return slowOracleTickAtMint Slow oracle tick at mint
+    /// @return lastObservedTickAtMint Last observed tick at mint
+    /// @return utilization0AtMint Utilization of token0 at mint
+    /// @return utilization1AtMint Utilization of token1 at mint
+    /// @return _positionSize Size of the position
+    function unpackAll(
+        PositionBalance self
+    )
+        external
+        pure
+        returns (
+            int24 currentTickAtMint,
+            int24 fastOracleTickAtMint,
+            int24 slowOracleTickAtMint,
+            int24 lastObservedTickAtMint,
+            int256 utilization0AtMint,
+            int256 utilization1AtMint,
+            uint128 _positionSize
+        )
+    {
+        (
+            currentTickAtMint,
+            fastOracleTickAtMint,
+            slowOracleTickAtMint,
+            lastObservedTickAtMint
+        ) = unpackTickData(self.tickData());
+
+        utilization0AtMint = self.utilization0();
+        utilization1AtMint = self.utilization1();
+
+        _positionSize = self.positionSize();
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+/// @title Custom Errors library.
+/// @author Axicon Labs Limited
+/// @notice Contains all custom error messages used in Panoptic.
+library Errors {
+    /// @notice PanopticPool: The account is not solvent enough to perform the desired action
+    error AccountInsolvent(uint256 solvent, uint256 numberOfTicks);
+
+    /// @notice Casting error
+    /// @dev e.g. uint128(uint256(a)) fails
+    error CastingError();
+
+    /// @notice CollateralTracker: Attempted to withdraw/redeem less than a single asset
+    error BelowMinimumRedemption();
+
+    /// @notice SFPM: Mints/burns of zero-liquidity chunks in Uniswap are not supported
+    error ChunkHasZeroLiquidity();
+
+    /// @notice CollateralTracker: Collateral token has already been initialized
+    error CollateralTokenAlreadyInitialized();
+
+    /// @notice CollateralTracker: The amount of shares (or assets) deposited is larger than the maximum permitted
+    error DepositTooLarge();
+
+    /// @notice PanopticPool: The list of provided TokenIds has a duplicate entry
+    error DuplicateTokenId();
+
+    /// @notice PanopticPool: The effective liquidity (X32) is greater than min(`MAX_SPREAD`, `USER_PROVIDED_THRESHOLD`) during a long mint or short burn
+    /// @dev Effective liquidity measures how much new liquidity is minted relative to how much is already in the pool
+    error EffectiveLiquidityAboveThreshold();
+
+    /// @notice CollateralTracker: Attempted to withdraw/redeem more than available liquidity, owned shares, or open positions would allow for
+    error ExceedsMaximumRedemption();
+
+    /// @notice PanopticPool: The provided list of option positions is incorrect or invalid
+    error InputListFail();
+
+    /// @notice Tick is not between `MIN_TICK` and `MAX_TICK`
+    error InvalidTick();
+
+    /// @notice Liquidity in a chunk is above 2**128
+    error LiquidityTooHigh();
+
+    /// @notice CollateralTracker: There is not enough available liquidity to fulfill a credit in the PanopticPool
+    error InsufficientCreditLiquidity();
+
+    /// @notice RiskEngine: invalid builder code
+    error InvalidBuilderCode();
+
+    /// @notice The TokenId provided by the user is malformed or invalid
+    /// @param parameterType poolId=0, ratio=1, tokenType=2, risk_partner=3, strike=4, width=5, two identical strike/width/tokenType chunks=6
+    error InvalidTokenIdParameter(uint256 parameterType);
+
+    /// @notice A mint or swap callback was attempted from an address that did not match the canonical Uniswap V3 pool with the claimed features
+    error InvalidUniswapCallback();
+
+    /// @notice RiskEngine: There is a mismatch between the length of the positionIdList and positionBalanceArray
+    error LengthMismatch();
+
+    /// @notice PanopticPool: The Net Liquidity is zero due to small positions and cannot be used to compute the liquiditySpread
+    error NetLiquidityZero();
+
+    /// @notice PanopticPool: None of the legs in a position are force-exercisable (they are all either short or ATM long)
+    error NoLegsExercisable();
+
+    /// @notice PanopticPool: The leg is not long, so premium cannot be settled through `settleLongPremium`
+    error NotALongLeg();
+
+    /// @notice builderWallet: can only be called by the Builder
+    error NotBuilder();
+
+    /// @notice PanopticPool: There is not enough available liquidity in the chunk for one of the long legs to be created (or for one of the short legs to be closed)
+    error NotEnoughLiquidityInChunk();
+
+    /// @notice CollateralTracker: The user does not own enough assets to open/close a position
+    error NotEnoughTokens(address tokenAddress, uint256 assetsRequested, uint256 assetBalance);
+
+    /// @notice RiskEngine: can only be called by the guardian
+    error NotGuardian();
+
+    /// @notice PanopticPool: Position is still solvent and cannot be liquidated
+    error NotMarginCalled();
+
+    /// @notice CollateralTracker: The caller for a permissioned function is not the Panoptic Pool
+    error NotPanopticPool();
+
+    /// @notice Uniswap pool has already been initialized in the SFPM or created in the factory
+    error PoolAlreadyInitialized();
+
+    /// @notice The Uniswap Pool has not been created, so it cannot be used in the SFPM or have a PanopticPool created for it by the factory
+    error PoolNotInitialized();
+
+    /// @notice CollateralTracker: The user has open/active option positions, so they cannot transfer collateral shares
+    error PositionCountNotZero();
+
+    /// @notice PanopticPool: A position with the given token ID is not owned by the user and has positionSize=0
+    error PositionNotOwned();
+
+    /// @notice SFPM: The maximum token deltas (excluding swaps) for a position exceed (2^127 - 5) at some valid price
+    error PositionTooLarge();
+
+    /// @notice The current tick in the pool (post-ITM-swap) has fallen outside a user-defined open interval slippage range
+    error PriceBoundFail(int24 currentTick);
+
+    /// @notice The Price impact of that trade is too large
+    error PriceImpactTooLarge();
+
+    /// @notice An oracle price is too far away from another oracle price or the current tick
+    /// @dev This is a safeguard against price manipulation during option mints, burns, liquidations, force exercises, and premium settlements
+    error StaleOracle();
+
+    /// @notice PanopticPool: The position being minted would increase the total amount of legs open for the account above the maximum
+    error TooManyLegsOpen();
+
+    /// @notice ERC20 or SFPM (ERC1155) token transfer did not complete successfully
+    error TransferFailed(address token, address from, uint256 amount, uint256 balance);
+
+    /// @notice The tick range given by the strike price and width is invalid
+    /// because the upper and lower ticks are not initializable multiples of `tickSpacing`
+    /// or one of the ticks exceeds the `MIN_TICK` or `MAX_TICK` bounds
+    error InvalidTickBound();
+
+    /// @notice An unlock callback was attempted from an address other than the canonical Uniswap V4 pool manager
+    error UnauthorizedUniswapCallback();
+
+    /// @notice An operation in a library has failed due to an underflow or overflow
+    error UnderOverFlow();
+
+    /// @notice PanopticPool: The supplied poolId does not match the poolId for that Uniswap Pool
+    error WrongPoolId();
+
+    /// @notice SFPM: The poolId's don't match
+    error WrongUniswapPool();
+
+    /// @notice PanopticFactory: the zero address was supplied as a parameter
+    error ZeroAddress();
+
+    /// @notice CollateralTracker: Mints/burns of a position returns no collateral requirement
+    error ZeroCollateralRequirement();
+
+    /// @notice PanopticMath: The supplied tokenId has no valid legs
+    error TokenIdHasZeroLegs();
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
 import {Constants} from "@libraries/Constants.sol";
 
 type OraclePack is uint256;
@@ -11532,1922 +13426,28 @@ library OraclePackLibrary {
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.24;
 
-type PositionBalance is uint256;
-using PositionBalanceLibrary for PositionBalance global;
-
-/// @title A Panoptic Position Balance. Tracks the Position Size, the Pool Utilizations at mint, and the current/fastOracle/slowOracle/latestObserved ticks at mint.
+/// @title Library of Constants used in Panoptic.
 /// @author Axicon Labs Limited
-//
-//
-// PACKING RULES FOR A POSITIONBALANCE:
-// =================================================================================================
-//  From the LSB to the MSB:
-// (1) positionSize     128bits : The size of this position (uint128).
-// (2) poolUtilization0 16bits  : The pool utilization of token0, stored as (10000 * inAMM0)/totalAssets0 (uint16).
-// (3) poolUtilization1 16bits  : The pool utilization of token1, stored as (10000 * inAMM1)/totalAssets1 (uint16).
-// (4) currentTick      24bits  : The currentTick at mint (int24).
-// (5) fastOracleTick   24bits  : The fastOracleTick at mint (int24).
-// (6) slowOracleTick   24bits  : The slowOracleTick at mint (int24).
-// (7) lastObservedTick 24bits  : The lastObservedTick at mint (int24).
-// Total                256bits : Total bits used by a PositionBalance.
-// ===============================================================================================
-//
-// The bit pattern is therefore:
-//
-//           (7)             (6)            (5)             (4)             (3)             (2)             (1)
-//    <-- 24 bits --> <-- 24 bits --> <-- 24 bits --> <-- 24 bits --> <-- 16 bits --> <-- 16 bits --> <-- 128 bits -->
-//   lastObservedTick  slowOracleTick  fastOracleTick   currentTick     utilization1    utilization0    positionSize
-//
-//    <--- most significant bit                                                             least significant bit --->
-//
-library PositionBalanceLibrary {
-    /*//////////////////////////////////////////////////////////////
-                                ENCODING
-    //////////////////////////////////////////////////////////////*/
+/// @notice This library provides constants used in Panoptic.
+library Constants {
+    /// @notice Fixed point multiplier: 2**96
+    uint256 internal constant FP96 = 0x1000000000000000000000000;
 
-    /// @notice Create a new `PositionBalance` given by positionSize, utilizations, and its tickData.
-    /// @param _positionSize The amount of option minted
-    /// @param _utilizations Packed data containing pool utilizations for token0 and token1 at mint
-    /// @param _tickData Packed data containing ticks at mint (currentTick, fastOracleTick, slowOracleTick, lastObservedTick)
-    /// @return The new PositionBalance with the given positionSize, utilization, and tickData
-    function storeBalanceData(
-        uint128 _positionSize,
-        uint32 _utilizations,
-        uint96 _tickData
-    ) internal pure returns (PositionBalance) {
-        unchecked {
-            return
-                PositionBalance.wrap(
-                    (uint256(_tickData) << 160) +
-                        (uint256(_utilizations) << 128) +
-                        uint256(_positionSize)
-                );
-        }
-    }
+    /// @notice Minimum possible price tick in a Uniswap V3 pool
+    int24 internal constant MIN_POOL_TICK = -887272;
 
-    /// @notice Concatenate all oracle ticks into a single uint96.
-    /// @param _currentTick The current tick
-    /// @param _fastOracleTick The fast oracle tick
-    /// @param _slowOracleTick The slow oracle tick
-    /// @param _lastObservedTick The last observed tick
-    /// @return A 96bit word concatenating all 4 input ticks
-    function packTickData(
-        int24 _currentTick,
-        int24 _fastOracleTick,
-        int24 _slowOracleTick,
-        int24 _lastObservedTick
-    ) internal pure returns (uint96) {
-        unchecked {
-            return
-                // casting to 'uint24' is safe because ticks are always < 2**24
-                // forge-lint: disable-next-line(unsafe-typecast)
-                uint96(uint24(_currentTick)) +
-                (uint96(uint24(_fastOracleTick)) << 24) +
-                (uint96(uint24(_slowOracleTick)) << 48) +
-                (uint96(uint24(_lastObservedTick)) << 72);
-        }
-    }
+    /// @notice Maximum possible price tick in a Uniswap V3 pool
+    int24 internal constant MAX_POOL_TICK = 887272;
 
-    /*//////////////////////////////////////////////////////////////
-                                DECODING
-    //////////////////////////////////////////////////////////////*/
+    /// @notice Minimum possible sqrtPriceX96 in a Uniswap V3 pool
+    uint160 internal constant MIN_POOL_SQRT_RATIO = 4295128739;
 
-    /// @notice Get the last observed tick of `self`.
-    /// @param self The PositionBalance to retrieve the last observed tick from
-    /// @return The last observed tick of `self`
-    function lastObservedTick(PositionBalance self) internal pure returns (int24) {
-        unchecked {
-            return int24(int256(PositionBalance.unwrap(self) >> 232));
-        }
-    }
+    /// @notice Maximum possible sqrtPriceX96 in a Uniswap V3 pool
+    uint160 internal constant MAX_POOL_SQRT_RATIO =
+        1461446703485210103287273052203988822378723970342;
 
-    /// @notice Get the slow oracle tick of `self`.
-    /// @param self The PositionBalance to retrieve the slow oracle tick from
-    /// @return The slow oracle tick of `self`
-    function slowOracleTick(PositionBalance self) internal pure returns (int24) {
-        unchecked {
-            return int24(int256(PositionBalance.unwrap(self) >> 208));
-        }
-    }
-
-    /// @notice Get the fast oracle tick of `self`.
-    /// @param self The PositionBalance to retrieve the fast oracle tick from
-    /// @return The fast oracle tick of `self`
-    function fastOracleTick(PositionBalance self) internal pure returns (int24) {
-        unchecked {
-            return int24(int256(PositionBalance.unwrap(self) >> 184));
-        }
-    }
-
-    /// @notice Get the current tick of `self`.
-    /// @param self The PositionBalance to retrieve the current tick from
-    /// @return The current tick of `self`
-    function currentTick(PositionBalance self) internal pure returns (int24) {
-        unchecked {
-            return int24(int256(PositionBalance.unwrap(self) >> 160));
-        }
-    }
-
-    /// @notice Get the tickData of `self`.
-    /// @param self The PositionBalance to retrieve the tickData from
-    /// @return The packed tickData (currentTick, fastOracleTick, slowOracleTick, lastObservedTick)
-    function tickData(PositionBalance self) internal pure returns (uint96) {
-        unchecked {
-            return uint96(PositionBalance.unwrap(self) >> 160);
-        }
-    }
-
-    /// @notice Unpack the current, last observed, and fast/slow oracle ticks from a 96-bit tickData encoding.
-    /// @param _tickData The packed tickData to unpack ticks from
-    /// @return The current tick contained in `_tickData`
-    /// @return The fast oracle tick contained in `_tickData`
-    /// @return The slow oracle tick contained in `_tickData`
-    /// @return The last observed tick contained in `_tickData`
-    function unpackTickData(uint96 _tickData) internal pure returns (int24, int24, int24, int24) {
-        PositionBalance self = PositionBalance.wrap(uint256(_tickData) << 160);
-        return (
-            int24(int256(PositionBalance.unwrap(self) >> 160)),
-            int24(int256(PositionBalance.unwrap(self) >> 184)),
-            int24(int256(PositionBalance.unwrap(self) >> 208)),
-            int24(int256(PositionBalance.unwrap(self) >> 232))
-        );
-    }
-
-    /// @notice Get token0 utilization of `self`.
-    /// @param self The PositionBalance to retrieve the token0 utilization from
-    /// @return The token0 utilization in basis points
-    function utilization0(PositionBalance self) internal pure returns (int256) {
-        unchecked {
-            return int256((PositionBalance.unwrap(self) >> 128) % 2 ** 16);
-        }
-    }
-
-    /// @notice Get token1 utilization of `self`.
-    /// @param self The PositionBalance to retrieve the token1 utilization from
-    /// @return The token1 utilization in basis points
-    function utilization1(PositionBalance self) internal pure returns (int256) {
-        unchecked {
-            return int256((PositionBalance.unwrap(self) >> 144) % 2 ** 16);
-        }
-    }
-
-    /// @notice Get both token0 and token1 utilizations of `self`.
-    /// @param self The PositionBalance to retrieve the utilizations from
-    /// @return The packed utilizations for token0 and token1 in basis points
-    function utilizations(PositionBalance self) internal pure returns (uint32) {
-        unchecked {
-            return uint32(PositionBalance.unwrap(self) >> 128);
-        }
-    }
-
-    /// @notice Get the positionSize of `self`.
-    /// @param self The PositionBalance to retrieve the positionSize from
-    /// @return The positionSize of `self`
-    function positionSize(PositionBalance self) internal pure returns (uint128) {
-        unchecked {
-            return uint128(PositionBalance.unwrap(self));
-        }
-    }
-
-    /// @notice Unpack all data from `self`.
-    /// @param self The PositionBalance to get all data from
-    /// @return currentTickAtMint `currentTick` at mint
-    /// @return fastOracleTickAtMint Fast oracle tick at mint
-    /// @return slowOracleTickAtMint Slow oracle tick at mint
-    /// @return lastObservedTickAtMint Last observed tick at mint
-    /// @return utilization0AtMint Utilization of token0 at mint
-    /// @return utilization1AtMint Utilization of token1 at mint
-    /// @return _positionSize Size of the position
-    function unpackAll(
-        PositionBalance self
-    )
-        external
-        pure
-        returns (
-            int24 currentTickAtMint,
-            int24 fastOracleTickAtMint,
-            int24 slowOracleTickAtMint,
-            int24 lastObservedTickAtMint,
-            int256 utilization0AtMint,
-            int256 utilization1AtMint,
-            uint128 _positionSize
-        )
-    {
-        (
-            currentTickAtMint,
-            fastOracleTickAtMint,
-            slowOracleTickAtMint,
-            lastObservedTickAtMint
-        ) = unpackTickData(self.tickData());
-
-        utilization0AtMint = self.utilization0();
-        utilization1AtMint = self.utilization1();
-
-        _positionSize = self.positionSize();
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-/// @title Minimal efficient ERC20 implementation without metadata
-/// @author Axicon Labs Limited
-/// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/v7/src/tokens/ERC20.sol)
-/// @dev The metadata must be set in the inheriting contract.
-/// @dev Do not manually set balances without updating _internalSupply, as the sum of all user balances must not exceed it.
-abstract contract ERC20Minimal {
-    /*//////////////////////////////////////////////////////////////
-                                 EVENTS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Emitted when tokens are transferred.
-    /// @param from The sender of the tokens
-    /// @param to The recipient of the tokens
-    /// @param amount The amount of tokens transferred
-    event Transfer(address indexed from, address indexed to, uint256 amount);
-
-    /// @notice Emitted when a user approves another user to spend tokens on their behalf.
-    /// @param owner The user who approved the spender
-    /// @param spender The user who was approved to spend tokens
-    /// @param amount The amount of tokens approved to spend
-    event Approval(address indexed owner, address indexed spender, uint256 amount);
-
-    /*//////////////////////////////////////////////////////////////
-                              ERC20 STORAGE
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice The internal supply of tokens.
-    /// @dev This cannot exceed the max uint256 value.
-    uint256 internal _internalSupply;
-
-    /// @notice Token balances for each user.
-    mapping(address account => uint256 balance) public balanceOf;
-
-    /// @notice Stored allowances for each user.
-    /// @dev Indexed by owner, then by spender.
-    mapping(address owner => mapping(address spender => uint256 allowance)) public allowance;
-
-    /*//////////////////////////////////////////////////////////////
-                               ERC20 LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Approves a user to spend tokens on the caller's behalf.
-    /// @param spender The user to approve
-    /// @param amount The amount of tokens to approve
-    /// @return Whether the approval succeeded
-    function approve(address spender, uint256 amount) public returns (bool) {
-        allowance[msg.sender][spender] = amount;
-
-        emit Approval(msg.sender, spender, amount);
-
-        return true;
-    }
-
-    /// @notice Transfers tokens from the caller to another user.
-    /// @param to The user to transfer tokens to
-    /// @param amount The amount of tokens to transfer
-    /// @return Whether the transfer succeeded
-    function transfer(address to, uint256 amount) public virtual returns (bool) {
-        balanceOf[msg.sender] -= amount;
-
-        // Cannot overflow because the sum of all user
-        // balances can't exceed the max uint256 value.
-        unchecked {
-            balanceOf[to] += amount;
-        }
-
-        emit Transfer(msg.sender, to, amount);
-
-        return true;
-    }
-
-    /// @notice Transfers tokens from one user to another.
-    /// @dev Supports token approvals.
-    /// @param from The user to transfer tokens from
-    /// @param to The user to transfer tokens to
-    /// @param amount The amount of tokens to transfer
-    /// @return Whether the transfer succeeded
-    function transferFrom(address from, address to, uint256 amount) public virtual returns (bool) {
-        uint256 allowed = allowance[from][msg.sender]; // Saves gas for limited approvals.
-
-        if (allowed != type(uint256).max) allowance[from][msg.sender] = allowed - amount;
-
-        balanceOf[from] -= amount;
-
-        // Cannot overflow because the sum of all user
-        // balances can't exceed the max uint256 value.
-        unchecked {
-            balanceOf[to] += amount;
-        }
-
-        emit Transfer(from, to, amount);
-
-        return true;
-    }
-
-    /// @notice Internal utility to transfer tokens from one user to another.
-    /// @param from The user to transfer tokens from
-    /// @param to The user to transfer tokens to
-    /// @param amount The amount of tokens to transfer
-    function _transferFrom(address from, address to, uint256 amount) internal {
-        balanceOf[from] -= amount;
-
-        // Cannot overflow because the sum of all user
-        // balances can't exceed the max uint256 value.
-        unchecked {
-            balanceOf[to] += amount;
-        }
-
-        emit Transfer(from, to, amount);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        INTERNAL MINT/BURN LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Internal utility to mint tokens to a user's account.
-    /// @param to The user to mint tokens to
-    /// @param amount The amount of tokens to mint
-    function _mint(address to, uint256 amount) internal {
-        // Cannot overflow because the sum of all user
-        // balances can't exceed the max uint256 value.
-        unchecked {
-            balanceOf[to] += amount;
-        }
-
-        // keep checked to prevent overflows
-        _internalSupply += amount;
-
-        emit Transfer(address(0), to, amount);
-    }
-
-    /// @notice Internal utility to burn tokens from a user's account.
-    /// @param from The user to burn tokens from
-    /// @param amount The amount of tokens to burn
-    function _burn(address from, uint256 amount) internal {
-        balanceOf[from] -= amount;
-
-        // keep checked to prevent underflows
-        _internalSupply -= amount;
-
-        emit Transfer(from, address(0), amount);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
-
-// Custom types
-// Adjust these import paths to match your project structure
-import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
-import {TokenId} from "@types/TokenId.sol";
-
-interface ISemiFungiblePositionManager {
-    /*//////////////////////////////////////////////////////////////
-                                 EVENTS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Emitted when a position is destroyed/burned.
-    event TokenizedPositionBurnt(
-        address indexed recipient,
-        TokenId indexed tokenId,
-        uint128 positionSize
-    );
-
-    /// @notice Emitted when a position is created/minted.
-    event TokenizedPositionMinted(
-        address indexed caller,
-        TokenId indexed tokenId,
-        uint128 positionSize
-    );
-
-    /*//////////////////////////////////////////////////////////////
-                         CORE MINT/BURN LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Create a new position `tokenId` containing up to 4 legs.
-    /// @dev Both V3 and V4 implementations use `bytes poolKey` to abstract the underlying pool.
-    /// @param poolKey The ABI-encoded pool key (V3: address, V4: PoolKey)
-    /// @param tokenId The tokenId of the minted position
-    /// @param positionSize The number of contracts minted
-    /// @param slippageTickLimitLow Lower price bound
-    /// @param slippageTickLimitHigh Upper price bound
-    /// @return collectedByLeg Fees collected per leg
-    /// @return totalMoved Net amount moved to/from AMM
-    /// @return finalTick The tick at the end of the mint/burn operation
-    function mintTokenizedPosition(
-        bytes calldata poolKey,
-        TokenId tokenId,
-        uint128 positionSize,
-        int24 slippageTickLimitLow,
-        int24 slippageTickLimitHigh
-    )
-        external
-        returns (
-            LeftRightUnsigned[4] memory collectedByLeg,
-            LeftRightSigned totalMoved,
-            int24 finalTick
-        );
-
-    /// @notice Burn an existing position containing up to 4 legs.
-    function burnTokenizedPosition(
-        bytes calldata poolKey,
-        TokenId tokenId,
-        uint128 positionSize,
-        int24 slippageTickLimitLow,
-        int24 slippageTickLimitHigh
-    )
-        external
-        returns (
-            LeftRightUnsigned[4] memory collectedByLeg,
-            LeftRightSigned totalMoved,
-            int24 finalTick
-        );
-
-    /*//////////////////////////////////////////////////////////////
-                             VIEW FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    // NOTE: To strictly adhere to this interface, your V4 contract needs
-    // to add overloads that accept `bytes calldata poolKey`.
-
-    function getAccountLiquidity(
-        bytes calldata poolKey,
-        address owner,
-        uint256 tokenType,
-        int24 tickLower,
-        int24 tickUpper
-    ) external view returns (LeftRightUnsigned accountLiquidities);
-
-    function getAccountPremium(
-        bytes calldata poolKey,
-        address owner,
-        uint256 tokenType,
-        int24 tickLower,
-        int24 tickUpper,
-        int24 atTick,
-        uint256 isLong,
-        uint256 vegoid
-    ) external view returns (uint128 premium0, uint128 premium1);
-
-    function getPoolId(bytes memory id, uint8 vegoid) external view returns (uint64 poolId);
-
-    function getEnforcedTickLimits(uint64 poolId) external view returns (int24, int24);
-
-    function getCurrentTick(bytes memory poolKey) external view returns (int24 currentTick);
-
-    function expandEnforcedTickRange(uint64 poolId) external;
-
-    /*//////////////////////////////////////////////////////////////
-                            ERC1155 SUPPORT
-    //////////////////////////////////////////////////////////////*/
-
-    function safeTransferFrom(
-        address from,
-        address to,
-        uint256 id,
-        uint256 amount,
-        bytes calldata data
-    ) external;
-
-    function safeBatchTransferFrom(
-        address from,
-        address to,
-        uint256[] calldata ids,
-        uint256[] calldata amounts,
-        bytes calldata data
-    ) external;
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-/// @title Efficient Keccak256 Library
-/// @notice Provides gas-efficient keccak256 hashing using inline assembly
-library EfficientHash {
-    /// @notice Efficiently compute keccak256 hash for position key (address, address, uint256, int24, int24)
-    /// @param univ3pool The Uniswap V3 pool address (20 bytes)
-    /// @param owner The owner address (20 bytes)
-    /// @param tokenType The token type (32 bytes)
-    /// @param tickLower The lower tick (3 bytes when packed)
-    /// @param tickUpper The upper tick (3 bytes when packed)
-    /// @return hash The keccak256 hash of the packed data
-    function efficientKeccak256(
-        address univ3pool,
-        address owner,
-        uint256 tokenType,
-        int24 tickLower,
-        int24 tickUpper
-    ) internal pure returns (bytes32 hash) {
-        assembly {
-            let freeMemPtr := mload(0x40)
-            // Pack: 20 + 20 + 32 + 3 + 3 = 78 bytes (0x4e)
-            mstore(freeMemPtr, shl(96, univ3pool)) // address at byte 0
-            mstore(add(freeMemPtr, 0x14), shl(96, owner)) // address at byte 20
-            mstore(add(freeMemPtr, 0x28), tokenType) // uint256 at byte 40
-            mstore(add(freeMemPtr, 0x48), shl(232, and(tickLower, 0xFFFFFF))) // int24 at byte 72
-            mstore(add(freeMemPtr, 0x4b), shl(232, and(tickUpper, 0xFFFFFF))) // int24 at byte 75
-
-            hash := keccak256(freeMemPtr, 0x4e)
-        }
-    }
-
-    /// @notice Efficiently compute keccak256 hash for chunk key (int24, int24, uint256)
-    /// @param strike The strike tick (3 bytes when packed)
-    /// @param width The width (3 bytes when packed)
-    /// @param tokenType The token type (32 bytes)
-    /// @return hash The keccak256 hash of the packed data
-    function efficientKeccak256(
-        int24 strike,
-        int24 width,
-        uint256 tokenType
-    ) internal pure returns (bytes32 hash) {
-        assembly {
-            let freeMemPtr := mload(0x40)
-            // Pack: 3 + 3 + 32 = 38 bytes (0x26)
-            mstore(freeMemPtr, shl(232, and(strike, 0xFFFFFF))) // int24 at byte 0
-            mstore(add(freeMemPtr, 0x03), shl(232, and(width, 0xFFFFFF))) // int24 at byte 3
-            mstore(add(freeMemPtr, 0x06), tokenType) // uint256 at byte 6
-
-            hash := keccak256(freeMemPtr, 0x26)
-        }
-    }
-
-    /// @notice Efficiently compute keccak256 hash for a uint256 array
-    /// @param data The uint256 array to hash
-    /// @return hash The keccak256 hash of the packed data
-    function efficientKeccak256(uint256[] memory data) internal pure returns (bytes32 hash) {
-        assembly {
-            // data layout in memory: [length][item0][item1]...
-            // Skip the length field (32 bytes) and hash the rest
-            let dataLength := mload(data)
-            let dataStart := add(data, 0x20)
-            let bytesToHash := mul(dataLength, 0x20)
-
-            hash := keccak256(dataStart, bytesToHash)
-        }
-    }
-
-    /// @notice Efficiently compute keccak256 hash for bytes memory
-    /// @param data The bytes to hash
-    /// @return hash The keccak256 hash of the data
-    function efficientKeccak256(bytes memory data) internal pure returns (bytes32 hash) {
-        assembly {
-            // bytes layout in memory: [length][data...]
-            let dataLength := mload(data)
-            let dataStart := add(data, 0x20)
-
-            hash := keccak256(dataStart, dataLength)
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-/// @title Partial definition of the ERC20 interface as defined in the EIP
-/// @dev Does not include return values as certain tokens such as USDT fail to implement them.
-/// @dev Since the return value is not expected, this interface works with both compliant and non-compliant tokens.
-/// @dev Clients are recommended to consume and handle the return of negative success values.
-/// @dev However, we cannot productively handle a failed approval and such a situation would surely cause a revert later in execution.
-/// @dev In addition, no notable instances exist of tokens that both i) contain a failure case for `approve` and ii) return `false` instead of reverting.
-/// @author Axicon Labs Limited
-interface IERC20Partial {
-    /// @notice Returns the amount of tokens owned by `account`.
-    /// @dev This function is unchanged from the EIP.
-    /// @param account The address to query the balance of
-    /// @return The amount of tokens owned by `account`
-    function balanceOf(address account) external view returns (uint256);
-
-    /// @notice Sets `amount` as the allowance of `spender` over the caller's tokens.
-    /// @dev While this function is specified to return a boolean value in the EIP, this interface does not expect one.
-    /// @param spender The address which will spend the funds
-    /// @param amount The amount of tokens allowed to be spent
-    function approve(address spender, uint256 amount) external;
-
-    /// @notice Transfers tokens from the caller to another user.
-    /// @param to The user to transfer tokens to
-    /// @param amount The amount of tokens to transfer
-    function transfer(address to, uint256 amount) external;
-
-    /// @notice Returns the amount of tokens in existence.
-    function totalSupply() external view returns (uint256);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-/// @title Custom Errors library.
-/// @author Axicon Labs Limited
-/// @notice Contains all custom error messages used in Panoptic.
-library Errors {
-    /// @notice PanopticPool: The account is not solvent enough to perform the desired action
-    error AccountInsolvent(uint256 solvent, uint256 numberOfTicks);
-
-    /// @notice Casting error
-    /// @dev e.g. uint128(uint256(a)) fails
-    error CastingError();
-
-    /// @notice CollateralTracker: Attempted to withdraw/redeem less than a single asset
-    error BelowMinimumRedemption();
-
-    /// @notice SFPM: Mints/burns of zero-liquidity chunks in Uniswap are not supported
-    error ChunkHasZeroLiquidity();
-
-    /// @notice CollateralTracker: Collateral token has already been initialized
-    error CollateralTokenAlreadyInitialized();
-
-    /// @notice CollateralTracker: The amount of shares (or assets) deposited is larger than the maximum permitted
-    error DepositTooLarge();
-
-    /// @notice PanopticPool: The list of provided TokenIds has a duplicate entry
-    error DuplicateTokenId();
-
-    /// @notice PanopticPool: The effective liquidity (X32) is greater than min(`MAX_SPREAD`, `USER_PROVIDED_THRESHOLD`) during a long mint or short burn
-    /// @dev Effective liquidity measures how much new liquidity is minted relative to how much is already in the pool
-    error EffectiveLiquidityAboveThreshold();
-
-    /// @notice CollateralTracker: Attempted to withdraw/redeem more than available liquidity, owned shares, or open positions would allow for
-    error ExceedsMaximumRedemption();
-
-    /// @notice PanopticPool: The provided list of option positions is incorrect or invalid
-    error InputListFail();
-
-    /// @notice Tick is not between `MIN_TICK` and `MAX_TICK`
-    error InvalidTick();
-
-    /// @notice Liquidity in a chunk is above 2**128
-    error LiquidityTooHigh();
-
-    /// @notice CollateralTracker: There is not enough available liquidity to fulfill a credit in the PanopticPool
-    error InsufficientCreditLiquidity();
-
-    /// @notice RiskEngine: invalid builder code
-    error InvalidBuilderCode();
-
-    /// @notice The TokenId provided by the user is malformed or invalid
-    /// @param parameterType poolId=0, ratio=1, tokenType=2, risk_partner=3, strike=4, width=5, two identical strike/width/tokenType chunks=6
-    error InvalidTokenIdParameter(uint256 parameterType);
-
-    /// @notice A mint or swap callback was attempted from an address that did not match the canonical Uniswap V3 pool with the claimed features
-    error InvalidUniswapCallback();
-
-    /// @notice RiskEngine: There is a mismatch between the length of the positionIdList and positionBalanceArray
-    error LengthMismatch();
-
-    /// @notice PanopticPool: The Net Liquidity is zero due to small positions and cannot be used to compute the liquiditySpread
-    error NetLiquidityZero();
-
-    /// @notice PanopticPool: None of the legs in a position are force-exercisable (they are all either short or ATM long)
-    error NoLegsExercisable();
-
-    /// @notice PanopticPool: The leg is not long, so premium cannot be settled through `settleLongPremium`
-    error NotALongLeg();
-
-    /// @notice builderWallet: can only be called by the Builder
-    error NotBuilder();
-
-    /// @notice PanopticPool: There is not enough available liquidity in the chunk for one of the long legs to be created (or for one of the short legs to be closed)
-    error NotEnoughLiquidityInChunk();
-
-    /// @notice CollateralTracker: The user does not own enough assets to open/close a position
-    error NotEnoughTokens(address tokenAddress, uint256 assetsRequested, uint256 assetBalance);
-
-    /// @notice RiskEngine: can only be called by the guardian
-    error NotGuardian();
-
-    /// @notice PanopticPool: Position is still solvent and cannot be liquidated
-    error NotMarginCalled();
-
-    /// @notice CollateralTracker: The caller for a permissioned function is not the Panoptic Pool
-    error NotPanopticPool();
-
-    /// @notice Uniswap pool has already been initialized in the SFPM or created in the factory
-    error PoolAlreadyInitialized();
-
-    /// @notice The Uniswap Pool has not been created, so it cannot be used in the SFPM or have a PanopticPool created for it by the factory
-    error PoolNotInitialized();
-
-    /// @notice CollateralTracker: The user has open/active option positions, so they cannot transfer collateral shares
-    error PositionCountNotZero();
-
-    /// @notice PanopticPool: A position with the given token ID is not owned by the user and has positionSize=0
-    error PositionNotOwned();
-
-    /// @notice SFPM: The maximum token deltas (excluding swaps) for a position exceed (2^127 - 5) at some valid price
-    error PositionTooLarge();
-
-    /// @notice The current tick in the pool (post-ITM-swap) has fallen outside a user-defined open interval slippage range
-    error PriceBoundFail(int24 currentTick);
-
-    /// @notice The Price impact of that trade is too large
-    error PriceImpactTooLarge();
-
-    /// @notice An oracle price is too far away from another oracle price or the current tick
-    /// @dev This is a safeguard against price manipulation during option mints, burns, liquidations, force exercises, and premium settlements
-    error StaleOracle();
-
-    /// @notice PanopticPool: The position being minted would increase the total amount of legs open for the account above the maximum
-    error TooManyLegsOpen();
-
-    /// @notice ERC20 or SFPM (ERC1155) token transfer did not complete successfully
-    error TransferFailed(address token, address from, uint256 amount, uint256 balance);
-
-    /// @notice The tick range given by the strike price and width is invalid
-    /// because the upper and lower ticks are not initializable multiples of `tickSpacing`
-    /// or one of the ticks exceeds the `MIN_TICK` or `MAX_TICK` bounds
-    error InvalidTickBound();
-
-    /// @notice An unlock callback was attempted from an address other than the canonical Uniswap V4 pool manager
-    error UnauthorizedUniswapCallback();
-
-    /// @notice An operation in a library has failed due to an underflow or overflow
-    error UnderOverFlow();
-
-    /// @notice PanopticPool: The supplied poolId does not match the poolId for that Uniswap Pool
-    error WrongPoolId();
-
-    /// @notice SFPM: The poolId's don't match
-    error WrongUniswapPool();
-
-    /// @notice PanopticFactory: the zero address was supplied as a parameter
-    error ZeroAddress();
-
-    /// @notice CollateralTracker: Mints/burns of a position returns no collateral requirement
-    error ZeroCollateralRequirement();
-
-    /// @notice PanopticMath: The supplied tokenId has no valid legs
-    error TokenIdHasZeroLegs();
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.24;
-
-// Interfaces
-import {CollateralTracker} from "@contracts/CollateralTracker.sol";
-import {PanopticPool} from "@contracts/PanopticPool.sol";
-
-// Custom types
-import {LeftRightUnsigned, LeftRightSigned} from "@types/LeftRight.sol";
-import {PositionBalance} from "@types/PositionBalance.sol";
-import {RiskParameters} from "@types/RiskParameters.sol";
-import {TokenId} from "@types/TokenId.sol";
-import {OraclePack} from "@types/OraclePack.sol";
-import {MarketState} from "@types/MarketState.sol";
-
-/// @title Panoptic Risk Engine Interface
-/// @notice Interface for the central risk assessment and solvency calculator for the Panoptic Protocol.
-interface IRiskEngine {
-    /*//////////////////////////////////////////////////////////////
-                                 EVENTS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Emitted when a borrow rate is updated.
-    event BorrowRateUpdated(
-        address indexed collateralToken,
-        uint256 avgBorrowRate,
-        uint256 rateAtTarget
-    );
-
-    /// @notice Emitted when tokens are collected from the contract
-    /// @param token The address of the token collected
-    /// @param recipient The address receiving the tokens
-    /// @param amount The amount of tokens collected
-    event TokensCollected(address indexed token, address indexed recipient, uint256 amount);
-
-    /// @notice Emitted when the guardian updates the enforced safe mode.
-    /// @param lockMode True when safe mode is forcibly locked, false when the lock is lifted.
-    event GuardianSafeModeUpdated(bool lockMode);
-
-    /*//////////////////////////////////////////////////////////////
-                        PUBLIC STATE VARIABLES
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Constant, in seconds, used to determine the max elapsed time between adaptive interest rate updates.
-    function IRM_MAX_ELAPSED_TIME() external view returns (int256);
-
-    /// @notice Curve steepness (scaled by WAD).
-    function CURVE_STEEPNESS() external view returns (int256);
-
-    /// @notice Minimum rate at target per second (scaled by WAD).
-    function MIN_RATE_AT_TARGET() external view returns (int256);
-
-    /// @notice Maximum rate at target per second (scaled by WAD).
-    function MAX_RATE_AT_TARGET() external view returns (int256);
-
-    /// @notice Target utilization (scaled by WAD).
-    function TARGET_UTILIZATION() external view returns (int256);
-
-    /// @notice Initial rate at target per second (scaled by WAD).
-    function INITIAL_RATE_AT_TARGET() external view returns (int256);
-
-    /// @notice Adjustment speed per second (scaled by WAD).
-    function ADJUSTMENT_SPEED() external view returns (int256);
-
-    /// @notice Address allowed to override the automatically computed safe mode.
-    function GUARDIAN() external view returns (address);
-
-    /*//////////////////////////////////////////////////////////////
-                                GUARDIAN
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Forces a PanopticPool into locked safe mode.
-    /// @param pool The PanopticPool to lock.
-    function lockPool(PanopticPool pool) external;
-
-    /// @notice Removes the forced safe-mode lock on a PanopticPool.
-    /// @param pool The PanopticPool to unlock.
-    function unlockPool(PanopticPool pool) external;
-
-    /*//////////////////////////////////////////////////////////////
-                                TRANSFERS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Collects a specific amount of tokens from this contract
-    /// @param token The address of the ERC20 token to collect
-    /// @param recipient The address to send the tokens to
-    /// @param amount The amount of tokens to collect
-    function collect(address token, address recipient, uint256 amount) external;
-
-    /// @notice Collects all available tokens of a specific type from this contract
-    /// @param token The address of the ERC20 token to collect
-    /// @param recipient The address to send the tokens to
-    function collect(address token, address recipient) external;
-
-    /*//////////////////////////////////////////////////////////////
-                   LIQUIDATION/FORCE EXERCISE CALCULATIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Substitutes surplus tokens to a caller in exchange for any potential token shortages prior to revoking virtual shares from a payor.
-    /// @param payor The address of the user being exercised/settled
-    /// @param fees If applicable, fees to debit from caller (rightSlot = currency0 left = currency1), 0 for `settleLongPremium`
-    /// @param atTick The tick at which to convert between currency0/currency1 when redistributing the surplus tokens
-    /// @param ct0 The collateral tracker for currency0
-    /// @param ct1 The collateral tracker for currency1
-    /// @return The LeftRight-packed deltas for currency0/currency1 to move from the caller to the payor
-    function getRefundAmounts(
-        address payor,
-        LeftRightSigned fees,
-        int24 atTick,
-        CollateralTracker ct0,
-        CollateralTracker ct1
-    ) external view returns (LeftRightSigned);
-
-    /// @notice Get the cost of exercising an option. Used during a forced exercise.
-    /// @param currentTick The current price tick
-    /// @param oracleTick The price oracle tick
-    /// @param tokenId The position to be exercised
-    /// @param positionBalance The position data of the position to be exercised
-    /// @return exerciseFees The fees for exercising the option position
-    function exerciseCost(
-        int24 currentTick,
-        int24 oracleTick,
-        TokenId tokenId,
-        PositionBalance positionBalance
-    ) external view returns (LeftRightSigned exerciseFees);
-
-    /// @notice Compute the pre-haircut liquidation bonuses to be paid to the liquidator and the protocol loss caused by the liquidation (pre-haircut).
-    /// @param tokenData0 LeftRight encoded word with balance of token0 in the right slot, and required balance in left slot
-    /// @param tokenData1 LeftRight encoded word with balance of token1 in the right slot, and required balance in left slot
-    /// @param atSqrtPriceX96 The oracle price used to swap tokens between the liquidator/liquidatee and determine solvency for the liquidatee
-    /// @param netPaid The net amount of tokens paid/received by the liquidatee to close their portfolio of positions
-    /// @param shortPremium Total owed premium (prorated by available settled tokens) across all short legs being liquidated
-    /// @return The LeftRight-packed bonus amounts to be paid to the liquidator for both tokens
-    /// @return The LeftRight-packed protocol loss (pre-haircut) for both tokens
-    function getLiquidationBonus(
-        LeftRightUnsigned tokenData0,
-        LeftRightUnsigned tokenData1,
-        uint160 atSqrtPriceX96,
-        LeftRightSigned netPaid,
-        LeftRightUnsigned shortPremium
-    ) external pure returns (LeftRightSigned, LeftRightSigned);
-
-    /// @notice Haircut/clawback any premium paid by `liquidatee` on `positionIdList` over the protocol loss threshold during a liquidation.
-    /// @param liquidatee The address of the user being liquidated
-    /// @param positionIdList The list of position ids being liquidated
-    /// @param premiasByLeg The premium paid (or received) by the liquidatee for each leg of each position
-    /// @param collateralRemaining The remaining collateral after the liquidation (negative if protocol loss)
-    /// @param atSqrtPriceX96 The oracle price used to swap tokens between the liquidator/liquidatee and determine solvency for the liquidatee
-    /// @return bonusDeltas The delta, if any, to apply to the existing liquidation bonus
-    /// @return haircutTotal Total premium clawed back from the liquidatee
-    /// @return haircutPerLeg Per-position/per-leg haircut amounts
-    function haircutPremia(
-        address liquidatee,
-        TokenId[] memory positionIdList,
-        LeftRightSigned[4][] memory premiasByLeg,
-        LeftRightSigned collateralRemaining,
-        uint160 atSqrtPriceX96
-    )
-        external
-        returns (
-            LeftRightSigned bonusDeltas,
-            LeftRightUnsigned haircutTotal,
-            LeftRightSigned[4][] memory haircutPerLeg
-        );
-
-    /*//////////////////////////////////////////////////////////////
-                              ORACLE LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Computes and returns all oracle ticks.
-    /// @param currentTick The current tick in the Uniswap pool
-    /// @param _oraclePack The packed `s_oraclePack` storage slot containing the oracle's state
-    /// @return spotTick The fast oracle tick, sourced from the internal 10-minute EMA
-    /// @return medianTick The slow oracle tick, calculated as the median of the 8 stored price points in the internal oracle
-    /// @return latestTick The reconstructed absolute tick of the latest observation stored in the internal oracle
-    /// @return oraclePack The current value of the 8-slot internal observation queue
-    function getOracleTicks(
-        int24 currentTick,
-        OraclePack _oraclePack
-    )
-        external
-        view
-        returns (int24 spotTick, int24 medianTick, int24 latestTick, OraclePack oraclePack);
-
-    /// @notice Calculates a slow-moving, weighted average price from the on-chain EMAs.
-    /// @param oraclePack The packed `s_oraclePack` storage slot containing the oracle's state
-    /// @return The blended time-weighted average price, represented as an int24 tick
-    function twapEMA(OraclePack oraclePack) external pure returns (int24);
-
-    /// @notice Takes a packed structure representing a sorted 8-slot queue of ticks and returns the median of those values and an updated queue if another observation is warranted.
-    /// @param oraclePack The packed structure representing the sorted 8-slot queue of ticks
-    /// @param currentTick The current tick as return from slot0
-    /// @return medianTick The median of the provided 8-slot queue of ticks in `oraclePack`
-    /// @return updatedOraclePack The updated 8-slot queue of ticks with the latest observation inserted if the last entry is at least `period` seconds old
-    function computeInternalMedian(
-        OraclePack oraclePack,
-        int24 currentTick
-    ) external view returns (int24 medianTick, OraclePack updatedOraclePack);
-
-    /*//////////////////////////////////////////////////////////////
-                       HEALTH AND COLLATERAL TRACKING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Returns the risk parameters including safe mode status and fee recipients.
-    /// @param currentTick The current tick
-    /// @param oraclePack The oracle pack
-    /// @param builderCode The builder code to determine fee recipient
-    /// @return RiskParameters The packed risk parameters
-    function getRiskParameters(
-        int24 currentTick,
-        OraclePack oraclePack,
-        uint256 builderCode
-    ) external view returns (RiskParameters);
-
-    /// @notice computes the fee recipient address based on builder code and salt.
-    function getFeeRecipient(uint256 builderCode) external pure returns (uint128 feeRecipient);
-
-    /// @notice Checks for significant oracle deviation to determine if Safe Mode should be active.
-    /// @param currentTick The current tick
-    /// @param oraclePack The oracle pack
-    /// @return safeMode A number representing whether the protocol is in Safe Mode
-    function isSafeMode(
-        int24 currentTick,
-        OraclePack oraclePack
-    ) external pure returns (uint8 safeMode);
-
-    /// @notice Determines which ticks to check for solvency based on market volatility.
-    /// @param currentTick The current tick
-    /// @param _oraclePack The oracle pack
-    /// @return atTicks Array of ticks to check solvency at
-    /// @return oraclePack The oracle pack (potentially updated)
-    function getSolvencyTicks(
-        int24 currentTick,
-        OraclePack _oraclePack
-    ) external view returns (int24[] memory atTicks, OraclePack oraclePack);
-
-    /// @notice Get the collateral status/margin details of an account/user.
-    /// @param positionBalanceArray The list of all open positions held by the `optionOwner`
-    /// @param positionIdList The list of all option positions held by `user`
-    /// @param atTick The tick at which to evaluate the account's positions
-    /// @param user The account to check collateral/margin health for
-    /// @param shortPremia The total amount of premium owed to the short legs of `user`
-    /// @param longPremia The total amount of premium owed by the long legs of `user`
-    /// @param ct0 The Address of the CollateralTracker for token0
-    /// @param ct1 The Address of the CollateralTracker for token1
-    /// @param buffer The buffer to apply to the collateral requirement
-    /// @return Whether the account is solvent at the given tick
-    function isAccountSolvent(
-        PositionBalance[] calldata positionBalanceArray,
-        TokenId[] calldata positionIdList,
-        int24 atTick,
-        address user,
-        LeftRightUnsigned shortPremia,
-        LeftRightUnsigned longPremia,
-        CollateralTracker ct0,
-        CollateralTracker ct1,
-        uint256 buffer
-    ) external view returns (bool);
-
-    /// @notice Compute margin inputs for a user at a given tick.
-    /// @param positionBalanceArray Array of [balanceOrUtilAtMint] for all open positions of `user`
-    /// @param atTick Tick at which exposures are valued
-    /// @param user Account to evaluate
-    /// @param positionIdList The list of all option positions held by `user`
-    /// @param shortPremia Total short premia owed to `user`
-    /// @param longPremia Total long premia owed by `user`
-    /// @param ct0 CollateralTracker for token0
-    /// @param ct1 CollateralTracker for token1
-    /// @return tokenData0 LeftRightUnsigned for token0 with left = maintenance requirement, right = available balance
-    /// @return tokenData1 LeftRightUnsigned for token1 with left = maintenance requirement, right = available balance
-    /// @return globalUtilizations The max utilizations encountered in the position set
-    function getMargin(
-        PositionBalance[] calldata positionBalanceArray,
-        int24 atTick,
-        address user,
-        TokenId[] calldata positionIdList,
-        LeftRightUnsigned shortPremia,
-        LeftRightUnsigned longPremia,
-        CollateralTracker ct0,
-        CollateralTracker ct1
-    )
-        external
-        view
-        returns (
-            LeftRightUnsigned tokenData0,
-            LeftRightUnsigned tokenData1,
-            PositionBalance globalUtilizations
-        );
-
-    /*//////////////////////////////////////////////////////////////
-                        ADAPTIVE INTEREST RATE MODEL
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Calculates the interest rate based on utilization and accumulator state.
-    /// @param utilization The current pool utilization
-    /// @param interestRateAccumulator The current state of the interest rate accumulator
-    /// @return The calculated interest rate
-    function interestRate(
-        uint256 utilization,
-        MarketState interestRateAccumulator
-    ) external view returns (uint128);
-
-    /// @notice Calculates the interest rate and the new rate at target.
-    /// @param utilization The current pool utilization
-    /// @param interestRateAccumulator The current state of the interest rate accumulator
-    /// @return The average rate
-    /// @return The new rate at target
-    function updateInterestRate(
-        uint256 utilization,
-        MarketState interestRateAccumulator
-    ) external view returns (uint128, uint256);
-
-    /*//////////////////////////////////////////////////////////////
-                             QUERY HELPERS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Returns the stored VEGOID parameter
-    function vegoid() external view returns (uint8);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-// Libraries
-import {Errors} from "@libraries/Errors.sol";
-
-/// @notice Safe ERC20 transfer library that gracefully handles missing return values.
-/// @author Axicon Labs Limited
-/// @author Modified from Solmate (https://github.com/Rari-Capital/solmate/blob/main/src/utils/SafeTransferLib.sol)
-/// @dev Caution! This library won't check that a token has code, responsibility is delegated to the caller.
-library SafeTransferLib {
-    /*//////////////////////////////////////////////////////////////
-                             ETH OPERATIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Safely transfers ETH to a specified address.
-    /// @param to The address to transfer ETH to
-    /// @param amount The amount of ETH to transfer
-    function safeTransferETH(address to, uint256 amount) internal {
-        bool success;
-
-        assembly {
-            // Transfer the ETH and store if it succeeded or not.
-            success := call(gas(), to, amount, 0, 0, 0, 0)
-        }
-
-        if (!success)
-            revert Errors.TransferFailed(address(0), address(this), amount, address(this).balance);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            ERC20 OPERATIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Safely transfers ERC20 tokens from one address to another.
-    /// @param token The address of the ERC20 token
-    /// @param from The address to transfer tokens from
-    /// @param to The address to transfer tokens to
-    /// @param amount The amount of tokens to transfer
-    function safeTransferFrom(address token, address from, address to, uint256 amount) internal {
-        bool success;
-
-        assembly ("memory-safe") {
-            // Get free memory pointer - we will store our calldata in scratch space starting at the offset specified here.
-            let p := mload(0x40)
-
-            // Write the abi-encoded calldata into memory, beginning with the function selector.
-            mstore(p, 0x23b872dd00000000000000000000000000000000000000000000000000000000)
-            mstore(add(4, p), from) // Append the "from" argument.
-            mstore(add(36, p), to) // Append the "to" argument.
-            mstore(add(68, p), amount) // Append the "amount" argument.
-
-            success := and(
-                // Set success to whether the call reverted, if not we check it either
-                // returned exactly 1 (can't just be non-zero data), or had no return data.
-                or(and(eq(mload(0), 1), gt(returndatasize(), 31)), iszero(returndatasize())),
-                // We use 100 because that's the total length of our calldata (4 + 32 * 3)
-                // Counterintuitively, this call() must be positioned after the or() in the
-                // surrounding and() because and() evaluates its arguments from right to left.
-                call(gas(), token, 0, p, 100, 0, 32)
-            )
-        }
-
-        if (!success) {
-            uint256 balance = balanceOfOrZero(token, from);
-            revert Errors.TransferFailed(token, from, amount, balance);
-        }
-    }
-
-    /// @notice Safely transfers ERC20 tokens to a specified address.
-    /// @param token The address of the ERC20 token
-    /// @param to The address to transfer tokens to
-    /// @param amount The amount of tokens to transfer
-    function safeTransfer(address token, address to, uint256 amount) internal {
-        bool success;
-
-        assembly ("memory-safe") {
-            // Get free memory pointer - we will store our calldata in scratch space starting at the offset specified here.
-            let p := mload(0x40)
-
-            // Write the abi-encoded calldata into memory, beginning with the function selector.
-            mstore(p, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
-            mstore(add(4, p), to) // Append the "to" argument.
-            mstore(add(36, p), amount) // Append the "amount" argument.
-
-            success := and(
-                // Set success to whether the call reverted, if not we check it either
-                // returned exactly 1 (can't just be non-zero data), or had no return data.
-                or(and(eq(mload(0), 1), gt(returndatasize(), 31)), iszero(returndatasize())),
-                // We use 68 because that's the total length of our calldata (4 + 32 * 2)
-                // Counterintuitively, this call() must be positioned after the or() in the
-                // surrounding and() because and() evaluates its arguments from right to left.
-                call(gas(), token, 0, p, 68, 0, 32)
-            )
-        }
-
-        if (!success) {
-            uint256 balance = balanceOfOrZero(token, address(this));
-            revert Errors.TransferFailed(token, address(this), amount, balance);
-        }
-    }
-
-    /// @notice Safely queries the balance of an ERC20 token, returning zero if the call fails.
-    /// @param token The address of the ERC20 token
-    /// @param who The address to query the balance for
-    /// @return bal The balance of the address, or zero if the call fails or returns invalid data
-    function balanceOfOrZero(address token, address who) internal view returns (uint256 bal) {
-        assembly ("memory-safe") {
-            let p := mload(0x40)
-            mstore(p, 0x70a0823100000000000000000000000000000000000000000000000000000000) // balanceOf(address)
-            mstore(add(p, 4), who)
-            // staticcall: token is already warm due to the prior call
-            if iszero(staticcall(gas(), token, p, 36, 0, 32)) {
-                bal := 0
-            }
-            // accept only full 32-byte returns; else treat as zero
-            if lt(returndatasize(), 32) {
-                bal := 0
-            }
-            // load into bal
-            bal := mload(0)
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-// Libraries
-import {Constants} from "@libraries/Constants.sol";
-import {Errors} from "@libraries/Errors.sol";
-import {PanopticMath} from "@libraries/PanopticMath.sol";
-
-type TokenId is uint256;
-using TokenIdLibrary for TokenId global;
-
-/// @title Panoptic's tokenId: the fundamental options position.
-/// @author Axicon Labs Limited
-/// @notice This is the token ID used in the ERC1155 representation of the option position in the SFPM.
-/// @notice The SFPM "overloads" the ERC1155 `id` by storing all option information in said `id`.
-/// @notice Contains methods for packing and unpacking a Panoptic options position into a uint256 bit pattern.
-// PACKING RULES FOR A TOKENID:
-// this is how the token Id is packed into its bit-constituents containing position information.
-// the following is a diagram to be read top-down in a little endian format
-// (so (1) below occupies the first 64 least significant bits, e.g.):
-// From the LSB to the MSB:
-// ===== 1 time (same for all legs) ==============================================================
-//      Property         Size      Offset      Comment
-// (0) univ3pool        40bits     0bits      : first 5 bytes representing the Uniswap pool  (first 40 bits; little-endian), plus an incrementing number in the event of a collision
-// (1) vegoid           8bits      40bits     : vegoid for the sfpm pool
-// (2) tickSpacing      16bits     48bits     : tickSpacing for the univ3pool. Up to 16 bits
-// ===== 4 times (one for each leg) ==============================================================
-// (3) asset             1bit      0bits      : Specifies the asset (0: token0, 1: token1)
-// (4) optionRatio       7bits     1bits      : number of contracts per leg
-// (5) isLong            1bit      8bits      : long==1 means liquidity is removed, long==0 -> liquidity is added
-// (6) tokenType         1bit      9bits      : put/call: which token is moved when deployed (0 -> token0, 1 -> token1)
-// (7) riskPartner       2bits     10bits     : normally its own index. Partner in defined risk position otherwise
-// (8) strike           24bits     12bits     : strike price; defined as (tickUpper + tickLower) / 2
-// (9) width            12bits     36bits     : width; defined as (tickUpper - tickLower) / tickSpacing
-// Total                48bits                : Each leg takes up this many bits
-// ===============================================================================================
-//
-// The bit pattern is therefore, in general:
-//
-//                        (strike price tick of the 3rd leg)
-//                            |             (width of the 2nd leg)
-//                            |                   |
-// (9)(8)(7)(6)(5)(4)(3)  (9)(8)(7)(6)(5)(4)(3)  (9)(8)(7)(6)(5)(4)(3)   (9)(8)(7)(6)(5)(4)(3)       (2)          (1)           (0)
-//  <---- 48 bits ---->    <---- 48 bits ---->    <---- 48 bits ---->     <---- 48 bits ---->   <- 16 bits -> <- 8 bits ->  <- 40 bits ->
-//         Leg 4                  Leg 3                  Leg 2                   Leg 1           tickSpacing   vegoid    Uniswap Pool Pattern
-//
-//  <--- most significant bit                                                                             least significant bit --->
-//
-// Some rules of how legs behave (we enforce these in a `validate()` function):
-//   - a leg is inactive if it's not part of the position. Technically it means that all bits are zero.
-//   - a leg is active if it has an optionRatio > 0 since this must always be set for an active leg.
-//   - if a leg is active (e.g. leg 1) there can be no gaps in other legs meaning: if leg 1 is active then leg 3 cannot be active if leg 2 is inactive.
-//
-// Examples:
-//  We can think of the bit pattern as an array starting at bit index 0 going to bit index 255 (so 256 total bits)
-//  We also refer to the legs via their index, so leg number 2 has leg index 1 (legIndex) (counting from zero), and in general leg number N has leg index N-1.
-//  - the underlying strike price of the 2nd leg (leg index = 1) in this option position starts at bit index  (64 + 12 + 48 * (leg index=1))=123
-//  - the tokenType of the 4th leg in this option position starts at bit index 64+9+48*3=217
-//  - the Uniswap V3 pool id starts at bit index 0 and ends at bit index 63 (and thus takes up 64 bits).
-//  - the width of the 3rd leg in this option position starts at bit index 64+36+48*2=196
-library TokenIdLibrary {
-    /// @notice AND mask to extract all `isLong` bits for each leg from a TokenId.
-    uint256 internal constant LONG_MASK =
-        0x100_000000000100_000000000100_000000000100_0000000000000000;
-
-    /// @notice AND mask to clear `poolId` from a TokenId.
-    uint256 internal constant CLEAR_POOLID_MASK =
-        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_0000000000000000;
-
-    /// @notice AND mask to clear all bits except for the option ratios of the legs.
-    uint256 internal constant OPTION_RATIO_MASK =
-        0x0000000000FE_0000000000FE_0000000000FE_0000000000FE_0000000000000000;
-
-    /// @notice AND mask to clear all bits except for the components of the chunk key (strike, width, tokenType) for each leg.
-    uint256 internal constant CHUNK_MASK =
-        0xFFFFFFFFF200_FFFFFFFFF200_FFFFFFFFF200_FFFFFFFFF200_0000000000000000;
-
-    /// @notice AND mask to cut a sign-extended int256 back to an int24.
-    int256 internal constant BITMASK_INT24 = 0xFFFFFF;
-
-    /*//////////////////////////////////////////////////////////////
-                                DECODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice The full poolId (Uniswap pool identifier + pool pattern) of this option position.
-    /// @param self The TokenId to extract `poolId` from
-    /// @return The `poolId` (Panoptic's pool fingerprint, contains the whole 64 bit sequence with the tickSpacing) of the Uniswap V3 pool
-    function poolId(TokenId self) internal pure returns (uint64) {
-        unchecked {
-            return uint64(TokenId.unwrap(self));
-        }
-    }
-
-    /// @notice The vegoid of this option position.
-    /// @param self The TokenId to extract `vegoid` from
-    /// @return The `vegoid` of the Uniswap V3 pool
-    function vegoid(TokenId self) internal pure returns (uint8) {
-        unchecked {
-            return uint8((TokenId.unwrap(self) >> 40) % 2 ** 8);
-        }
-    }
-
-    /// @notice The tickSpacing of this option position.
-    /// @param self The TokenId to extract `tickSpacing` from
-    /// @return The `tickSpacing` of the Uniswap V3 pool
-    function tickSpacing(TokenId self) internal pure returns (int24) {
-        unchecked {
-            return int24(uint24((TokenId.unwrap(self) >> 48) % 2 ** 16));
-        }
-    }
-
-    /// @notice Get the asset basis for this TokenId.
-    /// @dev Which token is the asset - can be token0 (return 0) or token1 (return 1).
-    /// @param self The TokenId to extract `asset` from
-    /// @param legIndex The leg index of this position (in {0,1,2,3}) to extract `asset` from
-    /// @return 0 if asset is token0, 1 if asset is token1
-    function asset(TokenId self, uint256 legIndex) internal pure returns (uint256) {
-        unchecked {
-            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48)) % 2);
-        }
-    }
-
-    /// @notice Get the number of contracts multiplier for leg `legIndex`.
-    /// @param self The TokenId to extract `optionRatio` at `legIndex` from
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return The number of contracts multiplier for leg `legIndex`
-    function optionRatio(TokenId self, uint256 legIndex) internal pure returns (uint256) {
-        unchecked {
-            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 1)) % 128);
-        }
-    }
-
-    /// @notice Return 1 if the nth leg (leg index `legIndex`) is a long position.
-    /// @param self The TokenId to extract `isLong` at `legIndex` from
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return 1 if long; 0 if not long
-    function isLong(TokenId self, uint256 legIndex) internal pure returns (uint256) {
-        unchecked {
-            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 8)) % 2);
-        }
-    }
-
-    /// @notice Get the type of token moved for a given leg (implies a call or put). Either Token0 or Token1.
-    /// @param self The TokenId to extract `tokenType` at `legIndex` from
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return 1 if the token moved is token1 or 0 if the token moved is token0
-    function tokenType(TokenId self, uint256 legIndex) internal pure returns (uint256) {
-        unchecked {
-            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 9)) % 2);
-        }
-    }
-
-    /// @notice Get the associated risk partner of the leg index (generally another leg index in the position if enabled or the same leg index if no partner).
-    /// @param self The TokenId to extract `riskPartner` at `legIndex` from
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return The leg index of `legIndex`'s risk partner
-    function riskPartner(TokenId self, uint256 legIndex) internal pure returns (uint256) {
-        unchecked {
-            return uint256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 10)) % 4);
-        }
-    }
-
-    /// @notice Get the strike price tick of the nth leg (with index `legIndex`).
-    /// @param self The TokenId to extract `strike` at `legIndex` from
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return The strike price tick of the leg
-    function strike(TokenId self, uint256 legIndex) internal pure returns (int24) {
-        unchecked {
-            return int24(int256(TokenId.unwrap(self) >> (64 + legIndex * 48 + 12)));
-        }
-    }
-
-    /// @notice Get the width (distance between upper and lower ticks) of the nth leg (index `legIndex`).
-    /// @dev The width is always positive; it is returned as an int24 for internal consistency with strike operations.
-    /// @param self The TokenId to extract `width` at `legIndex` from
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return The width of the position
-    function width(TokenId self, uint256 legIndex) internal pure returns (int24) {
-        unchecked {
-            return int24(int256((TokenId.unwrap(self) >> (64 + legIndex * 48 + 36)) % 4096));
-        } // "% 4096" = take last (2 ** 12 = 4096) 12 bits
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                ENCODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Add the Uniswap pool identifier corresponding to this option position (contains the entropy and tickSpacing).
-    /// @param self The TokenId to add `_poolId` to
-    /// @param _poolId The PoolID to add to `self`
-    /// @return `self` with `_poolId` added to the PoolID slot
-    function addPoolId(TokenId self, uint64 _poolId) internal pure returns (TokenId) {
-        unchecked {
-            return TokenId.wrap(TokenId.unwrap(self) + _poolId);
-        }
-    }
-
-    /// @notice Add the `tickSpacing` to the PoolID for `self`.
-    /// @param self The TokenId to add `_tickSpacing` to
-    /// @param _tickSpacing The tickSpacing to add to `self`
-    /// @return `self` with `_tickSpacing` added to the TickSpacing slot in the PoolID
-    function addTickSpacing(TokenId self, int24 _tickSpacing) internal pure returns (TokenId) {
-        unchecked {
-            return TokenId.wrap(TokenId.unwrap(self) + (uint256(uint24(_tickSpacing)) << 48));
-        }
-    }
-
-    /// @notice Add the asset basis for this position.
-    /// @param self The TokenId to add `_asset` to
-    /// @param _asset The asset to add to the Asset slot in `self` for `legIndex`
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return `self` with `_asset` added to the Asset slot
-    function addAsset(
-        TokenId self,
-        uint256 _asset,
-        uint256 legIndex
-    ) internal pure returns (TokenId) {
-        unchecked {
-            return
-                TokenId.wrap(TokenId.unwrap(self) + (uint256(_asset % 2) << (64 + legIndex * 48)));
-        }
-    }
-
-    /// @notice Add the number of contracts multiplier to leg index `legIndex`.
-    /// @param self The TokenId to add `_optionRatio` to
-    /// @param _optionRatio The number of contracts multiplier to add to the OptionRatio slot in `self` for LegIndex
-    /// @param legIndex The leg index of the position (in {0,1,2,3})
-    /// @return `self` with `_optionRatio` added to the OptionRatio slot for `legIndex`
-    function addOptionRatio(
-        TokenId self,
-        uint256 _optionRatio,
-        uint256 legIndex
-    ) internal pure returns (TokenId) {
-        unchecked {
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) + (uint256(_optionRatio % 128) << (64 + legIndex * 48 + 1))
-                );
-        }
-    }
-
-    /// @notice Add "isLong" parameter indicating whether a leg is long (isLong=1) or short (isLong=0).
-    /// @param self The TokenId to add `_isLong` to
-    /// @param _isLong The isLong parameter to add to the IsLong slot in `self` for `legIndex`
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return `self` with `_isLong` added to the IsLong slot for `legIndex`
-    function addIsLong(
-        TokenId self,
-        uint256 _isLong,
-        uint256 legIndex
-    ) internal pure returns (TokenId) {
-        unchecked {
-            return TokenId.wrap(TokenId.unwrap(self) + ((_isLong % 2) << (64 + legIndex * 48 + 8)));
-        }
-    }
-
-    /// @notice Add the type of token moved for a given leg (implies a call or put). Either Token0 or Token1.
-    /// @param self The TokenId to add `_tokenType` to
-    /// @param _tokenType The tokenType to add to the TokenType slot in `self` for `legIndex`
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return `self` with `_tokenType` added to the TokenType slot for `legIndex`
-    function addTokenType(
-        TokenId self,
-        uint256 _tokenType,
-        uint256 legIndex
-    ) internal pure returns (TokenId) {
-        unchecked {
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) + (uint256(_tokenType % 2) << (64 + legIndex * 48 + 9))
-                );
-        }
-    }
-
-    /// @notice Add the associated risk partner of the leg index.
-    /// @param self The TokenId to add `_riskPartner` to
-    /// @param _riskPartner The riskPartner to add to the RiskPartner slot in `self` for `legIndex`
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return `self` with `_riskPartner` added to the RiskPartner slot for `legIndex`
-    function addRiskPartner(
-        TokenId self,
-        uint256 _riskPartner,
-        uint256 legIndex
-    ) internal pure returns (TokenId) {
-        unchecked {
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) + (uint256(_riskPartner % 4) << (64 + legIndex * 48 + 10))
-                );
-        }
-    }
-
-    /// @notice Add the strike price tick of the nth leg (index `legIndex`).
-    /// @param self The TokenId to add `_strike` to
-    /// @param _strike The strike price tick to add to the Strike slot in `self` for `legIndex`
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return `self` with `_strike` added to the Strike slot for `legIndex`
-    function addStrike(
-        TokenId self,
-        int24 _strike,
-        uint256 legIndex
-    ) internal pure returns (TokenId) {
-        unchecked {
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) +
-                        uint256((int256(_strike) & BITMASK_INT24) << (64 + legIndex * 48 + 12))
-                );
-        }
-    }
-
-    /// @notice Add the width of the nth leg (index `legIndex`).
-    /// @param self The TokenId to add `_width` to
-    /// @param _width The width to add to the Width slot in `self` for `legIndex`
-    /// @param legIndex The leg index of this position (in {0,1,2,3})
-    /// @return `self` with `_width` added to the Width slot for `legIndex`
-    function addWidth(
-        TokenId self,
-        int24 _width,
-        uint256 legIndex
-    ) internal pure returns (TokenId) {
-        // % 4096 -> take 12 bits from the incoming 24 bits (there's no uint12)
-        unchecked {
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) +
-                        (uint256(uint24(_width) % 4096) << (64 + legIndex * 48 + 36))
-                );
-        }
-    }
-
-    /// @notice Add a leg to a TokenId.
-    /// @param self The tokenId in the SFPM representing an option position
-    /// @param legIndex The leg index of this position (in {0,1,2,3}) to add
-    /// @param _optionRatio The relative size of the leg
-    /// @param _asset The asset of the leg
-    /// @param _isLong Whether the leg is long
-    /// @param _tokenType The type of token moved for the leg
-    /// @param _riskPartner The associated risk partner of the leg
-    /// @param _strike The strike price tick of the leg
-    /// @param _width The width of the leg
-    /// @return tokenId The tokenId with the leg added
-    function addLeg(
-        TokenId self,
-        uint256 legIndex,
-        uint256 _optionRatio,
-        uint256 _asset,
-        uint256 _isLong,
-        uint256 _tokenType,
-        uint256 _riskPartner,
-        int24 _strike,
-        int24 _width
-    ) internal pure returns (TokenId tokenId) {
-        tokenId = addOptionRatio(self, _optionRatio, legIndex);
-        tokenId = addAsset(tokenId, _asset, legIndex);
-        tokenId = addIsLong(tokenId, _isLong, legIndex);
-        tokenId = addTokenType(tokenId, _tokenType, legIndex);
-        tokenId = addRiskPartner(tokenId, _riskPartner, legIndex);
-        tokenId = addStrike(tokenId, _strike, legIndex);
-        tokenId = addWidth(tokenId, _width, legIndex);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                HELPERS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Flip all the `isLong` positions in the legs in the `tokenId` option position.
-    /// @param self The TokenId to flip isLong for on all active legs
-    /// @return tokenId `self` with all `isLong` bits flipped
-    function flipToBurnToken(TokenId self) internal pure returns (TokenId) {
-        unchecked {
-            // NOTE: This is a hack to avoid blowing up the contract size.
-            // We need to ensure that only active legs are flipped
-            // In order to achieve this, we shift our long bit mask to the right by (4-# active legs)
-            // i.e the whole mask is used to flip all legs with 4 legs, but only the first leg is flipped with 1 leg so we shift by 3 legs
-            // We also clear the poolId area of the mask to ensure the bits that are shifted right into the area don't flip and cause issues
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) ^
-                        ((LONG_MASK >> (48 * (4 - self.countLegs()))) & CLEAR_POOLID_MASK)
-                );
-        }
-    }
-
-    /// @notice Count the number of legs (out of a maximum of 4) that are long positions.
-    /// @param self The TokenId to count longs for
-    /// @return The number of long positions in `self` (in the range {0,...,4})
-    function countLongs(TokenId self) internal pure returns (uint256) {
-        unchecked {
-            return self.isLong(0) + self.isLong(1) + self.isLong(2) + self.isLong(3);
-        }
-    }
-
-    /// @notice Get the option position's nth leg's (index `legIndex`) tick ranges (lower, upper).
-    /// @param self The TokenId to extract the tick range from
-    /// @param legIndex The leg index of the position (in {0,1,2,3})
-    /// @return legLowerTick The lower tick of the leg/liquidity chunk
-    /// @return legUpperTick The upper tick of the leg/liquidity chunk
-    function asTicks(
-        TokenId self,
-        uint256 legIndex
-    ) internal pure returns (int24 legLowerTick, int24 legUpperTick) {
-        (legLowerTick, legUpperTick) = PanopticMath.getTicks(
-            self.strike(legIndex),
-            self.width(legIndex),
-            self.tickSpacing()
-        );
-    }
-
-    /// @notice Return the number of active legs in the option position.
-    /// @dev ASSUMPTION: For any leg, the option ratio is always > 0 (the leg always has a number of contracts associated with it).
-    /// @param self The TokenId to count active legs for
-    /// @return numLegs The number of active legs in `self` (in the range {0,...,4})
-    function countLegs(TokenId self) internal pure returns (uint256 numLegs) {
-        // Strip all bits except for the option ratios
-        uint256 optionRatios = (TokenId.unwrap(self) & OPTION_RATIO_MASK) >> 64;
-
-        unchecked {
-            // forge-lint: disable-next-line(incorrect-shift)
-            while (optionRatios >= (1 << (48 * numLegs))) {
-                ++numLegs;
-            }
-        }
-    }
-
-    /// @notice Clear a leg in an option position at `legIndex`.
-    /// @dev NOTE: it's important that the caller fills in the leg details after.
-    //  - optionRatio is zeroed
-    //  - asset is zeroed
-    //  - width is zeroed
-    //  - strike is zeroed
-    //  - tokenType is zeroed
-    //  - isLong is zeroed
-    //  - riskPartner is zeroed
-    /// @param self The TokenId to clear the leg from
-    /// @param legIndex The leg index to reset, in {0,1,2,3}
-    /// @return `self` with the `legIndex`th leg zeroed
-    function clearLeg(TokenId self, uint256 legIndex) internal pure returns (TokenId) {
-        if (legIndex == 0)
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) &
-                        0xFFFFFFFFFFFF_FFFFFFFFFFFF_FFFFFFFFFFFF_000000000000_FFFFFFFFFFFFFFFF
-                );
-        if (legIndex == 1)
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) &
-                        0xFFFFFFFFFFFF_FFFFFFFFFFFF_000000000000_FFFFFFFFFFFF_FFFFFFFFFFFFFFFF
-                );
-        if (legIndex == 2)
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) &
-                        0xFFFFFFFFFFFF_000000000000_FFFFFFFFFFFF_FFFFFFFFFFFF_FFFFFFFFFFFFFFFF
-                );
-        if (legIndex == 3)
-            return
-                TokenId.wrap(
-                    TokenId.unwrap(self) &
-                        0x000000000000_FFFFFFFFFFFF_FFFFFFFFFFFF_FFFFFFFFFFFF_FFFFFFFFFFFFFFFF
-                );
-
-        return self;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                               VALIDATION
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Checks if a TokenId is valid and reverts with an error reflecting the incorrect parameter for invalid positions.
-    /// @param self The TokenId to validate
-    function validate(TokenId self) internal pure {
-        if (self.optionRatio(0) == 0) revert Errors.InvalidTokenIdParameter(1);
-
-        // loop through the 4 (possible) legs in the tokenId `self`
-        unchecked {
-            // extract strike, width, and tokenType
-            uint256 chunkData = (TokenId.unwrap(self) & CHUNK_MASK) >> 64;
-            for (uint256 i = 0; i < 4; ++i) {
-                if (self.optionRatio(i) == 0) {
-                    // final leg in this position identified;
-                    // make sure any leg above this are zero as well
-                    // (we don't allow gaps eg having legs 1 and 4 active without 2 and 3 is not allowed)
-                    if ((TokenId.unwrap(self) >> (64 + 48 * i)) != 0)
-                        revert Errors.InvalidTokenIdParameter(1);
-
-                    break; // we are done iterating over potential legs
-                }
-
-                // prevent legs touching the same chunks - all chunks in the position must be discrete
-                uint256 numLegs = self.countLegs();
-                for (uint256 j = i + 1; j < numLegs; ++j) {
-                    if (uint48(chunkData >> (48 * i)) == uint48(chunkData >> (48 * j))) {
-                        revert Errors.InvalidTokenIdParameter(6);
-                    }
-                }
-
-                // Strike cannot be MIN_TICK or MAX_TICK
-                if (
-                    (self.strike(i) == Constants.MIN_POOL_TICK) ||
-                    (self.strike(i) == Constants.MAX_POOL_TICK)
-                ) revert Errors.InvalidTokenIdParameter(4);
-
-                // In the following, we check whether the risk partner of this leg is itself
-                // or another leg in this position.
-                uint256 riskPartnerIndex = self.riskPartner(i);
-                if (riskPartnerIndex != i) {
-                    // Ensures that risk partners are mutual
-                    if (self.riskPartner(riskPartnerIndex) != i)
-                        revert Errors.InvalidTokenIdParameter(3);
-                }
-            }
-        }
-    }
-
-    /// @notice Check whether a position `self` contains at least one exercisable long leg.
-    /// @dev A leg is considered exercisable if it is:
-    ///      - long (isLong == 1), and
-    ///      - not a loan/credit leg (width != 0).
-    /// @dev This function does NOT check moneyness or price ranges.
-    /// @return hasExercisableLong Returns 1 if such a leg exists, 0 otherwise.
-    function validateIsExercisable(TokenId self) internal pure returns (uint256) {
-        unchecked {
-            uint256 numLegs = self.countLegs();
-            for (uint256 i = 0; i < numLegs; ++i) {
-                if (self.isLong(i) == 1 && self.width(i) != 0) return 1; // validated
-            }
-        }
-
-        // Fail if position has no legs that is far-out-of-the-money
-        return 0;
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-type LiquidityChunk is uint256;
-using LiquidityChunkLibrary for LiquidityChunk global;
-
-/// @title A Panoptic Liquidity Chunk. Tracks Tick Range and Liquidity Information for a "chunk." Used to track movement of chunks.
-/// @author Axicon Labs Limited
-///
-/// @notice A liquidity chunk is an amount of `liquidity` deployed between two ticks: `tickLower` and `tickUpper`
-/// into a concentrated liquidity AMM.
-//
-//                liquidity
-//                    ▲      liquidity chunk
-//                    │        │
-//                    │    ┌───▼────┐   ▲
-//                    │    │        │   │ liquidity/size
-//      Other AMM     │  ┌─┴────────┴─┐ ▼ of chunk
-//      liquidity  ───┼──┼─►          │
-//                    │  │            │
-//                    └──┴─▲────────▲─┴──► price ticks
-//                         │        │
-//                         │        │
-//                    tickLower     │
-//                              tickUpper
-//
-// PACKING RULES FOR A LIQUIDITYCHUNK:
-// =================================================================================================
-//  From the LSB to the MSB:
-// (1) Liquidity        128bits  : The liquidity within the chunk (uint128).
-// ( ) (Zero-bits)       80bits  : Zero-bits to match a total uint256.
-// (2) tick Upper        24bits  : The upper tick of the chunk (int24).
-// (3) tick Lower        24bits  : The lower tick of the chunk (int24).
-// Total                256bits  : Total bits used by a chunk.
-// ===============================================================================================
-//
-// The bit pattern is therefore:
-//
-//           (3)             (2)             ( )                (1)
-//    <-- 24 bits -->  <-- 24 bits -->  <-- 80 bits -->   <-- 128 bits -->
-//        tickLower       tickUpper         Zeros             Liquidity
-//
-//        <--- most significant bit        least significant bit --->
-//
-library LiquidityChunkLibrary {
-    /// @notice AND mask to strip the `tickLower` value from a packed LiquidityChunk.
-    uint256 internal constant CLEAR_TL_MASK =
-        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-
-    /// @notice AND mask to strip the `tickUpper` value from a packed LiquidityChunk.
-    uint256 internal constant CLEAR_TU_MASK =
-        0xFFFFFF000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-
-    /*//////////////////////////////////////////////////////////////
-                                ENCODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Create a new `LiquidityChunk` given by its bounding ticks and its liquidity.
-    /// @param _tickLower The lower tick of the chunk
-    /// @param _tickUpper The upper tick of the chunk
-    /// @param amount The amount of liquidity to add to the chunk
-    /// @return The new chunk with the given liquidity and tick range
-    function createChunk(
-        int24 _tickLower,
-        int24 _tickUpper,
-        uint128 amount
-    ) internal pure returns (LiquidityChunk) {
-        unchecked {
-            // casting to 'uint256' is safe because _tickUpper/_tickLower is always < 2**24
-            // forge-lint: disable-next-line(unsafe-typecast)
-            return
-                LiquidityChunk.wrap(
-                    // casting to 'uint24' is safe because _tickLower/_tickUpper is always < 2**24
-                    // forge-lint: disable-next-line(unsafe-typecast)
-                    (uint256(uint24(_tickLower)) << 232) +
-                        (uint256(uint24(_tickUpper)) << 208) +
-                        uint256(amount)
-                );
-        }
-    }
-
-    /// @notice Add liquidity to `self`.
-    /// @param self The LiquidityChunk to add liquidity to
-    /// @param amount The amount of liquidity to add to `self`
-    /// @return `self` with added liquidity `amount`
-    function addLiquidity(
-        LiquidityChunk self,
-        uint128 amount
-    ) internal pure returns (LiquidityChunk) {
-        unchecked {
-            return LiquidityChunk.wrap(LiquidityChunk.unwrap(self) + amount);
-        }
-    }
-
-    /// @notice Add the lower tick to `self`.
-    /// @param self The LiquidityChunk to add the lower tick to
-    /// @param _tickLower The lower tick to add to `self`
-    /// @return `self` with added lower tick `_tickLower`
-    function addTickLower(
-        LiquidityChunk self,
-        int24 _tickLower
-    ) internal pure returns (LiquidityChunk) {
-        unchecked {
-            return
-                LiquidityChunk.wrap(
-                    LiquidityChunk.unwrap(self) + (uint256(uint24(_tickLower)) << 232)
-                );
-        }
-    }
-
-    /// @notice Add the upper tick to `self`.
-    /// @param self The LiquidityChunk to add the upper tick to
-    /// @param _tickUpper The upper tick to add to `self`
-    /// @return `self` with added upper tick `_tickUpper`
-    function addTickUpper(
-        LiquidityChunk self,
-        int24 _tickUpper
-    ) internal pure returns (LiquidityChunk) {
-        unchecked {
-            return
-                LiquidityChunk.wrap(
-                    LiquidityChunk.unwrap(self) + ((uint256(uint24(_tickUpper))) << 208)
-                );
-        }
-    }
-
-    /// @notice Overwrites the lower tick on `self`.
-    /// @param self The LiquidityChunk to overwrite the lower tick on
-    /// @param _tickLower The lower tick to overwrite `self` with
-    /// @return `self` with `_tickLower` as the new lower tick
-    function updateTickLower(
-        LiquidityChunk self,
-        int24 _tickLower
-    ) internal pure returns (LiquidityChunk) {
-        unchecked {
-            return
-                LiquidityChunk.wrap(LiquidityChunk.unwrap(self) & CLEAR_TL_MASK).addTickLower(
-                    _tickLower
-                );
-        }
-    }
-
-    /// @notice Overwrites the upper tick on `self`.
-    /// @param self The LiquidityChunk to overwrite the upper tick on
-    /// @param _tickUpper The upper tick to overwrite `self` with
-    /// @return `self` with `_tickUpper` as the new upper tick
-    function updateTickUpper(
-        LiquidityChunk self,
-        int24 _tickUpper
-    ) internal pure returns (LiquidityChunk) {
-        unchecked {
-            return
-                LiquidityChunk.wrap(LiquidityChunk.unwrap(self) & CLEAR_TU_MASK).addTickUpper(
-                    _tickUpper
-                );
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                DECODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Get the lower tick of `self`.
-    /// @param self The LiquidityChunk to get the lower tick from
-    /// @return The lower tick of `self`
-    function tickLower(LiquidityChunk self) internal pure returns (int24) {
-        unchecked {
-            return int24(int256(LiquidityChunk.unwrap(self) >> 232));
-        }
-    }
-
-    /// @notice Get the upper tick of `self`.
-    /// @param self The LiquidityChunk to get the upper tick from
-    /// @return The upper tick of `self`
-    function tickUpper(LiquidityChunk self) internal pure returns (int24) {
-        unchecked {
-            return int24(int256(LiquidityChunk.unwrap(self) >> 208));
-        }
-    }
-
-    /// @notice Get the amount of liquidity/size of `self`.
-    /// @param self The LiquidityChunk to get the liquidity from
-    /// @return The liquidity of `self`
-    function liquidity(LiquidityChunk self) internal pure returns (uint128) {
-        unchecked {
-            return uint128(LiquidityChunk.unwrap(self));
-        }
-    }
+    /// @notice The maximum amount of change, in ticks, permitted before TICK_OFFSET is updated.
+    int24 internal constant MAX_RESIDUAL_THRESHOLD = 1024;
 }
 
 
