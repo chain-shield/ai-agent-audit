@@ -38,7 +38,7 @@ where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
 {
     let issue_title = match issue_prompt {
-        IssuePrompt::Pattern(_) => "vulnerability patterns",
+        IssuePrompt::Pattern(_) | IssuePrompt::Combined(_) => "vulnerability patterns",
         IssuePrompt::Invariant(_) => "invariants",
         IssuePrompt::Actor(_) => "actor",
     };
@@ -83,7 +83,7 @@ where
     };
 
     match issue_prompt {
-        IssuePrompt::Pattern(pattern_category) => {
+        IssuePrompt::Pattern(pattern_category) | IssuePrompt::Combined((pattern_category, _)) => {
             for (i, category) in pattern_category.into_iter().enumerate() {
                 let category_spec =
                     get_category_library_spec(&category).expect("could not extract category spec");

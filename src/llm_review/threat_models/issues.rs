@@ -55,6 +55,7 @@ pub enum IssuePrompt {
     Pattern(Vec<PatternCategory>),
     Invariant(Vec<InvariantType>),
     Actor(Vec<Actor>),
+    Combined((Vec<PatternCategory>, Vec<Actor>)),
 }
 
 #[async_trait]

@@ -12,7 +12,7 @@ use crate::{
             semaphore::GENERAL_SEM,
         },
         dynamic_prompts::{
-            self,
+            self, actors,
             invariants::{generate_invariant_prompt, get_invariant_json},
         },
         threat_models::{
@@ -42,7 +42,7 @@ where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
 {
     let issue_title = match issue_prompt {
-        IssuePrompt::Pattern(_) => "vulnerability patterns",
+        IssuePrompt::Pattern(_) | IssuePrompt::Combined(_) => "vulnerability patterns",
         IssuePrompt::Invariant(_) => "invariants",
         IssuePrompt::Actor(_) => "actor",
     };
@@ -113,6 +113,41 @@ where
                     );
                 let prompt = Arc::new(format!(
                     "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
+                ));
+
+                // info!("pattern prompt => {}", prompt);
+
+                for run in 0..category_spec.runs {
+                    spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
+                }
+            }
+        }
+        IssuePrompt::Combined((pattern_category, actors)) => {
+            let actors_capabilities = actors::generate_formated_list_from_actor_data(&actors);
+            let actor_context = format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITY\n
+                 **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis\n\n
+                {}",actors_capabilities);
+            for (i, category) in pattern_category.into_iter().enumerate() {
+                let category_spec =
+                    get_category_library_spec(&category).expect("could not extract category spec");
+
+                // construct prompt
+                let instruction_prompt =
+                    dynamic_prompts::findings::generate_pattern_category_to_findings_prompt(
+                        &category, repo,
+                    );
+                let json_requirement_prompt =
+                    dynamic_prompts::findings_template::get_post_json_requirement_for_multipattern(
+                        &category_spec.issues,
+                        "security vulnerability pattern",
+                        repo,
+                    );
+                info!(
+                    "instruction prompt: {}{}",
+                    instruction_prompt, actor_context
+                );
+                let prompt = Arc::new(format!(
+                    "{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
                 ));
 
                 // info!("pattern prompt => {}", prompt);
