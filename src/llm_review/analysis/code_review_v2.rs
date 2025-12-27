@@ -1,6 +1,6 @@
 use crate::config::{
     ACTOR_RUNS, ALL_PATTERN_APPROACH, CREATE_TESTS, DIRECT_TO_FINDING_MODE,
-    NICHE_PATTERN_ANALYSIS_MODE, SKIP_LIBRARIES, SKIP_PATTERN_RUNS,
+    NICHE_PATTERN_ANALYSIS_MODE, SKIP_COMBINED_PATTERN_RUNS, SKIP_LIBRARIES, SKIP_PATTERN_RUNS,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -64,8 +64,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    // let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -138,16 +138,22 @@ pub async fn review_codebase_for_security_issues_v2(
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
                 // Run pattern, invariant, and actor analysis concurrently within this task
-                let (patterns_res, invariants_res, actors_res) = {
+                let (patterns_res, combined_res, invariants_res, actors_res) = {
                     let pattern_categories =
                         get_pattern_category_from_contract_category(contract_category);
                     tokio::join!(
                         process_patterns(
                             &codeblock,
-                            pattern_categories,
+                            pattern_categories.clone(),
                             &pattern_discovery_agent,
                             &finding_discovery_agent,
                             &verify_agent,
+                            &repo_clone
+                        ),
+                        process_combined_patterns(
+                            &codeblock,
+                            pattern_categories,
+                            &pattern_discovery_agent,
                             &repo_clone
                         ),
                         process_invariants(
@@ -168,21 +174,18 @@ pub async fn review_codebase_for_security_issues_v2(
                 };
 
                 let mut raw_findings = Findings::default();
-                if let Ok(pats) = patterns_res {
-                    raw_findings.findings.extend(pats.findings);
-                } else if let Err(e) = patterns_res {
-                    log::error!("pattern analysis failed: {:#}", e);
-                }
-                if let Ok(invs) = invariants_res {
-                    raw_findings.findings.extend(invs.findings);
-                } else if let Err(e) = invariants_res {
-                    log::error!("invariant analysis failed: {:#}", e);
-                }
-                if let Ok(acts) = actors_res {
-                    raw_findings.findings.extend(acts.findings);
-                } else if let Err(e) = actors_res {
-                    log::error!("actor analysis failed: {:#}", e);
-                }
+
+                // Helper to merge findings or log errors
+                let mut merge_findings =
+                    |result: Result<Findings>, analysis_type: &str| match result {
+                        Ok(findings) => raw_findings.findings.extend(findings.findings),
+                        Err(e) => log::error!("{} analysis failed: {:#}", analysis_type, e),
+                    };
+
+                merge_findings(patterns_res, "pattern");
+                merge_findings(invariants_res, "invariant");
+                merge_findings(actors_res, "actor");
+                merge_findings(combined_res, "combined");
 
                 if !raw_findings.findings.is_empty() {
                     // add uuid to each finding to uniquely identify
@@ -490,6 +493,48 @@ async fn process_patterns(
     Ok(findings)
 }
 
+async fn process_combined_patterns(
+    codeblock: &str,
+    pattern_categories: Vec<PatternCategory>,
+    pattern_discovery_agent: &Arc<AIAgent>,
+    repo: &RepoPaths,
+) -> Result<Findings> {
+    // check flag
+    if SKIP_COMBINED_PATTERN_RUNS {
+        return Ok(Findings::default());
+    }
+
+    // custom agent for digging up list of actors
+    let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.2")
+        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
+        .with_file_retrieval(false)
+        .with_openai_reasoning_effort("high");
+
+    let actor_discovery_agent =
+        Arc::new(AgentFactory::create_openai_agent(&actor_discovery_config)?);
+
+    // Phase 1: Generate actors and their capabilities
+    info!("PHASE 0: GENERATE ACTORS");
+    let actors: Actors =
+        pattern_phases::generate_actors::execute(codeblock, &actor_discovery_agent, repo).await?;
+
+    let actor_count = actors.actors.len();
+    info!("total of {} Actors found!", actor_count);
+
+    let pattern_prompt = IssuePrompt::Combined((pattern_categories, actors.actors));
+
+    info!("PHASE 1-3: GENERATE FINDINGS DIRECT FROM PATTERN");
+    let findings = pattern_phases::generate_direct_findings::execute(
+        pattern_prompt,
+        codeblock,
+        pattern_discovery_agent,
+        repo,
+    )
+    .await?;
+
+    Ok(findings)
+}
 /// Process ipattern_discovery_config_gemininvariant analysis: generate, verify, and convert to findings
 async fn process_invariants(
     codeblock: &str,
