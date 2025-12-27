@@ -26,7 +26,7 @@ use crate::{
         phases::{rounds::all_rounds::AllRoundLegitAnalysis, verify_rounds::FindingAnalysis},
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
         threat_models::{
-            actors::{Actor, ActorAbuse, ActorAbuses},
+            actors::{ActorAbuse, ActorAbuses},
             patterns::VulnerabilityPattern,
         },
         utils::prompt_context::{
@@ -52,9 +52,7 @@ use crate::llm_review::threat_models::{
 };
 
 pub enum IssuePrompt {
-    Pattern(Vec<PatternCategory>),
     Invariant(Vec<InvariantType>),
-    Actor(Vec<Actor>),
     Combined((Vec<PatternCategory>, String)),
 }
 

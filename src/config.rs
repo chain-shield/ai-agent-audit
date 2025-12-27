@@ -26,7 +26,6 @@ pub const MAX_DEPTH: usize = 3;
 pub const TOKEN_BUDGET: usize = 200_000;
 pub const CREATE_TESTS: bool = false;
 pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
-pub const DIRECT_TO_FINDING_MODE: bool = true;
 pub const ALL_PATTERN_APPROACH: bool = true;
 
 // if true set DISCOVERY_RUNS accordingly
@@ -39,13 +38,11 @@ pub const SKIP_LIBRARIES: bool = true;
 pub const SKIP_PATTERN_VERIFICATION: bool = true;
 
 // SKIP or RUN MAIN PATTERN RUNS
-pub const SKIP_PATTERN_RUNS: bool = true;
 pub const SKIP_COMBINED_PATTERN_RUNS: bool = false;
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
 pub const INVARIANT_RUNS: usize = 0; // 0 for large protocols; default: 3
-pub const ACTOR_RUNS: usize = 0; // old value 10
 pub const MAX_PATTERN_RUN_TOP: usize = 3; // 2 for large protocol, default: 3
 pub const MAX_PATTERN_RUN_RARE: usize = 3; // 2 for large protocol, default: 3
 pub const MAX_PATTERN_RUN_MOST: usize = 3; // 0 for large protocol, default: 3

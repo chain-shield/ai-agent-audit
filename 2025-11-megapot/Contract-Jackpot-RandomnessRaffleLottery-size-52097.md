@@ -1733,168 +1733,6 @@ contract Jackpot is IJackpot, Ownable2Step, ReentrancyGuardTransient {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: Apache 2
-pragma solidity ^0.8.0;
-
-import "./EntropyEvents.sol";
-import "./EntropyEventsV2.sol";
-import "./EntropyStructsV2.sol";
-
-interface IEntropyV2 is EntropyEventsV2 {
-    /// @notice Request a random number using the default provider with default gas limit
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2()`) as msg.value.
-    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2()`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2()
-        external
-        payable
-        returns (uint64 assignedSequenceNumber);
-
-    /// @notice Request a random number using the default provider with specified gas limit
-    /// @param gasLimit The gas limit for the callback function.
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(gasLimit)`) as msg.value.
-    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2(gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2(
-        uint32 gasLimit
-    ) external payable returns (uint64 assignedSequenceNumber);
-
-    /// @notice Request a random number from a specific provider with specified gas limit
-    /// @param provider The address of the provider to request from
-    /// @param gasLimit The gas limit for the callback function
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
-    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2(
-        address provider,
-        uint32 gasLimit
-    ) external payable returns (uint64 assignedSequenceNumber);
-
-    /// @notice Request a random number from a specific provider with a user-provided random number and gas limit
-    /// @param provider The address of the provider to request from
-    /// @param userRandomNumber A random number provided by the user for additional entropy
-    /// @param gasLimit The gas limit for the callback function. Pass 0 to get a sane default value -- see note below.
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
-    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    function requestV2(
-        address provider,
-        bytes32 userRandomNumber,
-        uint32 gasLimit
-    ) external payable returns (uint64 assignedSequenceNumber);
-
-    /// @notice Get information about a specific entropy provider
-    /// @param provider The address of the provider to query
-    /// @return info The provider information including configuration, fees, and operational status
-    /// @dev This method returns detailed information about a provider's configuration and capabilities.
-    /// The returned ProviderInfo struct contains information such as the provider's fee structure and gas limits.
-    function getProviderInfoV2(
-        address provider
-    ) external view returns (EntropyStructsV2.ProviderInfo memory info);
-
-    /// @notice Get the address of the default entropy provider
-    /// @return provider The address of the default provider
-    /// @dev This method returns the address of the provider that will be used when no specific provider is specified
-    /// in the requestV2 calls. The default provider can be used to get the base fee and gas limit information.
-    function getDefaultProvider() external view returns (address provider);
-
-    /// @notice Get information about a specific request
-    /// @param provider The address of the provider that handled the request
-    /// @param sequenceNumber The unique identifier of the request
-    /// @return req The request information including status, random number, and other metadata
-    /// @dev This method allows querying the state of a previously made request. The returned Request struct
-    /// contains information about whether the request was fulfilled, the generated random number (if available),
-    /// and other metadata about the request.
-    function getRequestV2(
-        address provider,
-        uint64 sequenceNumber
-    ) external view returns (EntropyStructsV2.Request memory req);
-
-    /// @notice Get the fee charged by the default provider for the default gas limit
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the base fee required to make a request using the default provider with
-    /// the default gas limit. This fee should be passed as msg.value when calling requestV2().
-    /// The fee can change over time, so this method should be called before each request.
-    function getFeeV2() external view returns (uint128 feeAmount);
-
-    /// @notice Get the fee charged by the default provider for a specific gas limit
-    /// @param gasLimit The gas limit for the callback function
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the fee required to make a request using the default provider with
-    /// the specified gas limit. This fee should be passed as msg.value when calling requestV2(gasLimit).
-    /// The fee can change over time, so this method should be called before each request.
-    function getFeeV2(
-        uint32 gasLimit
-    ) external view returns (uint128 feeAmount);
-
-    /// @notice Get the fee charged by a specific provider for a request with a given gas limit
-    /// @param provider The address of the provider to query
-    /// @param gasLimit The gas limit for the callback function
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the fee required to make a request using the specified provider with
-    /// the given gas limit. This fee should be passed as msg.value when calling requestV2(provider, gasLimit)
-    /// or requestV2(provider, userRandomNumber, gasLimit). The fee can change over time, so this method
-    /// should be called before each request.
-    function getFeeV2(
-        address provider,
-        uint32 gasLimit
-    ) external view returns (uint128 feeAmount);
-}
-
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -2236,292 +2074,195 @@ contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsu
         return result;
     }
 }
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
+// SPDX-License-Identifier: Apache 2
+pragma solidity ^0.8.0;
 
-/// @notice Library for bit twiddling and boolean operations.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibBit.sol)
-/// @author Inspired by (https://graphics.stanford.edu/~seander/bithacks.html)
-library LibBit {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                  BIT TWIDDLING OPERATIONS                  */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+import "./EntropyEvents.sol";
+import "./EntropyEventsV2.sol";
+import "./EntropyStructsV2.sol";
 
-    /// @dev Find last set.
-    /// Returns the index of the most significant bit of `x`,
-    /// counting from the least significant bit position.
-    /// If `x` is zero, returns 256.
-    function fls(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, x)))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
-            r := or(r, shl(4, lt(0xffff, shr(r, x))))
-            r := or(r, shl(3, lt(0xff, shr(r, x))))
-            // forgefmt: disable-next-item
-            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
-                0x0706060506020504060203020504030106050205030304010505030400000000))
-        }
-    }
+interface IEntropyV2 is EntropyEventsV2 {
+    /// @notice Request a random number using the default provider with default gas limit
+    /// @return assignedSequenceNumber A unique identifier for this request
+    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
+    /// the generated random number.
+    ///
+    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
+    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
+    /// by the provider's configured default limit.
+    ///
+    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2()`) as msg.value.
+    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2()`
+    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
+    ///
+    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
+    /// This approach modifies the security guarantees such that a dishonest validator and provider can
+    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
+    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
+    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
+    function requestV2()
+        external
+        payable
+        returns (uint64 assignedSequenceNumber);
 
-    /// @dev Count leading zeros.
-    /// Returns the number of zeros preceding the most significant one bit.
-    /// If `x` is zero, returns 256.
-    function clz(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
-            r := or(r, shl(4, lt(0xffff, shr(r, x))))
-            r := or(r, shl(3, lt(0xff, shr(r, x))))
-            // forgefmt: disable-next-item
-            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
-                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
-        }
-    }
+    /// @notice Request a random number using the default provider with specified gas limit
+    /// @param gasLimit The gas limit for the callback function.
+    /// @return assignedSequenceNumber A unique identifier for this request
+    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
+    /// the generated random number.
+    ///
+    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
+    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
+    /// by the provider's configured default limit.
+    ///
+    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(gasLimit)`) as msg.value.
+    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2(gasLimit)`
+    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
+    ///
+    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
+    /// This approach modifies the security guarantees such that a dishonest validator and provider can
+    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
+    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
+    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
+    function requestV2(
+        uint32 gasLimit
+    ) external payable returns (uint64 assignedSequenceNumber);
 
-    /// @dev Find first set.
-    /// Returns the index of the least significant bit of `x`,
-    /// counting from the least significant bit position.
-    /// If `x` is zero, returns 256.
-    /// Equivalent to `ctz` (count trailing zeros), which gives
-    /// the number of zeros following the least significant one bit.
-    function ffs(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Isolate the least significant bit.
-            x := and(x, add(not(x), 1))
-            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
-            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
-            // forgefmt: disable-next-item
-            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
-                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
-                0x8040405543005266443200005020610674053026020000107506200176117077)))
-            // For the lower 5 bits of the result, use a De Bruijn lookup.
-            // forgefmt: disable-next-item
-            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
-                0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
-        }
-    }
+    /// @notice Request a random number from a specific provider with specified gas limit
+    /// @param provider The address of the provider to request from
+    /// @param gasLimit The gas limit for the callback function
+    /// @return assignedSequenceNumber A unique identifier for this request
+    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
+    /// the generated random number.
+    ///
+    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
+    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
+    /// by the provider's configured default limit.
+    ///
+    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
+    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
+    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
+    ///
+    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
+    /// This approach modifies the security guarantees such that a dishonest validator and provider can
+    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
+    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
+    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
+    function requestV2(
+        address provider,
+        uint32 gasLimit
+    ) external payable returns (uint64 assignedSequenceNumber);
 
-    /// @dev Returns the number of set bits in `x`.
-    function popCount(uint256 x) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let max := not(0)
-            let isMax := eq(x, max)
-            x := sub(x, and(shr(1, x), div(max, 3)))
-            x := add(and(x, div(max, 5)), and(shr(2, x), div(max, 5)))
-            x := and(add(x, shr(4, x)), div(max, 17))
-            c := or(shl(8, isMax), shr(248, mul(x, div(max, 255))))
-        }
-    }
+    /// @notice Request a random number from a specific provider with a user-provided random number and gas limit
+    /// @param provider The address of the provider to request from
+    /// @param userRandomNumber A random number provided by the user for additional entropy
+    /// @param gasLimit The gas limit for the callback function. Pass 0 to get a sane default value -- see note below.
+    /// @return assignedSequenceNumber A unique identifier for this request
+    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
+    /// the generated random number.
+    ///
+    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
+    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
+    /// by the provider's configured default limit.
+    ///
+    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
+    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
+    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
+    function requestV2(
+        address provider,
+        bytes32 userRandomNumber,
+        uint32 gasLimit
+    ) external payable returns (uint64 assignedSequenceNumber);
 
-    /// @dev Returns the number of zero bytes in `x`.
-    /// To get the number of non-zero bytes, simply do `32 - countZeroBytes(x)`.
-    function countZeroBytes(uint256 x) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-            c := byte(0, mul(shr(7, not(m)), shr(7, not(or(or(add(and(x, m), m), x), m)))))
-        }
-    }
+    /// @notice Get information about a specific entropy provider
+    /// @param provider The address of the provider to query
+    /// @return info The provider information including configuration, fees, and operational status
+    /// @dev This method returns detailed information about a provider's configuration and capabilities.
+    /// The returned ProviderInfo struct contains information such as the provider's fee structure and gas limits.
+    function getProviderInfoV2(
+        address provider
+    ) external view returns (EntropyStructsV2.ProviderInfo memory info);
 
-    /// @dev Returns the number of zero bytes in `s`.
-    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
-    function countZeroBytes(bytes memory s) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            function czb(x_) -> _c {
-                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
-                _c := byte(0, mul(shr(7, not(_m)), _c))
-            }
-            let n := mload(s)
-            let l := shl(5, shr(5, n))
-            s := add(s, 0x20)
-            for { let i } xor(i, l) { i := add(i, 0x20) } { c := add(czb(mload(add(s, i))), c) }
-            if lt(l, n) { c := add(czb(or(shr(shl(3, sub(n, l)), not(0)), mload(add(s, l)))), c) }
-        }
-    }
+    /// @notice Get the address of the default entropy provider
+    /// @return provider The address of the default provider
+    /// @dev This method returns the address of the provider that will be used when no specific provider is specified
+    /// in the requestV2 calls. The default provider can be used to get the base fee and gas limit information.
+    function getDefaultProvider() external view returns (address provider);
 
-    /// @dev Returns the number of zero bytes in `s`.
-    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
-    function countZeroBytesCalldata(bytes calldata s) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            function czb(x_) -> _c {
-                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
-                _c := byte(0, mul(shr(7, not(_m)), _c))
-            }
-            let l := shl(5, shr(5, s.length))
-            for { let i } xor(i, l) { i := add(i, 0x20) } {
-                c := add(czb(calldataload(add(s.offset, i))), c)
-            }
-            if lt(l, s.length) {
-                let m := shr(shl(3, sub(s.length, l)), not(0))
-                c := add(czb(or(m, calldataload(add(s.offset, l)))), c)
-            }
-        }
-    }
+    /// @notice Get information about a specific request
+    /// @param provider The address of the provider that handled the request
+    /// @param sequenceNumber The unique identifier of the request
+    /// @return req The request information including status, random number, and other metadata
+    /// @dev This method allows querying the state of a previously made request. The returned Request struct
+    /// contains information about whether the request was fulfilled, the generated random number (if available),
+    /// and other metadata about the request.
+    function getRequestV2(
+        address provider,
+        uint64 sequenceNumber
+    ) external view returns (EntropyStructsV2.Request memory req);
 
-    /// @dev Returns whether `x` is a power of 2.
-    function isPo2(uint256 x) internal pure returns (bool result) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Equivalent to `x && !(x & (x - 1))`.
-            result := iszero(add(and(x, sub(x, 1)), iszero(x)))
-        }
-    }
+    /// @notice Get the fee charged by the default provider for the default gas limit
+    /// @return feeAmount The fee amount in wei
+    /// @dev This method returns the base fee required to make a request using the default provider with
+    /// the default gas limit. This fee should be passed as msg.value when calling requestV2().
+    /// The fee can change over time, so this method should be called before each request.
+    function getFeeV2() external view returns (uint128 feeAmount);
 
-    /// @dev Returns `x` reversed at the bit level.
-    function reverseBits(uint256 x) internal pure returns (uint256 r) {
-        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
-        uint256 m1 = m0 ^ (m0 << 2);
-        uint256 m2 = m1 ^ (m1 << 1);
-        r = reverseBytes(x);
-        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
-        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
-        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
-    }
+    /// @notice Get the fee charged by the default provider for a specific gas limit
+    /// @param gasLimit The gas limit for the callback function
+    /// @return feeAmount The fee amount in wei
+    /// @dev This method returns the fee required to make a request using the default provider with
+    /// the specified gas limit. This fee should be passed as msg.value when calling requestV2(gasLimit).
+    /// The fee can change over time, so this method should be called before each request.
+    function getFeeV2(
+        uint32 gasLimit
+    ) external view returns (uint128 feeAmount);
 
-    /// @dev Returns `x` reversed at the byte level.
-    function reverseBytes(uint256 x) internal pure returns (uint256 r) {
-        unchecked {
-            // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
-            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == uint256(0)) >> 192);
-            uint256 m1 = m0 ^ (m0 << 32);
-            uint256 m2 = m1 ^ (m1 << 16);
-            uint256 m3 = m2 ^ (m2 << 8);
-            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
-            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
-            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
-            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
-            r = (r >> 128) | (r << 128);
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the bit level.
-    function commonBitPrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = 256 - clz(x ^ y);
-            return (x >> s) << s;
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the nibble level.
-    function commonNibblePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = (64 - (clz(x ^ y) >> 2)) << 2;
-            return (x >> s) << s;
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the byte level.
-    function commonBytePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = (32 - (clz(x ^ y) >> 3)) << 3;
-            return (x >> s) << s;
-        }
-    }
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                     BOOLEAN OPERATIONS                     */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    // A Solidity bool on the stack or memory is represented as a 256-bit word.
-    // Non-zero values are true, zero is false.
-    // A clean bool is either 0 (false) or 1 (true) under the hood.
-    // Usually, if not always, the bool result of a regular Solidity expression,
-    // or the argument of a public/external function will be a clean bool.
-    // You can usually use the raw variants for more performance.
-    // If uncertain, test (best with exact compiler settings).
-    // Or use the non-raw variants (compiler can sometimes optimize out the double `iszero`s).
-
-    /// @dev Returns `x & y`. Inputs must be clean.
-    function rawAnd(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := and(x, y)
-        }
-    }
-
-    /// @dev Returns `x & y`.
-    function and(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := and(iszero(iszero(x)), iszero(iszero(y)))
-        }
-    }
-
-    /// @dev Returns `w & x & y`.
-    function and(bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(or(iszero(w), or(iszero(x), iszero(y))))
-        }
-    }
-
-    /// @dev Returns `v & w & x & y`.
-    function and(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(or(or(iszero(v), iszero(w)), or(iszero(x), iszero(y))))
-        }
-    }
-
-    /// @dev Returns `x | y`. Inputs must be clean.
-    function rawOr(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := or(x, y)
-        }
-    }
-
-    /// @dev Returns `x | y`.
-    function or(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(x, y)))
-        }
-    }
-
-    /// @dev Returns `w | x | y`.
-    function or(bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(w, or(x, y))))
-        }
-    }
-
-    /// @dev Returns `v | w | x | y`.
-    function or(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(v, or(w, or(x, y)))))
-        }
-    }
-
-    /// @dev Returns 1 if `b` is true, else 0. Input must be clean.
-    function rawToUint(bool b) internal pure returns (uint256 z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := b
-        }
-    }
-
-    /// @dev Returns 1 if `b` is true, else 0.
-    function toUint(bool b) internal pure returns (uint256 z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(b))
-        }
-    }
+    /// @notice Get the fee charged by a specific provider for a request with a given gas limit
+    /// @param provider The address of the provider to query
+    /// @param gasLimit The gas limit for the callback function
+    /// @return feeAmount The fee amount in wei
+    /// @dev This method returns the fee required to make a request using the specified provider with
+    /// the given gas limit. This fee should be passed as msg.value when calling requestV2(provider, gasLimit)
+    /// or requestV2(provider, userRandomNumber, gasLimit). The fee can change over time, so this method
+    /// should be called before each request.
+    function getFeeV2(
+        address provider,
+        uint32 gasLimit
+    ) external view returns (uint128 feeAmount);
 }
 
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
+
+Change Date: 2029-12-01
+
+On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
+*/
+
+pragma solidity ^0.8.28;
+
+interface IPayoutCalculator {
+    function calculateAndStoreDrawingUserWinnings(
+        uint256 _drawingId,
+        uint256 _prizePool,
+        uint8 _ballMax,
+        uint8 _bonusballMax,
+        uint256[] memory _result,
+        uint256[] memory _dupResult
+    ) external returns (uint256);
+
+    function setDrawingTierInfo(uint256 _drawingId) external;
+
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
+}
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -2571,6 +2312,283 @@ library UintCasts {
     }
 }
 
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { ERC721 } from "solady/src/tokens/ERC721.sol";
+
+import { IJackpot } from "./interfaces/IJackpot.sol";
+import { IJackpotTicketNFT } from "./interfaces/IJackpotTicketNFT.sol";
+
+
+/**
+ * @title JackpotTicketNFT
+ * @notice ERC-721 implementation for jackpot tickets with tracking and transfer functionality
+ * @dev Implements jackpot tickets as transferable NFTs with:
+ *      - Packed ticket number storage for efficient gas usage
+ *      - User ticket tracking per drawing for easy querying
+ *      - Referral scheme association for winnings distribution
+ *      - Automatic ticket list management on transfers
+ *      - Integration with Jackpot contract for minting and burning
+ */
+contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
+
+    // =============================================================
+    //                           STRUCTS
+    // =============================================================
+    struct UserTickets {
+        uint256 totalTicketsBought;
+        mapping(uint256 => uint256) ticketIds;
+        mapping(uint256 => uint256) indexOfTicketId;
+    }
+
+    // =============================================================
+    //                       ERRORS
+    // =============================================================
+
+    error UnauthorizedCaller();
+
+    // =============================================================
+    //                       STATE VARIABLES
+    // =============================================================
+
+    // User and ticket mappings
+    mapping(address => mapping(uint256 => UserTickets)) internal userTickets; // user address => drawing => UserTickets
+    mapping(uint256 => TrackedTicket) public tickets; // ticketId → ticket info
+
+    IJackpot public immutable jackpot;
+
+    // =============================================================
+    //                       MODIFIERS
+    // =============================================================
+
+    modifier onlyJackpot() {
+        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
+        _;
+    }
+
+    // =============================================================
+    //                       CONSTRUCTOR
+    // =============================================================
+
+    /**
+     * @notice Initializes the JackpotTicketNFT with the Jackpot contract reference
+     * @dev Sets up the connection to the main Jackpot contract that will mint and burn tickets
+     * @param _jackpot Address of the main Jackpot contract
+     * @custom:effects
+     * - Sets jackpot contract reference as immutable
+     * - Inherits ERC721 functionality for NFT operations
+     * @custom:security
+     * - Immutable jackpot reference prevents unauthorized contract changes
+     */
+    constructor(IJackpot _jackpot) {
+        jackpot = _jackpot;
+    }
+
+    // =============================================================
+    //                       EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Mints a new ticket NFT with jackpot information
+     * @dev Creates an ERC-721 token representing a jackpot ticket with embedded metadata.
+     *      Automatically adds ticket to user's ticket list for the drawing.
+     * @param _recipient Address to receive the minted ticket
+     * @param _ticketId Unique identifier for the ticket (used as token ID)
+     * @param _drawingId Drawing the ticket is for
+     * @param _packedTicket Packed ticket numbers (normal numbers + bonusball)
+     * @param _referralScheme Hash of referral scheme used for this ticket
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Ticket ID must be unique (ERC721 enforces this)
+     * - Recipient address must not be zero (ERC721 enforces this)
+     * @custom:emits Transfer (ERC-721 standard)
+     * @custom:effects
+     * - Mints ERC-721 token to specified address
+     * - Stores ticket metadata in contract storage
+     * - Adds ticket to user's ticket list via _afterTokenTransfer
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Unique ticket ID enforcement via ERC721
+     * - Automatic user ticket tracking
+     */
+    function mintTicket(
+        address _recipient,
+        uint256 _ticketId,
+        uint256 _drawingId,
+        uint256 _packedTicket,
+        bytes32 _referralScheme
+    ) external onlyJackpot {
+        tickets[_ticketId] = TrackedTicket({
+            drawingId: _drawingId,
+            packedTicket: _packedTicket,
+            referralScheme: _referralScheme
+        });
+
+        _mint(_recipient, _ticketId);
+    }
+
+    function burnTicket(uint256 _ticketId) external onlyJackpot {
+        _burn(_ticketId);
+    }
+
+    // =============================================================
+    //                       VIEW FUNCTIONS
+    // =============================================================
+
+    function getUserTickets(address _userAddress, uint256 _drawingId) external view returns (ExtendedTrackedTicket[] memory) {
+        UserTickets storage userDrawingTickets = userTickets[_userAddress][_drawingId];
+        ExtendedTrackedTicket[] memory userTicketsList = new ExtendedTrackedTicket[](userDrawingTickets.totalTicketsBought);
+        for (uint256 i = 0; i < userDrawingTickets.totalTicketsBought; i++) {
+            uint256 ticketId = userDrawingTickets.ticketIds[i];
+            userTicketsList[i] = _getExtendedTicketInfo(ticketId);
+        }
+        return userTicketsList;
+    }
+
+    function getTicketInfo(uint256 _ticketId) external view returns (TrackedTicket memory) {
+        return tickets[_ticketId];
+    }
+
+    function getExtendedTicketInfo(uint256 _ticketId) external view returns (ExtendedTrackedTicket memory) {
+        return _getExtendedTicketInfo(_ticketId);
+    }
+    
+    function name() public pure override returns (string memory) {
+        return "Jackpot";
+    }
+
+    function symbol() public pure override returns (string memory) {
+        return "JACKPOT";
+    }
+
+    function tokenURI(uint256 /* tokenId */) public pure override returns (string memory) {
+        return "";
+    }
+
+    // =============================================================
+    //                       INTERNAL FUNCTIONS
+    // =============================================================
+
+    function _beforeTokenTransfer(address _from, address /* _to */, uint256 _tokenId) internal override {
+        if (_from != address(0)) {
+            TrackedTicket memory ticketInfo = tickets[_tokenId];
+            UserTickets storage fromTickets = userTickets[_from][ticketInfo.drawingId];
+            uint256 idx = fromTickets.indexOfTicketId[_tokenId];
+            uint256 lastIdx = fromTickets.totalTicketsBought - 1;
+            if (idx != lastIdx) {
+                uint256 swapId = fromTickets.ticketIds[lastIdx];
+                fromTickets.ticketIds[idx] = swapId;
+                fromTickets.indexOfTicketId[swapId] = idx;
+            }
+            delete fromTickets.ticketIds[lastIdx];
+            delete fromTickets.indexOfTicketId[_tokenId];
+            fromTickets.totalTicketsBought -= 1;
+        }
+    }
+
+    function _afterTokenTransfer(address /* _from */, address _to, uint256 _tokenId) internal override {
+        if (_to != address(0)) {
+            TrackedTicket memory ticketInfo = tickets[_tokenId];
+            UserTickets storage toTickets = userTickets[_to][ticketInfo.drawingId];
+            uint256 newIdx = toTickets.totalTicketsBought;
+            toTickets.ticketIds[newIdx] = _tokenId;
+            toTickets.indexOfTicketId[_tokenId] = newIdx;
+            toTickets.totalTicketsBought += 1;
+        }
+    }
+
+    function _getExtendedTicketInfo(uint256 _ticketId) internal view returns (ExtendedTrackedTicket memory) {
+        (uint8[] memory normals, uint8 bonusball) = jackpot.getUnpackedTicket(tickets[_ticketId].drawingId, tickets[_ticketId].packedTicket);
+        return ExtendedTrackedTicket({
+            ticketId: _ticketId,
+            ticket: tickets[_ticketId],
+            normals: normals,
+            bonusball: bonusball
+        });
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8;
+
+import { LibBit } from "solady/src/utils/LibBit.sol";
+
+library Combinations {
+    uint256 constant UINT256_BIT_WIDTH = 256;
+    /// @notice Compute number of combinations of size k from a set of n
+    /// @param n Size of set to choose from
+    /// @param k Size of subsets to choose
+    function choose(
+        uint256 n,
+        uint256 k
+    ) internal pure returns (uint256 result) {
+        assert(n >= k);
+        assert(n <= 128); // Artificial limit to avoid overflow
+        // "How to calculate binomial coefficients"
+        // From: https://blog.plover.com/math/choose.html
+        // This algorithm computes multiplication and division in alternation
+        // to avoid overflow as much as possible.
+        unchecked {
+            uint256 out = 1;
+            for (uint256 d = 1; d <= k; ++d) {
+                out *= n--;
+                out /= d;
+            }
+            return out;
+        }
+    }
+
+    /// @notice Generate all possible subsets of size k from a bit vector.
+    /// @param set Bit vector to generate subsets from
+    /// @param k Size of subsets to generate
+    function generateSubsets(
+        uint256 set,
+        uint256 k
+    ) internal pure returns (uint256[] memory subsets) {
+        unchecked {
+            uint256 n = LibBit.popCount(set);
+            assert(k <= n);
+            subsets = new uint256[](choose(n, k));
+
+            uint256 bound = 1 << n;
+            uint256 comb = (1 << k) - 1;
+            uint256 count;
+            while (comb < bound) {
+                uint256 mapped;
+                uint256 _set = set;
+                uint256 _comb = comb;
+                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
+                    if (_set & 1 == 1) {
+                        if (_comb & 1 == 1) {
+                            mapped |= (1 << i);
+                        }
+                        _comb >>= 1;
+                    }
+                    _set >>= 1;
+                }
+
+                subsets[count++] = mapped;
+
+                // "Gosper's hack"
+                uint256 c = comb & uint256(-int256(comb));
+                uint256 r = comb + c;
+                comb = (((r ^ comb) >> 2) / c) | r;
+            }
+            assert(count == choose(n, k));
+        }
+    }
+}
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
@@ -2916,102 +2934,291 @@ library TicketComboTracker {
     }
 }
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8;
+pragma solidity ^0.8.4;
 
-import { LibBit } from "solady/src/utils/LibBit.sol";
+/// @notice Library for bit twiddling and boolean operations.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibBit.sol)
+/// @author Inspired by (https://graphics.stanford.edu/~seander/bithacks.html)
+library LibBit {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                  BIT TWIDDLING OPERATIONS                  */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-library Combinations {
-    uint256 constant UINT256_BIT_WIDTH = 256;
-    /// @notice Compute number of combinations of size k from a set of n
-    /// @param n Size of set to choose from
-    /// @param k Size of subsets to choose
-    function choose(
-        uint256 n,
-        uint256 k
-    ) internal pure returns (uint256 result) {
-        assert(n >= k);
-        assert(n <= 128); // Artificial limit to avoid overflow
-        // "How to calculate binomial coefficients"
-        // From: https://blog.plover.com/math/choose.html
-        // This algorithm computes multiplication and division in alternation
-        // to avoid overflow as much as possible.
-        unchecked {
-            uint256 out = 1;
-            for (uint256 d = 1; d <= k; ++d) {
-                out *= n--;
-                out /= d;
-            }
-            return out;
+    /// @dev Find last set.
+    /// Returns the index of the most significant bit of `x`,
+    /// counting from the least significant bit position.
+    /// If `x` is zero, returns 256.
+    function fls(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, x)))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0x0706060506020504060203020504030106050205030304010505030400000000))
         }
     }
 
-    /// @notice Generate all possible subsets of size k from a bit vector.
-    /// @param set Bit vector to generate subsets from
-    /// @param k Size of subsets to generate
-    function generateSubsets(
-        uint256 set,
-        uint256 k
-    ) internal pure returns (uint256[] memory subsets) {
-        unchecked {
-            uint256 n = LibBit.popCount(set);
-            assert(k <= n);
-            subsets = new uint256[](choose(n, k));
+    /// @dev Count leading zeros.
+    /// Returns the number of zeros preceding the most significant one bit.
+    /// If `x` is zero, returns 256.
+    function clz(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // forgefmt: disable-next-item
+            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
+        }
+    }
 
-            uint256 bound = 1 << n;
-            uint256 comb = (1 << k) - 1;
-            uint256 count;
-            while (comb < bound) {
-                uint256 mapped;
-                uint256 _set = set;
-                uint256 _comb = comb;
-                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
-                    if (_set & 1 == 1) {
-                        if (_comb & 1 == 1) {
-                            mapped |= (1 << i);
-                        }
-                        _comb >>= 1;
-                    }
-                    _set >>= 1;
-                }
+    /// @dev Find first set.
+    /// Returns the index of the least significant bit of `x`,
+    /// counting from the least significant bit position.
+    /// If `x` is zero, returns 256.
+    /// Equivalent to `ctz` (count trailing zeros), which gives
+    /// the number of zeros following the least significant one bit.
+    function ffs(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Isolate the least significant bit.
+            x := and(x, add(not(x), 1))
+            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
+            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
+            // forgefmt: disable-next-item
+            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
+                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
+                0x8040405543005266443200005020610674053026020000107506200176117077)))
+            // For the lower 5 bits of the result, use a De Bruijn lookup.
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
+                0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
+        }
+    }
 
-                subsets[count++] = mapped;
+    /// @dev Returns the number of set bits in `x`.
+    function popCount(uint256 x) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let max := not(0)
+            let isMax := eq(x, max)
+            x := sub(x, and(shr(1, x), div(max, 3)))
+            x := add(and(x, div(max, 5)), and(shr(2, x), div(max, 5)))
+            x := and(add(x, shr(4, x)), div(max, 17))
+            c := or(shl(8, isMax), shr(248, mul(x, div(max, 255))))
+        }
+    }
 
-                // "Gosper's hack"
-                uint256 c = comb & uint256(-int256(comb));
-                uint256 r = comb + c;
-                comb = (((r ^ comb) >> 2) / c) | r;
+    /// @dev Returns the number of zero bytes in `x`.
+    /// To get the number of non-zero bytes, simply do `32 - countZeroBytes(x)`.
+    function countZeroBytes(uint256 x) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+            c := byte(0, mul(shr(7, not(m)), shr(7, not(or(or(add(and(x, m), m), x), m)))))
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `s`.
+    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
+    function countZeroBytes(bytes memory s) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            function czb(x_) -> _c {
+                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
+                _c := byte(0, mul(shr(7, not(_m)), _c))
             }
-            assert(count == choose(n, k));
+            let n := mload(s)
+            let l := shl(5, shr(5, n))
+            s := add(s, 0x20)
+            for { let i } xor(i, l) { i := add(i, 0x20) } { c := add(czb(mload(add(s, i))), c) }
+            if lt(l, n) { c := add(czb(or(shr(shl(3, sub(n, l)), not(0)), mload(add(s, l)))), c) }
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `s`.
+    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
+    function countZeroBytesCalldata(bytes calldata s) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            function czb(x_) -> _c {
+                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
+                _c := byte(0, mul(shr(7, not(_m)), _c))
+            }
+            let l := shl(5, shr(5, s.length))
+            for { let i } xor(i, l) { i := add(i, 0x20) } {
+                c := add(czb(calldataload(add(s.offset, i))), c)
+            }
+            if lt(l, s.length) {
+                let m := shr(shl(3, sub(s.length, l)), not(0))
+                c := add(czb(or(m, calldataload(add(s.offset, l)))), c)
+            }
+        }
+    }
+
+    /// @dev Returns whether `x` is a power of 2.
+    function isPo2(uint256 x) internal pure returns (bool result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Equivalent to `x && !(x & (x - 1))`.
+            result := iszero(add(and(x, sub(x, 1)), iszero(x)))
+        }
+    }
+
+    /// @dev Returns `x` reversed at the bit level.
+    function reverseBits(uint256 x) internal pure returns (uint256 r) {
+        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
+        uint256 m1 = m0 ^ (m0 << 2);
+        uint256 m2 = m1 ^ (m1 << 1);
+        r = reverseBytes(x);
+        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
+        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
+        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
+    }
+
+    /// @dev Returns `x` reversed at the byte level.
+    function reverseBytes(uint256 x) internal pure returns (uint256 r) {
+        unchecked {
+            // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
+            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == uint256(0)) >> 192);
+            uint256 m1 = m0 ^ (m0 << 32);
+            uint256 m2 = m1 ^ (m1 << 16);
+            uint256 m3 = m2 ^ (m2 << 8);
+            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
+            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
+            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
+            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
+            r = (r >> 128) | (r << 128);
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the bit level.
+    function commonBitPrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = 256 - clz(x ^ y);
+            return (x >> s) << s;
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the nibble level.
+    function commonNibblePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = (64 - (clz(x ^ y) >> 2)) << 2;
+            return (x >> s) << s;
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the byte level.
+    function commonBytePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = (32 - (clz(x ^ y) >> 3)) << 3;
+            return (x >> s) << s;
+        }
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                     BOOLEAN OPERATIONS                     */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    // A Solidity bool on the stack or memory is represented as a 256-bit word.
+    // Non-zero values are true, zero is false.
+    // A clean bool is either 0 (false) or 1 (true) under the hood.
+    // Usually, if not always, the bool result of a regular Solidity expression,
+    // or the argument of a public/external function will be a clean bool.
+    // You can usually use the raw variants for more performance.
+    // If uncertain, test (best with exact compiler settings).
+    // Or use the non-raw variants (compiler can sometimes optimize out the double `iszero`s).
+
+    /// @dev Returns `x & y`. Inputs must be clean.
+    function rawAnd(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := and(x, y)
+        }
+    }
+
+    /// @dev Returns `x & y`.
+    function and(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := and(iszero(iszero(x)), iszero(iszero(y)))
+        }
+    }
+
+    /// @dev Returns `w & x & y`.
+    function and(bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(or(iszero(w), or(iszero(x), iszero(y))))
+        }
+    }
+
+    /// @dev Returns `v & w & x & y`.
+    function and(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(or(or(iszero(v), iszero(w)), or(iszero(x), iszero(y))))
+        }
+    }
+
+    /// @dev Returns `x | y`. Inputs must be clean.
+    function rawOr(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := or(x, y)
+        }
+    }
+
+    /// @dev Returns `x | y`.
+    function or(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(x, y)))
+        }
+    }
+
+    /// @dev Returns `w | x | y`.
+    function or(bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(w, or(x, y))))
+        }
+    }
+
+    /// @dev Returns `v | w | x | y`.
+    function or(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(v, or(w, or(x, y)))))
+        }
+    }
+
+    /// @dev Returns 1 if `b` is true, else 0. Input must be clean.
+    function rawToUint(bool b) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := b
+        }
+    }
+
+    /// @dev Returns 1 if `b` is true, else 0.
+    function toUint(bool b) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(b))
         }
     }
 }
-//SPDX-License-Identifier: UNLICENSED
 
-/*
-Copyright (C) 2025 Coordination Inc.
-Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
-
-Change Date: 2029-12-01
-
-On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
-*/
-
-pragma solidity ^0.8.28;
-
-interface IPayoutCalculator {
-    function calculateAndStoreDrawingUserWinnings(
-        uint256 _drawingId,
-        uint256 _prizePool,
-        uint8 _ballMax,
-        uint8 _bonusballMax,
-        uint256[] memory _result,
-        uint256[] memory _dupResult
-    ) external returns (uint256);
-
-    function setDrawingTierInfo(uint256 _drawingId) external;
-
-    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
-}
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -3554,355 +3761,39 @@ contract JackpotLPManager is IJackpotLPManager, Ownable {
 
 //SPDX-License-Identifier: UNLICENSED
 
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
 pragma solidity ^0.8.28;
 
-import { ERC721 } from "solady/src/tokens/ERC721.sol";
+interface IJackpotLPManager {
 
-import { IJackpot } from "./interfaces/IJackpot.sol";
-import { IJackpotTicketNFT } from "./interfaces/IJackpotTicketNFT.sol";
-
-
-/**
- * @title JackpotTicketNFT
- * @notice ERC-721 implementation for jackpot tickets with tracking and transfer functionality
- * @dev Implements jackpot tickets as transferable NFTs with:
- *      - Packed ticket number storage for efficient gas usage
- *      - User ticket tracking per drawing for easy querying
- *      - Referral scheme association for winnings distribution
- *      - Automatic ticket list management on transfers
- *      - Integration with Jackpot contract for minting and burning
- */
-contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
-
-    // =============================================================
-    //                           STRUCTS
-    // =============================================================
-    struct UserTickets {
-        uint256 totalTicketsBought;
-        mapping(uint256 => uint256) ticketIds;
-        mapping(uint256 => uint256) indexOfTicketId;
+    struct LPDrawingState {
+        uint256 lpPoolTotal;
+        uint256 pendingDeposits;
+        uint256 pendingWithdrawals;
     }
 
-    // =============================================================
-    //                       ERRORS
-    // =============================================================
+    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
 
-    error UnauthorizedCaller();
+    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
 
-    // =============================================================
-    //                       STATE VARIABLES
-    // =============================================================
+    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
 
-    // User and ticket mappings
-    mapping(address => mapping(uint256 => UserTickets)) internal userTickets; // user address => drawing => UserTickets
-    mapping(uint256 => TrackedTicket) public tickets; // ticketId → ticket info
-
-    IJackpot public immutable jackpot;
-
-    // =============================================================
-    //                       MODIFIERS
-    // =============================================================
-
-    modifier onlyJackpot() {
-        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
-        _;
-    }
-
-    // =============================================================
-    //                       CONSTRUCTOR
-    // =============================================================
-
-    /**
-     * @notice Initializes the JackpotTicketNFT with the Jackpot contract reference
-     * @dev Sets up the connection to the main Jackpot contract that will mint and burn tickets
-     * @param _jackpot Address of the main Jackpot contract
-     * @custom:effects
-     * - Sets jackpot contract reference as immutable
-     * - Inherits ERC721 functionality for NFT operations
-     * @custom:security
-     * - Immutable jackpot reference prevents unauthorized contract changes
-     */
-    constructor(IJackpot _jackpot) {
-        jackpot = _jackpot;
-    }
-
-    // =============================================================
-    //                       EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Mints a new ticket NFT with jackpot information
-     * @dev Creates an ERC-721 token representing a jackpot ticket with embedded metadata.
-     *      Automatically adds ticket to user's ticket list for the drawing.
-     * @param _recipient Address to receive the minted ticket
-     * @param _ticketId Unique identifier for the ticket (used as token ID)
-     * @param _drawingId Drawing the ticket is for
-     * @param _packedTicket Packed ticket numbers (normal numbers + bonusball)
-     * @param _referralScheme Hash of referral scheme used for this ticket
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Ticket ID must be unique (ERC721 enforces this)
-     * - Recipient address must not be zero (ERC721 enforces this)
-     * @custom:emits Transfer (ERC-721 standard)
-     * @custom:effects
-     * - Mints ERC-721 token to specified address
-     * - Stores ticket metadata in contract storage
-     * - Adds ticket to user's ticket list via _afterTokenTransfer
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Unique ticket ID enforcement via ERC721
-     * - Automatic user ticket tracking
-     */
-    function mintTicket(
-        address _recipient,
-        uint256 _ticketId,
+    function processDrawingSettlement(
         uint256 _drawingId,
-        uint256 _packedTicket,
-        bytes32 _referralScheme
-    ) external onlyJackpot {
-        tickets[_ticketId] = TrackedTicket({
-            drawingId: _drawingId,
-            packedTicket: _packedTicket,
-            referralScheme: _referralScheme
-        });
+        uint256 _lpEarnings,
+        uint256 _userWinnings,
+        uint256 _protocolFeeAmount
+    ) external returns (uint256 newLPValue, uint256 newAccumulator);
 
-        _mint(_recipient, _ticketId);
-    }
+    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
 
-    function burnTicket(uint256 _ticketId) external onlyJackpot {
-        _burn(_ticketId);
-    }
+    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
 
-    // =============================================================
-    //                       VIEW FUNCTIONS
-    // =============================================================
+    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
 
-    function getUserTickets(address _userAddress, uint256 _drawingId) external view returns (ExtendedTrackedTicket[] memory) {
-        UserTickets storage userDrawingTickets = userTickets[_userAddress][_drawingId];
-        ExtendedTrackedTicket[] memory userTicketsList = new ExtendedTrackedTicket[](userDrawingTickets.totalTicketsBought);
-        for (uint256 i = 0; i < userDrawingTickets.totalTicketsBought; i++) {
-            uint256 ticketId = userDrawingTickets.ticketIds[i];
-            userTicketsList[i] = _getExtendedTicketInfo(ticketId);
-        }
-        return userTicketsList;
-    }
+    function initializeLP() external;
 
-    function getTicketInfo(uint256 _ticketId) external view returns (TrackedTicket memory) {
-        return tickets[_ticketId];
-    }
-
-    function getExtendedTicketInfo(uint256 _ticketId) external view returns (ExtendedTrackedTicket memory) {
-        return _getExtendedTicketInfo(_ticketId);
-    }
-    
-    function name() public pure override returns (string memory) {
-        return "Jackpot";
-    }
-
-    function symbol() public pure override returns (string memory) {
-        return "JACKPOT";
-    }
-
-    function tokenURI(uint256 /* tokenId */) public pure override returns (string memory) {
-        return "";
-    }
-
-    // =============================================================
-    //                       INTERNAL FUNCTIONS
-    // =============================================================
-
-    function _beforeTokenTransfer(address _from, address /* _to */, uint256 _tokenId) internal override {
-        if (_from != address(0)) {
-            TrackedTicket memory ticketInfo = tickets[_tokenId];
-            UserTickets storage fromTickets = userTickets[_from][ticketInfo.drawingId];
-            uint256 idx = fromTickets.indexOfTicketId[_tokenId];
-            uint256 lastIdx = fromTickets.totalTicketsBought - 1;
-            if (idx != lastIdx) {
-                uint256 swapId = fromTickets.ticketIds[lastIdx];
-                fromTickets.ticketIds[idx] = swapId;
-                fromTickets.indexOfTicketId[swapId] = idx;
-            }
-            delete fromTickets.ticketIds[lastIdx];
-            delete fromTickets.indexOfTicketId[_tokenId];
-            fromTickets.totalTicketsBought -= 1;
-        }
-    }
-
-    function _afterTokenTransfer(address /* _from */, address _to, uint256 _tokenId) internal override {
-        if (_to != address(0)) {
-            TrackedTicket memory ticketInfo = tickets[_tokenId];
-            UserTickets storage toTickets = userTickets[_to][ticketInfo.drawingId];
-            uint256 newIdx = toTickets.totalTicketsBought;
-            toTickets.ticketIds[newIdx] = _tokenId;
-            toTickets.indexOfTicketId[_tokenId] = newIdx;
-            toTickets.totalTicketsBought += 1;
-        }
-    }
-
-    function _getExtendedTicketInfo(uint256 _ticketId) internal view returns (ExtendedTrackedTicket memory) {
-        (uint8[] memory normals, uint8 bonusball) = jackpot.getUnpackedTicket(tickets[_ticketId].drawingId, tickets[_ticketId].packedTicket);
-        return ExtendedTrackedTicket({
-            ticketId: _ticketId,
-            ticket: tickets[_ticketId],
-            normals: normals,
-            bonusball: bonusball
-        });
-    }
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpotTicketNFT {
-
-    struct TrackedTicket {
-        uint256 drawingId;
-        uint256 packedTicket;
-        bytes32 referralScheme;
-    }
-
-    struct ExtendedTrackedTicket {
-        uint256 ticketId;
-        TrackedTicket ticket;
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function mintTicket(
-        address recipient, 
-        uint256 ticketId, 
-        uint256 drawingId,
-        uint256 packedTicket, 
-        bytes32 referralScheme
-    ) external;
-    
-    function burnTicket(uint256 ticketId) external;
-    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
-    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IScaledEntropyProvider {
-    struct SetRequest {
-        uint8 samples;
-        uint256 minRange;
-        uint256 maxRange;
-        bool withReplacement;
-    }
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
-        external
-        payable
-        returns (uint64 requestId);
-    function getFee(uint32 _gasLimit) external view returns (uint256);
-}
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
-
-pragma solidity ^0.8.24;
-
-import {TransientSlot} from "./TransientSlot.sol";
-
-/**
- * @dev Variant of {ReentrancyGuard} that uses transient storage.
- *
- * NOTE: This variant only works on networks where EIP-1153 is available.
- *
- * _Available since v5.1._
- */
-abstract contract ReentrancyGuardTransient {
-    using TransientSlot for *;
-
-    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant REENTRANCY_GUARD_STORAGE =
-        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
-
-    /**
-     * @dev Unauthorized reentrant call.
-     */
-    error ReentrancyGuardReentrantCall();
-
-    /**
-     * @dev Prevents a contract from calling itself, directly or indirectly.
-     * Calling a `nonReentrant` function from another `nonReentrant`
-     * function is not supported. It is possible to prevent this from happening
-     * by making the `nonReentrant` function external, and making it call a
-     * `private` function that does the actual work.
-     */
-    modifier nonReentrant() {
-        _nonReentrantBefore();
-        _;
-        _nonReentrantAfter();
-    }
-
-    function _nonReentrantBefore() private {
-        // On the first call to nonReentrant, REENTRANCY_GUARD_STORAGE.asBoolean().tload() will be false
-        if (_reentrancyGuardEntered()) {
-            revert ReentrancyGuardReentrantCall();
-        }
-
-        // Any calls to nonReentrant after this point will fail
-        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(true);
-    }
-
-    function _nonReentrantAfter() private {
-        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(false);
-    }
-
-    /**
-     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
-     * `nonReentrant` function in the call stack.
-     */
-    function _reentrancyGuardEntered() internal view returns (bool) {
-        return REENTRANCY_GUARD_STORAGE.asBoolean().tload();
-    }
-}
-
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpot {
-
-    struct Ticket {
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function buyTickets(
-        Ticket[] memory _tickets,
-        address _recipient,
-        address[] memory _referrers,
-        uint256[] memory _referralSplitBps,
-        bytes32 _source
-    )
-        external
-        returns (uint256[] memory ticketIds);
-
-    function claimWinnings(
-        uint256[] memory _userTicketIds
-    )
-        external;
-
-    function ticketPrice() external view returns (uint256);
-    function currentDrawingId() external view returns (uint256);
-    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
+    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
+    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
 }
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
@@ -3972,6 +3863,121 @@ abstract contract Ownable2Step is Ownable {
     }
 }
 
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
+
+pragma solidity ^0.8.24;
+
+import {TransientSlot} from "./TransientSlot.sol";
+
+/**
+ * @dev Variant of {ReentrancyGuard} that uses transient storage.
+ *
+ * NOTE: This variant only works on networks where EIP-1153 is available.
+ *
+ * _Available since v5.1._
+ */
+abstract contract ReentrancyGuardTransient {
+    using TransientSlot for *;
+
+    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant REENTRANCY_GUARD_STORAGE =
+        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
+
+    /**
+     * @dev Unauthorized reentrant call.
+     */
+    error ReentrancyGuardReentrantCall();
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and making it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() private {
+        // On the first call to nonReentrant, REENTRANCY_GUARD_STORAGE.asBoolean().tload() will be false
+        if (_reentrancyGuardEntered()) {
+            revert ReentrancyGuardReentrantCall();
+        }
+
+        // Any calls to nonReentrant after this point will fail
+        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(true);
+    }
+
+    function _nonReentrantAfter() private {
+        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(false);
+    }
+
+    /**
+     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
+     * `nonReentrant` function in the call stack.
+     */
+    function _reentrancyGuardEntered() internal view returns (bool) {
+        return REENTRANCY_GUARD_STORAGE.asBoolean().tload();
+    }
+}
+
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpotTicketNFT {
+
+    struct TrackedTicket {
+        uint256 drawingId;
+        uint256 packedTicket;
+        bytes32 referralScheme;
+    }
+
+    struct ExtendedTrackedTicket {
+        uint256 ticketId;
+        TrackedTicket ticket;
+        uint8[] normals;
+        uint8 bonusball;
+    }
+
+    function mintTicket(
+        address recipient, 
+        uint256 ticketId, 
+        uint256 drawingId,
+        uint256 packedTicket, 
+        bytes32 referralScheme
+    ) external;
+    
+    function burnTicket(uint256 ticketId) external;
+    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
+    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IScaledEntropyProvider {
+    struct SetRequest {
+        uint8 samples;
+        uint256 minRange;
+        uint256 maxRange;
+        bool withReplacement;
+    }
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 requestId);
+    function getFee(uint32 _gasLimit) external view returns (uint256);
+}
 // SPDX-License-Identifier: Apache 2
 pragma solidity ^0.8.0;
 
@@ -4010,37 +4016,31 @@ abstract contract IEntropyConsumer {
 
 pragma solidity ^0.8.28;
 
-interface IJackpotLPManager {
+interface IJackpot {
 
-    struct LPDrawingState {
-        uint256 lpPoolTotal;
-        uint256 pendingDeposits;
-        uint256 pendingWithdrawals;
+    struct Ticket {
+        uint8[] normals;
+        uint8 bonusball;
     }
 
-    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
+    function buyTickets(
+        Ticket[] memory _tickets,
+        address _recipient,
+        address[] memory _referrers,
+        uint256[] memory _referralSplitBps,
+        bytes32 _source
+    )
+        external
+        returns (uint256[] memory ticketIds);
 
-    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
+    function claimWinnings(
+        uint256[] memory _userTicketIds
+    )
+        external;
 
-    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
-
-    function processDrawingSettlement(
-        uint256 _drawingId,
-        uint256 _lpEarnings,
-        uint256 _userWinnings,
-        uint256 _protocolFeeAmount
-    ) external returns (uint256 newLPValue, uint256 newAccumulator);
-
-    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
-
-    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
-
-    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
-
-    function initializeLP() external;
-
-    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
-    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
+    function ticketPrice() external view returns (uint256);
+    function currentDrawingId() external view returns (uint256);
+    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
 }
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
@@ -4140,221 +4140,6 @@ abstract contract Ownable is Context {
         address oldOwner = _owner;
         _owner = newOwner;
         emit OwnershipTransferred(oldOwner, newOwner);
-    }
-}
-
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-library JackpotErrors {
-    // =============================================================
-    //                            ERRORS
-    // =============================================================
-
-    error JackpotLocked();
-    error DrawingNotDue();
-    error InvalidRecipient();
-    error InvalidTicketCount();
-    error ReferralSplitLengthMismatch();
-    error TooManyReferrers();
-    error ReferralSplitSumInvalid();
-    error InvalidBonusball();
-    error TicketAlreadyMinted();
-    error NoTicketsToClaim();
-    error NotTicketOwner();
-    error TicketFromFutureDrawing();
-    error DepositAmountZero();
-    error ExceedsPoolCap();
-    error WithdrawAmountZero();
-    error InsufficientShares();
-    error NothingToWithdraw();
-    error UnauthorizedEntropyCaller();
-    error EntropyAlreadyCalled();
-    error JackpotNotLocked();
-    error ContractAlreadyInitialized();
-    error ZeroAddress();
-    error ContractNotInitialized();
-    error LPDepositsAlreadyInitialized();
-    error LPDepositsNotInitialized();
-    error JackpotAlreadyInitialized();
-    error TicketPurchasesDisabled();
-    error InvalidTierWeights();
-    error InvalidReferralSplitBps();
-    error InvalidNormalsCount();
-    error InsufficientEntropyFee();
-    error NoReferralFeesToClaim();
-    error NoPrizePool();
-    error TicketPurchasesAlreadyEnabled();
-    error TicketPurchasesAlreadyDisabled();
-    error InvalidNormalBallMax();
-    error InvalidDrawingDuration();
-    error InvalidBonusballMin();
-    error InvalidLpEdgeTarget();
-    error InvalidReserveRatio();
-    error InvalidReferralFee();
-    error InvalidReferralWinShare();
-    error InvalidTicketPrice();
-    error InvalidMaxReferrers();
-    error EmergencyEnabled();
-    error EmergencyModeNotEngaged();
-    error EmergencyModeAlreadyEnabled();
-    error EmergencyModeAlreadyDisabled();
-    error NoLPDeposits();
-    error InvalidProtocolFee();
-    error InvalidGovernancePoolCap();
-    error TicketNotEligibleForRefund();
-    error NoTicketsProvided();
-}
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
-
-import "./EntropyStructs.sol";
-
-// Deprecated -- these events are still emitted, but the lack of indexing
-// makes them hard to use.
-interface EntropyEvents {
-    event Registered(EntropyStructs.ProviderInfo provider);
-
-    event Requested(EntropyStructs.Request request);
-    event RequestedWithCallback(
-        address indexed provider,
-        address indexed requestor,
-        uint64 indexed sequenceNumber,
-        bytes32 userRandomNumber,
-        EntropyStructs.Request request
-    );
-
-    event Revealed(
-        EntropyStructs.Request request,
-        bytes32 userRevelation,
-        bytes32 providerRevelation,
-        bytes32 blockHash,
-        bytes32 randomNumber
-    );
-    event RevealedWithCallback(
-        EntropyStructs.Request request,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation,
-        bytes32 randomNumber
-    );
-
-    event CallbackFailed(
-        address indexed provider,
-        address indexed requestor,
-        uint64 indexed sequenceNumber,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation,
-        bytes32 randomNumber,
-        bytes errorCode
-    );
-
-    event ProviderFeeUpdated(address provider, uint128 oldFee, uint128 newFee);
-
-    event ProviderDefaultGasLimitUpdated(
-        address indexed provider,
-        uint32 oldDefaultGasLimit,
-        uint32 newDefaultGasLimit
-    );
-
-    event ProviderUriUpdated(address provider, bytes oldUri, bytes newUri);
-
-    event ProviderFeeManagerUpdated(
-        address provider,
-        address oldFeeManager,
-        address newFeeManager
-    );
-    event ProviderMaxNumHashesAdvanced(
-        address provider,
-        uint32 oldMaxNumHashes,
-        uint32 newMaxNumHashes
-    );
-
-    event Withdrawal(
-        address provider,
-        address recipient,
-        uint128 withdrawnAmount
-    );
-}
-
-// SPDX-License-Identifier: Apache 2
-
-pragma solidity ^0.8.0;
-
-// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
-// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
-// the Entropy contract.
-//
-// See EntropyStructsV2 for the struct definitions currently in use.
-contract EntropyStructs {
-    struct ProviderInfo {
-        uint128 feeInWei;
-        uint128 accruedFeesInWei;
-        // The commitment that the provider posted to the blockchain, and the sequence number
-        // where they committed to this. This value is not advanced after the provider commits,
-        // and instead is stored to help providers track where they are in the hash chain.
-        bytes32 originalCommitment;
-        uint64 originalCommitmentSequenceNumber;
-        // Metadata for the current commitment. Providers may optionally use this field to help
-        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
-        bytes commitmentMetadata;
-        // Optional URI where clients can retrieve revelations for the provider.
-        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
-        // TODO: specify the API that must be implemented at this URI
-        bytes uri;
-        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
-        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
-        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
-        uint64 endSequenceNumber;
-        // The sequence number that will be assigned to the next inbound user request.
-        uint64 sequenceNumber;
-        // The current commitment represents an index/value in the provider's hash chain.
-        // These values are used to verify requests for future sequence numbers. Note that
-        // currentCommitmentSequenceNumber < sequenceNumber.
-        //
-        // The currentCommitment advances forward through the provider's hash chain as values
-        // are revealed on-chain.
-        bytes32 currentCommitment;
-        uint64 currentCommitmentSequenceNumber;
-        // An address that is authorized to set / withdraw fees on behalf of this provider.
-        address feeManager;
-        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
-        // the provider supports for callbacks.
-        uint32 maxNumHashes;
-    }
-
-    struct Request {
-        // Storage slot 1 //
-        address provider;
-        uint64 sequenceNumber;
-        // The number of hashes required to verify the provider revelation.
-        uint32 numHashes;
-        // Storage slot 2 //
-        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
-        // eliminating 1 store.
-        bytes32 commitment;
-        // Storage slot 3 //
-        // The number of the block where this request was created.
-        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
-        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
-        // blocks ever generated.
-        uint64 blockNumber;
-        // The address that requested this random number.
-        address requester;
-        // If true, incorporate the blockhash of blockNumber into the generated random value.
-        bool useBlockhash;
-        // True if this is a request that expects a callback.
-        bool isRequestWithCallback;
     }
 }
 
@@ -4597,6 +4382,221 @@ library FisherYatesRejection {
             result[j] = pool[j];
         }
     }
+}
+
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+library JackpotErrors {
+    // =============================================================
+    //                            ERRORS
+    // =============================================================
+
+    error JackpotLocked();
+    error DrawingNotDue();
+    error InvalidRecipient();
+    error InvalidTicketCount();
+    error ReferralSplitLengthMismatch();
+    error TooManyReferrers();
+    error ReferralSplitSumInvalid();
+    error InvalidBonusball();
+    error TicketAlreadyMinted();
+    error NoTicketsToClaim();
+    error NotTicketOwner();
+    error TicketFromFutureDrawing();
+    error DepositAmountZero();
+    error ExceedsPoolCap();
+    error WithdrawAmountZero();
+    error InsufficientShares();
+    error NothingToWithdraw();
+    error UnauthorizedEntropyCaller();
+    error EntropyAlreadyCalled();
+    error JackpotNotLocked();
+    error ContractAlreadyInitialized();
+    error ZeroAddress();
+    error ContractNotInitialized();
+    error LPDepositsAlreadyInitialized();
+    error LPDepositsNotInitialized();
+    error JackpotAlreadyInitialized();
+    error TicketPurchasesDisabled();
+    error InvalidTierWeights();
+    error InvalidReferralSplitBps();
+    error InvalidNormalsCount();
+    error InsufficientEntropyFee();
+    error NoReferralFeesToClaim();
+    error NoPrizePool();
+    error TicketPurchasesAlreadyEnabled();
+    error TicketPurchasesAlreadyDisabled();
+    error InvalidNormalBallMax();
+    error InvalidDrawingDuration();
+    error InvalidBonusballMin();
+    error InvalidLpEdgeTarget();
+    error InvalidReserveRatio();
+    error InvalidReferralFee();
+    error InvalidReferralWinShare();
+    error InvalidTicketPrice();
+    error InvalidMaxReferrers();
+    error EmergencyEnabled();
+    error EmergencyModeNotEngaged();
+    error EmergencyModeAlreadyEnabled();
+    error EmergencyModeAlreadyDisabled();
+    error NoLPDeposits();
+    error InvalidProtocolFee();
+    error InvalidGovernancePoolCap();
+    error TicketNotEligibleForRefund();
+    error NoTicketsProvided();
+}
+// SPDX-License-Identifier: Apache 2
+
+pragma solidity ^0.8.0;
+
+// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
+// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
+// the Entropy contract.
+//
+// See EntropyStructsV2 for the struct definitions currently in use.
+contract EntropyStructs {
+    struct ProviderInfo {
+        uint128 feeInWei;
+        uint128 accruedFeesInWei;
+        // The commitment that the provider posted to the blockchain, and the sequence number
+        // where they committed to this. This value is not advanced after the provider commits,
+        // and instead is stored to help providers track where they are in the hash chain.
+        bytes32 originalCommitment;
+        uint64 originalCommitmentSequenceNumber;
+        // Metadata for the current commitment. Providers may optionally use this field to help
+        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
+        bytes commitmentMetadata;
+        // Optional URI where clients can retrieve revelations for the provider.
+        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
+        // TODO: specify the API that must be implemented at this URI
+        bytes uri;
+        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
+        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
+        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
+        uint64 endSequenceNumber;
+        // The sequence number that will be assigned to the next inbound user request.
+        uint64 sequenceNumber;
+        // The current commitment represents an index/value in the provider's hash chain.
+        // These values are used to verify requests for future sequence numbers. Note that
+        // currentCommitmentSequenceNumber < sequenceNumber.
+        //
+        // The currentCommitment advances forward through the provider's hash chain as values
+        // are revealed on-chain.
+        bytes32 currentCommitment;
+        uint64 currentCommitmentSequenceNumber;
+        // An address that is authorized to set / withdraw fees on behalf of this provider.
+        address feeManager;
+        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+        // the provider supports for callbacks.
+        uint32 maxNumHashes;
+    }
+
+    struct Request {
+        // Storage slot 1 //
+        address provider;
+        uint64 sequenceNumber;
+        // The number of hashes required to verify the provider revelation.
+        uint32 numHashes;
+        // Storage slot 2 //
+        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
+        // eliminating 1 store.
+        bytes32 commitment;
+        // Storage slot 3 //
+        // The number of the block where this request was created.
+        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
+        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
+        // blocks ever generated.
+        uint64 blockNumber;
+        // The address that requested this random number.
+        address requester;
+        // If true, incorporate the blockhash of blockNumber into the generated random value.
+        bool useBlockhash;
+        // True if this is a request that expects a callback.
+        bool isRequestWithCallback;
+    }
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.0;
+
+import "./EntropyStructs.sol";
+
+// Deprecated -- these events are still emitted, but the lack of indexing
+// makes them hard to use.
+interface EntropyEvents {
+    event Registered(EntropyStructs.ProviderInfo provider);
+
+    event Requested(EntropyStructs.Request request);
+    event RequestedWithCallback(
+        address indexed provider,
+        address indexed requestor,
+        uint64 indexed sequenceNumber,
+        bytes32 userRandomNumber,
+        EntropyStructs.Request request
+    );
+
+    event Revealed(
+        EntropyStructs.Request request,
+        bytes32 userRevelation,
+        bytes32 providerRevelation,
+        bytes32 blockHash,
+        bytes32 randomNumber
+    );
+    event RevealedWithCallback(
+        EntropyStructs.Request request,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation,
+        bytes32 randomNumber
+    );
+
+    event CallbackFailed(
+        address indexed provider,
+        address indexed requestor,
+        uint64 indexed sequenceNumber,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation,
+        bytes32 randomNumber,
+        bytes errorCode
+    );
+
+    event ProviderFeeUpdated(address provider, uint128 oldFee, uint128 newFee);
+
+    event ProviderDefaultGasLimitUpdated(
+        address indexed provider,
+        uint32 oldDefaultGasLimit,
+        uint32 newDefaultGasLimit
+    );
+
+    event ProviderUriUpdated(address provider, bytes oldUri, bytes newUri);
+
+    event ProviderFeeManagerUpdated(
+        address provider,
+        address oldFeeManager,
+        address newFeeManager
+    );
+    event ProviderMaxNumHashesAdvanced(
+        address provider,
+        uint32 oldMaxNumHashes,
+        uint32 newMaxNumHashes
+    );
+
+    event Withdrawal(
+        address provider,
+        address recipient,
+        uint128 withdrawnAmount
+    );
 }
 
 // SPDX-License-Identifier: Apache 2

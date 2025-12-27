@@ -597,6 +597,40 @@ library FisherYatesRejection {
     }
 }
 
+// SPDX-License-Identifier: Apache 2
+pragma solidity ^0.8.0;
+
+abstract contract IEntropyConsumer {
+    // This method is called by Entropy to provide the random number to the consumer.
+    // It asserts that the msg.sender is the Entropy contract. It is not meant to be
+    // override by the consumer.
+    function _entropyCallback(
+        uint64 sequence,
+        address provider,
+        bytes32 randomNumber
+    ) external {
+        address entropy = getEntropy();
+        require(entropy != address(0), "Entropy address not set");
+        require(msg.sender == entropy, "Only Entropy can call this function");
+
+        entropyCallback(sequence, provider, randomNumber);
+    }
+
+    // getEntropy returns Entropy contract address. The method is being used to check that the
+    // callback is indeed from Entropy contract. The consumer is expected to implement this method.
+    // Entropy address can be found here - https://docs.pyth.network/entropy/contract-addresses
+    function getEntropy() internal view virtual returns (address);
+
+    // This method is expected to be implemented by the consumer to handle the random number.
+    // It will be called by _entropyCallback after _entropyCallback ensures that the call is
+    // indeed from Entropy contract.
+    function entropyCallback(
+        uint64 sequence,
+        address provider,
+        bytes32 randomNumber
+    ) internal virtual;
+}
+
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
 
@@ -720,40 +754,6 @@ interface IScaledEntropyProvider {
         returns (uint64 requestId);
     function getFee(uint32 _gasLimit) external view returns (uint256);
 }
-// SPDX-License-Identifier: Apache 2
-pragma solidity ^0.8.0;
-
-abstract contract IEntropyConsumer {
-    // This method is called by Entropy to provide the random number to the consumer.
-    // It asserts that the msg.sender is the Entropy contract. It is not meant to be
-    // override by the consumer.
-    function _entropyCallback(
-        uint64 sequence,
-        address provider,
-        bytes32 randomNumber
-    ) external {
-        address entropy = getEntropy();
-        require(entropy != address(0), "Entropy address not set");
-        require(msg.sender == entropy, "Only Entropy can call this function");
-
-        entropyCallback(sequence, provider, randomNumber);
-    }
-
-    // getEntropy returns Entropy contract address. The method is being used to check that the
-    // callback is indeed from Entropy contract. The consumer is expected to implement this method.
-    // Entropy address can be found here - https://docs.pyth.network/entropy/contract-addresses
-    function getEntropy() internal view virtual returns (address);
-
-    // This method is expected to be implemented by the consumer to handle the random number.
-    // It will be called by _entropyCallback after _entropyCallback ensures that the call is
-    // indeed from Entropy contract.
-    function entropyCallback(
-        uint64 sequence,
-        address provider,
-        bytes32 randomNumber
-    ) internal virtual;
-}
-
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.0;
 
@@ -829,7 +829,12 @@ interface EntropyEvents {
 
 pragma solidity ^0.8.0;
 
-contract EntropyStructsV2 {
+// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
+// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
+// the Entropy contract.
+//
+// See EntropyStructsV2 for the struct definitions currently in use.
+contract EntropyStructs {
     struct ProviderInfo {
         uint128 feeInWei;
         uint128 accruedFeesInWei;
@@ -864,8 +869,6 @@ contract EntropyStructsV2 {
         // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
         // the provider supports for callbacks.
         uint32 maxNumHashes;
-        // Default gas limit to use for callbacks.
-        uint32 defaultGasLimit;
     }
 
     struct Request {
@@ -888,12 +891,8 @@ contract EntropyStructsV2 {
         address requester;
         // If true, incorporate the blockhash of blockNumber into the generated random value.
         bool useBlockhash;
-        // Status flag for requests with callbacks. See EntropyConstants for the possible values of this flag.
-        uint8 callbackStatus;
-        // The gasLimit in units of 10k gas. (i.e., 2 = 20k gas). We're using units of 10k in order to fit this
-        // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
-        // cover all real-world use cases.
-        uint16 gasLimit10k;
+        // True if this is a request that expects a callback.
+        bool isRequestWithCallback;
     }
 }
 
@@ -1052,12 +1051,7 @@ interface EntropyEventsV2 {
 
 pragma solidity ^0.8.0;
 
-// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
-// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
-// the Entropy contract.
-//
-// See EntropyStructsV2 for the struct definitions currently in use.
-contract EntropyStructs {
+contract EntropyStructsV2 {
     struct ProviderInfo {
         uint128 feeInWei;
         uint128 accruedFeesInWei;
@@ -1092,6 +1086,8 @@ contract EntropyStructs {
         // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
         // the provider supports for callbacks.
         uint32 maxNumHashes;
+        // Default gas limit to use for callbacks.
+        uint32 defaultGasLimit;
     }
 
     struct Request {
@@ -1114,8 +1110,12 @@ contract EntropyStructs {
         address requester;
         // If true, incorporate the blockhash of blockNumber into the generated random value.
         bool useBlockhash;
-        // True if this is a request that expects a callback.
-        bool isRequestWithCallback;
+        // Status flag for requests with callbacks. See EntropyConstants for the possible values of this flag.
+        uint8 callbackStatus;
+        // The gasLimit in units of 10k gas. (i.e., 2 = 20k gas). We're using units of 10k in order to fit this
+        // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
+        // cover all real-world use cases.
+        uint16 gasLimit10k;
     }
 }
 

@@ -3,7 +3,7 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::{ACTOR_RUNS, INVARIANT_RUNS},
+    config::INVARIANT_RUNS,
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -16,7 +16,6 @@ use crate::{
             invariants::{generate_invariant_prompt, get_invariant_json},
         },
         threat_models::{
-            actors::ACTOR_CENTRIC_VULN_PATTERNS,
             issues::{IssuePrompt, IssueStructTrait},
             pattern_category::get_category_library_spec,
         },
@@ -43,9 +42,8 @@ where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
 {
     let issue_title = match issue_prompt {
-        IssuePrompt::Pattern(_) | IssuePrompt::Combined(_) => "vulnerability patterns",
+        IssuePrompt::Combined(_) => "vulnerability patterns",
         IssuePrompt::Invariant(_) => "invariants",
-        IssuePrompt::Actor(_) => "actor",
     };
     info!(
         "🔍 Phase 1: Generating {} from contract codebase...",
@@ -96,33 +94,6 @@ where
     };
 
     match issue_prompt {
-        IssuePrompt::Pattern(pattern_category) => {
-            for (i, category) in pattern_category.into_iter().enumerate() {
-                let category_spec =
-                    get_category_library_spec(&category).expect("could not extract category spec");
-
-                // construct prompt
-                let instruction_prompt =
-                    dynamic_prompts::findings::generate_pattern_category_to_findings_prompt(
-                        &category, repo,
-                    );
-                let json_requirement_prompt =
-                    dynamic_prompts::findings_template::get_post_json_requirement_for_multipattern(
-                        &category_spec.issues,
-                        "security vulnerability pattern",
-                        repo,
-                    );
-                let prompt = Arc::new(format!(
-                    "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
-                ));
-
-                // info!("pattern prompt => {}", prompt);
-
-                for run in 0..category_spec.runs {
-                    spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
-                }
-            }
-        }
         IssuePrompt::Combined((pattern_category, actors_capabilities)) => {
             let actor_context = format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITY\n
                  **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis\n\n
@@ -153,25 +124,6 @@ where
                 for run in 0..category_spec.runs {
                     spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
                 }
-            }
-        }
-        IssuePrompt::Actor(actors) => {
-            // construct prompt
-            let instruction_prompt =
-                dynamic_prompts::findings::generate_bad_actor_to_findings_prompt(&actors, repo);
-            let json_requirement_prompt =
-                dynamic_prompts::findings_template::get_post_json_requirement_for_multipattern(
-                    &ACTOR_CENTRIC_VULN_PATTERNS,
-                    "bad actor",
-                    repo,
-                );
-
-            let prompt = Arc::new(format!(
-                "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
-            ));
-
-            for run in 0..ACTOR_RUNS {
-                spawn_run(Arc::clone(&prompt), run + 1);
             }
         }
         IssuePrompt::Invariant(invariants) => {

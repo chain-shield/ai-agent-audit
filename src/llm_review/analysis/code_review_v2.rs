@@ -1,6 +1,6 @@
 use crate::config::{
-    ACTOR_RUNS, ALL_PATTERN_APPROACH, CREATE_TESTS, DIRECT_TO_FINDING_MODE,
-    NICHE_PATTERN_ANALYSIS_MODE, SKIP_COMBINED_PATTERN_RUNS, SKIP_LIBRARIES, SKIP_PATTERN_RUNS,
+    ALL_PATTERN_APPROACH, CREATE_TESTS, NICHE_PATTERN_ANALYSIS_MODE, SKIP_COMBINED_PATTERN_RUNS,
+    SKIP_LIBRARIES,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -12,7 +12,6 @@ use crate::llm_review::contract::contract_category::{
     get_contract_spec_from_category, ContractCategory,
 };
 use crate::llm_review::contract::contract_file_map::ContractType;
-use crate::llm_review::dynamic_prompts::actors::generate_formatted_actor_abuse_list;
 use crate::llm_review::findings::findings::{Finding, CLAUDE_4_5_SONNET};
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::llm_review::{agent::agent_enums::AIAgent, phases};
@@ -22,15 +21,12 @@ use crate::llm_review::{
     findings::findings::Findings,
     pattern_phases,
     threat_models::{
-        actors::{ActorAbuses, Actors},
         invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
         issues::{IssuePrompt, IssueStructTrait},
         pattern_category::PatternCategory,
-        patterns::Patterns,
     },
 };
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::reporting::patterns::save_patterns;
 use log::info;
 use nanoid::nanoid;
 use std::{path::PathBuf, sync::Arc};
@@ -146,18 +142,10 @@ pub async fn review_codebase_for_security_issues_v2(
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
                 // Run pattern, invariant, and actor analysis concurrently within this task
-                let (patterns_res, combined_res, invariants_res, actors_res) = {
+                let (combined_res, invariants_res) = {
                     let pattern_categories =
                         get_pattern_category_from_contract_category(contract_category);
                     tokio::join!(
-                        process_patterns(
-                            &codeblock,
-                            pattern_categories.clone(),
-                            &pattern_discovery_agent,
-                            &finding_discovery_agent,
-                            &verify_agent,
-                            &repo_clone
-                        ),
                         process_combined_patterns(
                             &codeblock,
                             &contract,
@@ -172,13 +160,6 @@ pub async fn review_codebase_for_security_issues_v2(
                             &verify_agent,
                             &repo_clone
                         ),
-                        process_actors(
-                            &codeblock,
-                            &pattern_discovery_agent,
-                            &finding_discovery_agent,
-                            &verify_agent,
-                            &repo_clone
-                        )
                     )
                 };
 
@@ -191,9 +172,7 @@ pub async fn review_codebase_for_security_issues_v2(
                         Err(e) => log::error!("{} analysis failed: {:#}", analysis_type, e),
                     };
 
-                merge_findings(patterns_res, "pattern");
                 merge_findings(invariants_res, "invariant");
-                merge_findings(actors_res, "actor");
                 merge_findings(combined_res, "combined");
 
                 if !raw_findings.findings.is_empty() {
@@ -432,77 +411,6 @@ fn get_pattern_category_from_contract_category(
     }
 }
 
-/// Process pattern analysis: generate, verify, and convert to findings
-async fn process_patterns(
-    codeblock: &str,
-    pattern_categories: Vec<PatternCategory>,
-    pattern_discovery_agent: &Arc<AIAgent>,
-    finding_discovery_agent: &Arc<AIAgent>,
-    ai_verify_agent: &Arc<AIAgent>,
-    repo: &RepoPaths,
-) -> Result<Findings> {
-    // check flag
-    if SKIP_PATTERN_RUNS {
-        return Ok(Findings::default());
-    }
-
-    let pattern_prompt = IssuePrompt::Pattern(pattern_categories);
-
-    let findings = if DIRECT_TO_FINDING_MODE {
-        info!("PHASE 1-3: GENERATE FINDINGS DIRECT FROM PATTERN");
-        pattern_phases::generate_direct_findings::execute(
-            pattern_prompt,
-            codeblock,
-            pattern_discovery_agent,
-            repo,
-        )
-        .await?
-    } else {
-        // Phase 1: Generate patterns
-        info!("PHASE 1: GENERATE PATTERNS");
-        let raw_patterns: Patterns = pattern_phases::generate_patterns::execute(
-            pattern_prompt,
-            codeblock,
-            pattern_discovery_agent,
-            repo,
-        )
-        .await?;
-
-        // Phase 2: Verify patterns
-        info!("PHASE 2: VERIFY PATTERNS");
-        let verified_patterns = if !raw_patterns.issues().is_empty() {
-            pattern_phases::verify_patterns::verify_patterns(
-                raw_patterns,
-                codeblock,
-                ai_verify_agent,
-                repo,
-            )
-            .await?
-        } else {
-            Patterns::default()
-        };
-
-        info!("PHASE 3: GENERATE FINDINGS FROM PATTERNS");
-        let finding_from_patterns = if !verified_patterns.issues().is_empty() {
-            // save patterns to file (by contract)
-            save_patterns(&verified_patterns.patterns, repo).await?;
-
-            pattern_phases::multipattern_to_findings::execute(
-                verified_patterns,
-                codeblock,
-                finding_discovery_agent,
-                repo,
-            )
-            .await?
-        } else {
-            Findings::default()
-        };
-        finding_from_patterns
-    };
-
-    Ok(findings)
-}
-
 async fn process_combined_patterns(
     codeblock: &str,
     contract: &str,
@@ -598,95 +506,6 @@ async fn process_invariants(
         .await?;
 
         Ok(findings_from_invariants)
-    } else {
-        Ok(Findings::default())
-    }
-}
-
-/// Process actor-centric analysis: generate actors, enumerate abuses, verify, and convert to findings
-///
-/// This function implements the complete actor-centric threat modeling workflow:
-/// 1. Generate actors and their capabilities from the contract
-/// 2. Enumerate potential abuses for each actor capability
-/// 3. Verify that abuses are legitimate security issues
-/// 4. Convert verified abuses into detailed security findings
-async fn process_actors(
-    codeblock: &str,
-    actor_abuse_discovery_agent: &Arc<AIAgent>,
-    finding_discovery_agent: &Arc<AIAgent>,
-    ai_verify_agent: &Arc<AIAgent>,
-    repo: &RepoPaths,
-) -> Result<Findings> {
-    // check if actor thread analysis is enabled
-    if ACTOR_RUNS == 0 {
-        return Ok(Findings::default());
-    };
-
-    // custom agent for digging up list of actors
-    let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.2")
-        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
-        .with_file_retrieval(false)
-        .with_openai_reasoning_effort("high");
-
-    let actor_discovery_agent =
-        Arc::new(AgentFactory::create_openai_agent(&actor_discovery_config)?);
-
-    // Phase 1: Generate actors and their capabilities
-    info!("PHASE 1: GENERATE ACTORS");
-    let actors: Actors =
-        pattern_phases::generate_actors::execute(codeblock, &actor_discovery_agent, repo).await?;
-
-    let actor_count = actors.actors.len();
-    info!("total of {} Actors found!", actor_count);
-    // let actor_list = generate_formated_list_from_actor_data(&actors.actors);
-    // info!("{}", actor_list);
-
-    let actor_prompt = IssuePrompt::Actor(actors.actors);
-
-    // Phase 2: Generate actor abuses (potential exploits for each actor capability)
-    info!("PHASE 2: GENERATE ACTOR ABUSES");
-    let actor_abuses = if actor_count > 0 {
-        pattern_phases::generate_patterns::execute(
-            actor_prompt,
-            codeblock,
-            actor_abuse_discovery_agent,
-            repo,
-        )
-        .await?
-    } else {
-        ActorAbuses::default()
-    };
-
-    // Phase 3: Verify actor abuses are legitimate security issues
-    info!("PHASE 3: VERIFY ACTOR ABUSES");
-    let verified_abuses = if !actor_abuses.abuses.is_empty() {
-        pattern_phases::verify_patterns::verify_actor_abuses(
-            actor_abuses,
-            codeblock,
-            ai_verify_agent,
-            repo,
-        )
-        .await?
-    } else {
-        ActorAbuses::default()
-    };
-
-    let abuses = generate_formatted_actor_abuse_list(&verified_abuses.abuses);
-    info!("{}", abuses);
-
-    // Phase 4: Convert verified actor abuses into detailed security findings
-    info!("PHASE 4: GENERATE FINDINGS FROM ACTOR ABUSES");
-    if !verified_abuses.issues().is_empty() {
-        let findings_from_actors = pattern_phases::multipattern_to_findings::execute(
-            verified_abuses,
-            codeblock,
-            finding_discovery_agent,
-            repo,
-        )
-        .await?;
-
-        Ok(findings_from_actors)
     } else {
         Ok(Findings::default())
     }

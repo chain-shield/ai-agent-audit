@@ -1319,30 +1319,86 @@ library PanopticMath {
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.0;
 
-/// @title Library of Constants used in Panoptic.
-/// @author Axicon Labs Limited
-/// @notice This library provides constants used in Panoptic.
-library Constants {
-    /// @notice Fixed point multiplier: 2**96
-    uint256 internal constant FP96 = 0x1000000000000000000000000;
+/// @title Efficient Keccak256 Library
+/// @notice Provides gas-efficient keccak256 hashing using inline assembly
+library EfficientHash {
+    /// @notice Efficiently compute keccak256 hash for position key (address, address, uint256, int24, int24)
+    /// @param univ3pool The Uniswap V3 pool address (20 bytes)
+    /// @param owner The owner address (20 bytes)
+    /// @param tokenType The token type (32 bytes)
+    /// @param tickLower The lower tick (3 bytes when packed)
+    /// @param tickUpper The upper tick (3 bytes when packed)
+    /// @return hash The keccak256 hash of the packed data
+    function efficientKeccak256(
+        address univ3pool,
+        address owner,
+        uint256 tokenType,
+        int24 tickLower,
+        int24 tickUpper
+    ) internal pure returns (bytes32 hash) {
+        assembly {
+            let freeMemPtr := mload(0x40)
+            // Pack: 20 + 20 + 32 + 3 + 3 = 78 bytes (0x4e)
+            mstore(freeMemPtr, shl(96, univ3pool)) // address at byte 0
+            mstore(add(freeMemPtr, 0x14), shl(96, owner)) // address at byte 20
+            mstore(add(freeMemPtr, 0x28), tokenType) // uint256 at byte 40
+            mstore(add(freeMemPtr, 0x48), shl(232, and(tickLower, 0xFFFFFF))) // int24 at byte 72
+            mstore(add(freeMemPtr, 0x4b), shl(232, and(tickUpper, 0xFFFFFF))) // int24 at byte 75
 
-    /// @notice Minimum possible price tick in a Uniswap V3 pool
-    int24 internal constant MIN_POOL_TICK = -887272;
+            hash := keccak256(freeMemPtr, 0x4e)
+        }
+    }
 
-    /// @notice Maximum possible price tick in a Uniswap V3 pool
-    int24 internal constant MAX_POOL_TICK = 887272;
+    /// @notice Efficiently compute keccak256 hash for chunk key (int24, int24, uint256)
+    /// @param strike The strike tick (3 bytes when packed)
+    /// @param width The width (3 bytes when packed)
+    /// @param tokenType The token type (32 bytes)
+    /// @return hash The keccak256 hash of the packed data
+    function efficientKeccak256(
+        int24 strike,
+        int24 width,
+        uint256 tokenType
+    ) internal pure returns (bytes32 hash) {
+        assembly {
+            let freeMemPtr := mload(0x40)
+            // Pack: 3 + 3 + 32 = 38 bytes (0x26)
+            mstore(freeMemPtr, shl(232, and(strike, 0xFFFFFF))) // int24 at byte 0
+            mstore(add(freeMemPtr, 0x03), shl(232, and(width, 0xFFFFFF))) // int24 at byte 3
+            mstore(add(freeMemPtr, 0x06), tokenType) // uint256 at byte 6
 
-    /// @notice Minimum possible sqrtPriceX96 in a Uniswap V3 pool
-    uint160 internal constant MIN_POOL_SQRT_RATIO = 4295128739;
+            hash := keccak256(freeMemPtr, 0x26)
+        }
+    }
 
-    /// @notice Maximum possible sqrtPriceX96 in a Uniswap V3 pool
-    uint160 internal constant MAX_POOL_SQRT_RATIO =
-        1461446703485210103287273052203988822378723970342;
+    /// @notice Efficiently compute keccak256 hash for a uint256 array
+    /// @param data The uint256 array to hash
+    /// @return hash The keccak256 hash of the packed data
+    function efficientKeccak256(uint256[] memory data) internal pure returns (bytes32 hash) {
+        assembly {
+            // data layout in memory: [length][item0][item1]...
+            // Skip the length field (32 bytes) and hash the rest
+            let dataLength := mload(data)
+            let dataStart := add(data, 0x20)
+            let bytesToHash := mul(dataLength, 0x20)
 
-    /// @notice The maximum amount of change, in ticks, permitted before TICK_OFFSET is updated.
-    int24 internal constant MAX_RESIDUAL_THRESHOLD = 1024;
+            hash := keccak256(dataStart, bytesToHash)
+        }
+    }
+
+    /// @notice Efficiently compute keccak256 hash for bytes memory
+    /// @param data The bytes to hash
+    /// @return hash The keccak256 hash of the data
+    function efficientKeccak256(bytes memory data) internal pure returns (bytes32 hash) {
+        assembly {
+            // bytes layout in memory: [length][data...]
+            let dataLength := mload(data)
+            let dataStart := add(data, 0x20)
+
+            hash := keccak256(dataStart, dataLength)
+        }
+    }
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -1533,733 +1589,6 @@ library LiquidityChunkLibrary {
             return uint128(LiquidityChunk.unwrap(self));
         }
     }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-type RiskParameters is uint256;
-using RiskParametersLibrary for RiskParameters global;
-
-/// @title A Panoptic Risk Parameters. Tracks the data outputted from the RiskEngine, like the safeMode, commission fees, (etc).
-/// @author Axicon Labs Limited
-//
-//
-// PACKING RULES FOR A RISKPARAMETERS:
-// =================================================================================================
-//  From the LSB to the MSB:
-// (1) safeMode             4 bits  : The safeMode state
-// (2) notionalFee          14 bits : The fee to be charged on notional at mint
-// (3) premiumFee           14 bits : The fee to be charged on the premium at burn
-// (4) protocolSplit        14 bits : The part of the fee that goes to the protocol w/ buildercodes
-// (5) builderSplit         14 bits : The part of the fee that goes to the builder w/ buildercodes
-// (6) tickDeltaLiquidation 13 bits : The MAX_TWAP_DELTA_LIQUIDATION. Tick deviation = 1.0001**(2**13) = +/- 126%
-// (7) maxSpread            22 bits : The MAX_SPREAD, in bps. Max fraction removed = 2**22/(2**22 + 10_000) = 99.76%
-// (8) bpDecreaseBuffer     26 bits : The BP_DECREASE_BUFFER, in millitick
-// (9) maxLegs              7 bits  : The MAX_OPEN_LEGS (constrained to be <128)
-// (9) feeRecipient         128bits : The recipient of the commission fee split
-// Total                    256bits  : Total bits used by a RiskParameters.
-// ===============================================================================================
-//
-// The bit pattern is therefore:
-//
-//          (9)              (8)          (7)              (6)             (5)            (4)          (3)             (2)              (1)
-//    <-- 128 bits --><-- 7 bits --><-- 26 bits --><-- 22 bits --><-- 13 bits --><-- 14 bits --><-- 14 bits --> <-- 14 bits --> <-- 14 bits --> <-- 4 bits -->
-//        feeRecipient   maxLegs      bpDecrease      maxSpread      tickDelta    builderSplit   protocolSplit    premiumFee    notionalFee         safeMode
-//
-//    <--- most significant bit                                                                  least significant bit --->
-//
-library RiskParametersLibrary {
-    /*//////////////////////////////////////////////////////////////
-                                ENCODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Create a new `RiskParameters` object.
-    /// @param _safeMode The safe mode state (uint6)
-    /// @param _notionalFee The commission fee (uint14)
-    /// @param _premiumFee The commission fee (uint14)
-    /// @param _protocolSplit The part of the fee that goes to the protocol w/ buildercodes (uint14)
-    /// @param _builderSplit The part of the fee that goes to the builder w/ buildercodes (uint14)
-    /// @param _tickDeltaLiquidation The MAX_TWAP_DELTA_LIQUIDATION (uint16)
-    /// @param _maxSpread The MAX_SPREAD, in bps (uint24)
-    /// @param _bpDecreaseBuffer The BP_DECREASE_BUFFER, in millitick (uint26)
-    /// @param _maxLegs The maximum allowed number of legs across all open positions for a user
-    /// @param _feeRecipient The recipient of the commission fee split (uint128)
-    /// @return result The new RiskParameters object
-    function storeRiskParameters(
-        uint256 _safeMode,
-        uint256 _notionalFee,
-        uint256 _premiumFee,
-        uint256 _protocolSplit,
-        uint256 _builderSplit,
-        uint256 _tickDeltaLiquidation,
-        uint256 _maxSpread,
-        uint256 _bpDecreaseBuffer,
-        uint256 _maxLegs,
-        uint256 _feeRecipient
-    ) internal pure returns (RiskParameters result) {
-        assembly {
-            result := add(
-                add(
-                    add(
-                        add(_safeMode, shl(4, _notionalFee)),
-                        add(shl(18, _premiumFee), shl(32, _protocolSplit))
-                    ),
-                    add(shl(46, _builderSplit), shl(60, _tickDeltaLiquidation))
-                ),
-                add(
-                    add(shl(73, _maxSpread), add(shl(95, _bpDecreaseBuffer), shl(121, _maxLegs))),
-                    shl(128, _feeRecipient)
-                )
-            )
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                DECODING
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Get the safeMode state of `self`.
-    /// @param self The RiskParameters to retrieve the safeMode state from
-    /// @return result The safeMode of `self`
-    function safeMode(RiskParameters self) internal pure returns (uint8 result) {
-        assembly {
-            result := and(self, 0xF)
-        }
-    }
-
-    /// @notice Get the notionalFee of `self`.
-    /// @param self The RiskParameters to retrieve the notionalFee from
-    /// @return result The notionalFee of `self`
-    function notionalFee(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(4, self), 0x3FFF)
-        }
-    }
-
-    /// @notice Get the premiumFee of `self`.
-    /// @param self The RiskParameters to retrieve the premiumFee from
-    /// @return result The premiumFee of `self`
-    function premiumFee(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(18, self), 0x3FFF)
-        }
-    }
-
-    /// @notice Get the protocolSplit of `self`.
-    /// @param self The RiskParameters to retrieve the protocolSplit from
-    /// @return result The protocolSplit of `self`
-    function protocolSplit(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(32, self), 0x3FFF)
-        }
-    }
-
-    /// @notice Get the builderSplit of `self`.
-    /// @param self The RiskParameters to retrieve the builderSplit from
-    /// @return result The builderSplit of `self`
-    function builderSplit(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(46, self), 0x3FFF)
-        }
-    }
-
-    /// @notice Get the tickDeltaLiquidation of `self`.
-    /// @param self The RiskParameters to retrieve the tickDeltaLiquidation from
-    /// @return result The tickDeltaLiquidation of `self`
-    function tickDeltaLiquidation(RiskParameters self) internal pure returns (uint16 result) {
-        assembly {
-            result := and(shr(60, self), 0x1FFF)
-        }
-    }
-
-    /// @notice Get the maxSpread of `self`.
-    /// @param self The RiskParameters to retrieve the maxSpread from
-    /// @return result The maxSpread of `self`
-    function maxSpread(RiskParameters self) internal pure returns (uint24 result) {
-        assembly {
-            result := and(shr(73, self), 0x3FFFFF)
-        }
-    }
-
-    /// @notice Get the bpDecreaseBuffer of `self`.
-    /// @param self The RiskParameters to retrieve the bpDecreaseBuffer from
-    /// @return result The bpDecreaseBuffer of `self`
-    function bpDecreaseBuffer(RiskParameters self) internal pure returns (uint32 result) {
-        assembly {
-            result := and(shr(95, self), 0x3FFFFFF)
-        }
-    }
-
-    /// @notice Get the maxLegs of `self`.
-    /// @param self The RiskParameters to retrieve the maxLegs from
-    /// @return result The maxLegs of `self`
-    function maxLegs(RiskParameters self) internal pure returns (uint8 result) {
-        assembly {
-            result := and(shr(121, self), 0x7F)
-        }
-    }
-
-    /// @notice Get the feeRecipient of `self`.
-    /// @param self The RiskParameters to retrieve the feeRecipient from
-    /// @return result The feeRecipient of `self`
-    function feeRecipient(RiskParameters self) internal pure returns (uint128 result) {
-        assembly {
-            result := shr(128, self)
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-// Libraries
-import {Errors} from "@libraries/Errors.sol";
-import {Math} from "@libraries/Math.sol";
-
-type LeftRightUnsigned is uint256;
-using LeftRightLibrary for LeftRightUnsigned global;
-
-type LeftRightSigned is int256;
-using LeftRightLibrary for LeftRightSigned global;
-
-/// @title Pack two separate data (each of 128bit) into a single 256-bit slot; 256bit-to-128bit packing methods.
-/// @author Axicon Labs Limited
-/// @notice Simple data type that divides a 256-bit word into two 128-bit slots.
-library LeftRightLibrary {
-    using Math for uint256;
-
-    /// @notice AND bitmask to isolate the left half of a uint256.
-    uint256 internal constant LEFT_HALF_BIT_MASK =
-        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000;
-
-    /// @notice AND bitmask to isolate the left half of an int256.
-    int256 internal constant LEFT_HALF_BIT_MASK_INT =
-        int256(uint256(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000));
-
-    /// @notice AND bitmask to isolate the right half of an int256.
-    int256 internal constant RIGHT_HALF_BIT_MASK = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-
-    /*//////////////////////////////////////////////////////////////
-                               RIGHT SLOT
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Get the "right" slot from a bit pattern.
-    /// @param self The 256 bit value to extract the right half from
-    /// @return The right half of `self`
-    function rightSlot(LeftRightUnsigned self) internal pure returns (uint128) {
-        return uint128(LeftRightUnsigned.unwrap(self));
-    }
-
-    /// @notice Get the "right" slot from a bit pattern.
-    /// @param self The 256 bit value to extract the right half from
-    /// @return The right half of `self`
-    function rightSlot(LeftRightSigned self) internal pure returns (int128) {
-        return int128(LeftRightSigned.unwrap(self));
-    }
-
-    // All addToRightSlot functions add bits to the right slot without clearing it first
-    // Typically, the slot is already clear when writing to it, but if it is not, the bits will be added to the existing bits
-    // Therefore, the assumption must not be made that the bits will be cleared while using these helpers
-    // Note that the values *within* the slots are allowed to overflow, but overflows are contained and will not leak into the other slot
-
-    /// @notice Add to the "right" slot in a 256-bit pattern.
-    /// @param self The 256-bit pattern to be written to
-    /// @param right The value to be added to the right slot
-    /// @return `self` with `right` added (not overwritten, but added) to the value in its right 128 bits
-    function addToRightSlot(
-        LeftRightUnsigned self,
-        uint128 right
-    ) internal pure returns (LeftRightUnsigned) {
-        unchecked {
-            // prevent the right slot from leaking into the left one in the case of an overflow
-            // ff + 1 = (1)00, but we want just ff + 1 = 00
-            return
-                LeftRightUnsigned.wrap(
-                    (LeftRightUnsigned.unwrap(self) & LEFT_HALF_BIT_MASK) +
-                        uint256(uint128(LeftRightUnsigned.unwrap(self)) + right)
-                );
-        }
-    }
-
-    /// @notice Add to the "right" slot in a 256-bit pattern.
-    /// @param self The 256-bit pattern to be written to
-    /// @param right The value to be added to the right slot
-    /// @return `self` with `right` added (not overwritten, but added) to the value in its right 128 bits
-    function addToRightSlot(
-        LeftRightSigned self,
-        int128 right
-    ) internal pure returns (LeftRightSigned) {
-        // bit mask needed in case rightHalfBitPattern < 0 due to 2's complement
-        unchecked {
-            // prevent the right slot from leaking into the left one in the case of a positive sign change
-            // ff + 1 = (1)00, but we want just ff + 1 = 00
-            return
-                LeftRightSigned.wrap(
-                    (LeftRightSigned.unwrap(self) & LEFT_HALF_BIT_MASK_INT) +
-                        (int256(int128(LeftRightSigned.unwrap(self)) + right) & RIGHT_HALF_BIT_MASK)
-                );
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                               LEFT SLOT
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Get the "left" slot from a bit pattern.
-    /// @param self The 256 bit value to extract the left half from
-    /// @return The left half of `self`
-    function leftSlot(LeftRightUnsigned self) internal pure returns (uint128) {
-        return uint128(LeftRightUnsigned.unwrap(self) >> 128);
-    }
-
-    /// @notice Get the "left" slot from a bit pattern.
-    /// @param self The 256 bit value to extract the left half from
-    /// @return The left half of `self`
-    function leftSlot(LeftRightSigned self) internal pure returns (int128) {
-        return int128(LeftRightSigned.unwrap(self) >> 128);
-    }
-
-    /// All addToLeftSlot functions add bits to the left slot without clearing it first
-    // Typically, the slot is already clear when writing to it, but if it is not, the bits will be added to the existing bits
-    // Therefore, the assumption must not be made that the bits will be cleared while using these helpers
-    // Note that the values *within* the slots are allowed to overflow, but overflows are contained and will not leak into the other slot
-
-    /// @notice Add to the "left" slot in a 256-bit pattern.
-    /// @param self The 256-bit pattern to be written to
-    /// @param left The value to be added to the left slot
-    /// @return `self` with `left` added (not overwritten, but added) to the value in its left 128 bits
-    function addToLeftSlot(
-        LeftRightUnsigned self,
-        uint128 left
-    ) internal pure returns (LeftRightUnsigned) {
-        unchecked {
-            return LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(self) + (uint256(left) << 128));
-        }
-    }
-
-    /// @notice Add to the "left" slot in a 256-bit pattern.
-    /// @param self The 256-bit pattern to be written to
-    /// @param left The value to be added to the left slot
-    /// @return `self` with `left` added (not overwritten, but added) to the value in its left 128 bits
-    function addToLeftSlot(
-        LeftRightSigned self,
-        int128 left
-    ) internal pure returns (LeftRightSigned) {
-        unchecked {
-            return LeftRightSigned.wrap(LeftRightSigned.unwrap(self) + (int256(left) << 128));
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                             MATH FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The augend
-    /// @param y The addend
-    /// @return z The sum `x + y`
-    function add(
-        LeftRightUnsigned x,
-        LeftRightUnsigned y
-    ) internal pure returns (LeftRightUnsigned z) {
-        unchecked {
-            // adding leftRight packed uint128's is same as just adding the values explicitly
-            // given that we check for overflows of the left and right values
-            z = LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(x) + LeftRightUnsigned.unwrap(y));
-
-            // on overflow z will be less than either x or y
-            // type cast z to uint128 to isolate the right slot and if it's lower than a value it's comprised of (x)
-            // then an overflow has occurred
-            if (
-                LeftRightUnsigned.unwrap(z) < LeftRightUnsigned.unwrap(x) ||
-                (uint128(LeftRightUnsigned.unwrap(z)) < uint128(LeftRightUnsigned.unwrap(x)))
-            ) revert Errors.UnderOverFlow();
-        }
-    }
-
-    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference `x - y`
-    function sub(
-        LeftRightUnsigned x,
-        LeftRightUnsigned y
-    ) internal pure returns (LeftRightUnsigned z) {
-        unchecked {
-            // subtracting leftRight packed uint128's is same as just subtracting the values explicitly
-            // given that we check for underflows of the left and right values
-            z = LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(x) - LeftRightUnsigned.unwrap(y));
-
-            // on underflow z will be greater than either x or y
-            // type cast z to uint128 to isolate the right slot and if it's higher than a value that was subtracted from (x)
-            // then an underflow has occurred
-            if (
-                LeftRightUnsigned.unwrap(z) > LeftRightUnsigned.unwrap(x) ||
-                (uint128(LeftRightUnsigned.unwrap(z)) > uint128(LeftRightUnsigned.unwrap(x)))
-            ) revert Errors.UnderOverFlow();
-        }
-    }
-
-    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The augend
-    /// @param y The addend
-    /// @return z The sum `x + y`
-    function add(LeftRightUnsigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
-        unchecked {
-            int256 left = int256(uint256(x.leftSlot())) + y.leftSlot();
-            int128 left128 = int128(left);
-
-            if (left128 != left) revert Errors.UnderOverFlow();
-
-            int256 right = int256(uint256(x.rightSlot())) + y.rightSlot();
-            int128 right128 = int128(right);
-
-            if (right128 != right) revert Errors.UnderOverFlow();
-
-            return z.addToRightSlot(right128).addToLeftSlot(left128);
-        }
-    }
-
-    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The augend
-    /// @param y The addend
-    /// @return z The sum `x + y`
-    function add(LeftRightSigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
-        unchecked {
-            int256 left256 = int256(x.leftSlot()) + y.leftSlot();
-            int128 left128 = int128(left256);
-
-            int256 right256 = int256(x.rightSlot()) + y.rightSlot();
-            int128 right128 = int128(right256);
-
-            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
-
-            return z.addToRightSlot(right128).addToLeftSlot(left128);
-        }
-    }
-
-    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference `x - y`
-    function sub(LeftRightSigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
-        unchecked {
-            int256 left256 = int256(x.leftSlot()) - y.leftSlot();
-            int128 left128 = int128(left256);
-
-            int256 right256 = int256(x.rightSlot()) - y.rightSlot();
-            int128 right128 = int128(right256);
-
-            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
-
-            return z.addToRightSlot(right128).addToLeftSlot(left128);
-        }
-    }
-
-    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference `x - y`
-    function sub(LeftRightSigned x, LeftRightUnsigned y) internal pure returns (LeftRightSigned z) {
-        unchecked {
-            int256 left256 = int256(x.leftSlot()) - int256(uint256(y.leftSlot()));
-            int128 left128 = int128(left256);
-
-            int256 right256 = int256(x.rightSlot()) - int256(uint256(y.rightSlot()));
-            int128 right128 = int128(right256);
-
-            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
-
-            return z.addToRightSlot(right128).addToLeftSlot(left128);
-        }
-    }
-
-    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
-    /// @notice For each slot, rectify difference `x - y` to 0 if negative.
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference `x - y`
-    function subRect(
-        LeftRightSigned x,
-        LeftRightSigned y
-    ) internal pure returns (LeftRightUnsigned z) {
-        unchecked {
-            int256 left256 = int256(x.leftSlot()) - y.leftSlot();
-            int128 left128 = int128(left256);
-
-            int256 right256 = int256(x.rightSlot()) - y.rightSlot();
-            int128 right128 = int128(right256);
-
-            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
-
-            return
-                z.addToRightSlot(uint128(uint256((Math.max(right128, 0))))).addToLeftSlot(
-                    uint128(uint256((Math.max(left128, 0))))
-                );
-        }
-    }
-
-    /// @notice Adds two sets of LeftRight-encoded words, freezing both right slots if either overflows, and vice versa.
-    /// @dev Used for linked accumulators, so if the accumulator for one side overflows for a token, both cease to accumulate.
-    /// @param x The first augend
-    /// @param dx The addend for `x`
-    /// @param y The second augend
-    /// @param dy The addend for `y`
-    /// @return The sum `x + dx`
-    /// @return The sum `y + dy`
-    function addCapped(
-        LeftRightUnsigned x,
-        LeftRightUnsigned dx,
-        LeftRightUnsigned y,
-        LeftRightUnsigned dy
-    ) internal pure returns (LeftRightUnsigned, LeftRightUnsigned) {
-        uint128 z_xR = (uint256(x.rightSlot()) + dx.rightSlot()).toUint128Capped();
-        uint128 z_xL = (uint256(x.leftSlot()) + dx.leftSlot()).toUint128Capped();
-        uint128 z_yR = (uint256(y.rightSlot()) + dy.rightSlot()).toUint128Capped();
-        uint128 z_yL = (uint256(y.leftSlot()) + dy.leftSlot()).toUint128Capped();
-
-        bool r_Enabled = !(z_xR == type(uint128).max || z_yR == type(uint128).max);
-        bool l_Enabled = !(z_xL == type(uint128).max || z_yL == type(uint128).max);
-
-        return (
-            LeftRightUnsigned.wrap(r_Enabled ? z_xR : x.rightSlot()).addToLeftSlot(
-                l_Enabled ? z_xL : x.leftSlot()
-            ),
-            LeftRightUnsigned.wrap(r_Enabled ? z_yR : y.rightSlot()).addToLeftSlot(
-                l_Enabled ? z_yL : y.leftSlot()
-            )
-        );
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-/// @title Efficient Keccak256 Library
-/// @notice Provides gas-efficient keccak256 hashing using inline assembly
-library EfficientHash {
-    /// @notice Efficiently compute keccak256 hash for position key (address, address, uint256, int24, int24)
-    /// @param univ3pool The Uniswap V3 pool address (20 bytes)
-    /// @param owner The owner address (20 bytes)
-    /// @param tokenType The token type (32 bytes)
-    /// @param tickLower The lower tick (3 bytes when packed)
-    /// @param tickUpper The upper tick (3 bytes when packed)
-    /// @return hash The keccak256 hash of the packed data
-    function efficientKeccak256(
-        address univ3pool,
-        address owner,
-        uint256 tokenType,
-        int24 tickLower,
-        int24 tickUpper
-    ) internal pure returns (bytes32 hash) {
-        assembly {
-            let freeMemPtr := mload(0x40)
-            // Pack: 20 + 20 + 32 + 3 + 3 = 78 bytes (0x4e)
-            mstore(freeMemPtr, shl(96, univ3pool)) // address at byte 0
-            mstore(add(freeMemPtr, 0x14), shl(96, owner)) // address at byte 20
-            mstore(add(freeMemPtr, 0x28), tokenType) // uint256 at byte 40
-            mstore(add(freeMemPtr, 0x48), shl(232, and(tickLower, 0xFFFFFF))) // int24 at byte 72
-            mstore(add(freeMemPtr, 0x4b), shl(232, and(tickUpper, 0xFFFFFF))) // int24 at byte 75
-
-            hash := keccak256(freeMemPtr, 0x4e)
-        }
-    }
-
-    /// @notice Efficiently compute keccak256 hash for chunk key (int24, int24, uint256)
-    /// @param strike The strike tick (3 bytes when packed)
-    /// @param width The width (3 bytes when packed)
-    /// @param tokenType The token type (32 bytes)
-    /// @return hash The keccak256 hash of the packed data
-    function efficientKeccak256(
-        int24 strike,
-        int24 width,
-        uint256 tokenType
-    ) internal pure returns (bytes32 hash) {
-        assembly {
-            let freeMemPtr := mload(0x40)
-            // Pack: 3 + 3 + 32 = 38 bytes (0x26)
-            mstore(freeMemPtr, shl(232, and(strike, 0xFFFFFF))) // int24 at byte 0
-            mstore(add(freeMemPtr, 0x03), shl(232, and(width, 0xFFFFFF))) // int24 at byte 3
-            mstore(add(freeMemPtr, 0x06), tokenType) // uint256 at byte 6
-
-            hash := keccak256(freeMemPtr, 0x26)
-        }
-    }
-
-    /// @notice Efficiently compute keccak256 hash for a uint256 array
-    /// @param data The uint256 array to hash
-    /// @return hash The keccak256 hash of the packed data
-    function efficientKeccak256(uint256[] memory data) internal pure returns (bytes32 hash) {
-        assembly {
-            // data layout in memory: [length][item0][item1]...
-            // Skip the length field (32 bytes) and hash the rest
-            let dataLength := mload(data)
-            let dataStart := add(data, 0x20)
-            let bytesToHash := mul(dataLength, 0x20)
-
-            hash := keccak256(dataStart, bytesToHash)
-        }
-    }
-
-    /// @notice Efficiently compute keccak256 hash for bytes memory
-    /// @param data The bytes to hash
-    /// @return hash The keccak256 hash of the data
-    function efficientKeccak256(bytes memory data) internal pure returns (bytes32 hash) {
-        assembly {
-            // bytes layout in memory: [length][data...]
-            let dataLength := mload(data)
-            let dataStart := add(data, 0x20)
-
-            hash := keccak256(dataStart, dataLength)
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.24;
-
-/// @title Custom Errors library.
-/// @author Axicon Labs Limited
-/// @notice Contains all custom error messages used in Panoptic.
-library Errors {
-    /// @notice PanopticPool: The account is not solvent enough to perform the desired action
-    error AccountInsolvent(uint256 solvent, uint256 numberOfTicks);
-
-    /// @notice Casting error
-    /// @dev e.g. uint128(uint256(a)) fails
-    error CastingError();
-
-    /// @notice CollateralTracker: Attempted to withdraw/redeem less than a single asset
-    error BelowMinimumRedemption();
-
-    /// @notice SFPM: Mints/burns of zero-liquidity chunks in Uniswap are not supported
-    error ChunkHasZeroLiquidity();
-
-    /// @notice CollateralTracker: Collateral token has already been initialized
-    error CollateralTokenAlreadyInitialized();
-
-    /// @notice CollateralTracker: The amount of shares (or assets) deposited is larger than the maximum permitted
-    error DepositTooLarge();
-
-    /// @notice PanopticPool: The list of provided TokenIds has a duplicate entry
-    error DuplicateTokenId();
-
-    /// @notice PanopticPool: The effective liquidity (X32) is greater than min(`MAX_SPREAD`, `USER_PROVIDED_THRESHOLD`) during a long mint or short burn
-    /// @dev Effective liquidity measures how much new liquidity is minted relative to how much is already in the pool
-    error EffectiveLiquidityAboveThreshold();
-
-    /// @notice CollateralTracker: Attempted to withdraw/redeem more than available liquidity, owned shares, or open positions would allow for
-    error ExceedsMaximumRedemption();
-
-    /// @notice PanopticPool: The provided list of option positions is incorrect or invalid
-    error InputListFail();
-
-    /// @notice Tick is not between `MIN_TICK` and `MAX_TICK`
-    error InvalidTick();
-
-    /// @notice Liquidity in a chunk is above 2**128
-    error LiquidityTooHigh();
-
-    /// @notice CollateralTracker: There is not enough available liquidity to fulfill a credit in the PanopticPool
-    error InsufficientCreditLiquidity();
-
-    /// @notice RiskEngine: invalid builder code
-    error InvalidBuilderCode();
-
-    /// @notice The TokenId provided by the user is malformed or invalid
-    /// @param parameterType poolId=0, ratio=1, tokenType=2, risk_partner=3, strike=4, width=5, two identical strike/width/tokenType chunks=6
-    error InvalidTokenIdParameter(uint256 parameterType);
-
-    /// @notice A mint or swap callback was attempted from an address that did not match the canonical Uniswap V3 pool with the claimed features
-    error InvalidUniswapCallback();
-
-    /// @notice RiskEngine: There is a mismatch between the length of the positionIdList and positionBalanceArray
-    error LengthMismatch();
-
-    /// @notice PanopticPool: The Net Liquidity is zero due to small positions and cannot be used to compute the liquiditySpread
-    error NetLiquidityZero();
-
-    /// @notice PanopticPool: None of the legs in a position are force-exercisable (they are all either short or ATM long)
-    error NoLegsExercisable();
-
-    /// @notice PanopticPool: The leg is not long, so premium cannot be settled through `settleLongPremium`
-    error NotALongLeg();
-
-    /// @notice builderWallet: can only be called by the Builder
-    error NotBuilder();
-
-    /// @notice PanopticPool: There is not enough available liquidity in the chunk for one of the long legs to be created (or for one of the short legs to be closed)
-    error NotEnoughLiquidityInChunk();
-
-    /// @notice CollateralTracker: The user does not own enough assets to open/close a position
-    error NotEnoughTokens(address tokenAddress, uint256 assetsRequested, uint256 assetBalance);
-
-    /// @notice RiskEngine: can only be called by the guardian
-    error NotGuardian();
-
-    /// @notice PanopticPool: Position is still solvent and cannot be liquidated
-    error NotMarginCalled();
-
-    /// @notice CollateralTracker: The caller for a permissioned function is not the Panoptic Pool
-    error NotPanopticPool();
-
-    /// @notice Uniswap pool has already been initialized in the SFPM or created in the factory
-    error PoolAlreadyInitialized();
-
-    /// @notice The Uniswap Pool has not been created, so it cannot be used in the SFPM or have a PanopticPool created for it by the factory
-    error PoolNotInitialized();
-
-    /// @notice CollateralTracker: The user has open/active option positions, so they cannot transfer collateral shares
-    error PositionCountNotZero();
-
-    /// @notice PanopticPool: A position with the given token ID is not owned by the user and has positionSize=0
-    error PositionNotOwned();
-
-    /// @notice SFPM: The maximum token deltas (excluding swaps) for a position exceed (2^127 - 5) at some valid price
-    error PositionTooLarge();
-
-    /// @notice The current tick in the pool (post-ITM-swap) has fallen outside a user-defined open interval slippage range
-    error PriceBoundFail(int24 currentTick);
-
-    /// @notice The Price impact of that trade is too large
-    error PriceImpactTooLarge();
-
-    /// @notice An oracle price is too far away from another oracle price or the current tick
-    /// @dev This is a safeguard against price manipulation during option mints, burns, liquidations, force exercises, and premium settlements
-    error StaleOracle();
-
-    /// @notice PanopticPool: The position being minted would increase the total amount of legs open for the account above the maximum
-    error TooManyLegsOpen();
-
-    /// @notice ERC20 or SFPM (ERC1155) token transfer did not complete successfully
-    error TransferFailed(address token, address from, uint256 amount, uint256 balance);
-
-    /// @notice The tick range given by the strike price and width is invalid
-    /// because the upper and lower ticks are not initializable multiples of `tickSpacing`
-    /// or one of the ticks exceeds the `MIN_TICK` or `MAX_TICK` bounds
-    error InvalidTickBound();
-
-    /// @notice An unlock callback was attempted from an address other than the canonical Uniswap V4 pool manager
-    error UnauthorizedUniswapCallback();
-
-    /// @notice An operation in a library has failed due to an underflow or overflow
-    error UnderOverFlow();
-
-    /// @notice PanopticPool: The supplied poolId does not match the poolId for that Uniswap Pool
-    error WrongPoolId();
-
-    /// @notice SFPM: The poolId's don't match
-    error WrongUniswapPool();
-
-    /// @notice PanopticFactory: the zero address was supplied as a parameter
-    error ZeroAddress();
-
-    /// @notice CollateralTracker: Mints/burns of a position returns no collateral requirement
-    error ZeroCollateralRequirement();
-
-    /// @notice PanopticMath: The supplied tokenId has no valid legs
-    error TokenIdHasZeroLegs();
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -3552,6 +2881,677 @@ library Math {
             // Return e^x = 2^q * e^r.
             if (q >= 0) return expR << uint256(q);
             else return expR >> uint256(-q);
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+// Libraries
+import {Errors} from "@libraries/Errors.sol";
+import {Math} from "@libraries/Math.sol";
+
+type LeftRightUnsigned is uint256;
+using LeftRightLibrary for LeftRightUnsigned global;
+
+type LeftRightSigned is int256;
+using LeftRightLibrary for LeftRightSigned global;
+
+/// @title Pack two separate data (each of 128bit) into a single 256-bit slot; 256bit-to-128bit packing methods.
+/// @author Axicon Labs Limited
+/// @notice Simple data type that divides a 256-bit word into two 128-bit slots.
+library LeftRightLibrary {
+    using Math for uint256;
+
+    /// @notice AND bitmask to isolate the left half of a uint256.
+    uint256 internal constant LEFT_HALF_BIT_MASK =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000;
+
+    /// @notice AND bitmask to isolate the left half of an int256.
+    int256 internal constant LEFT_HALF_BIT_MASK_INT =
+        int256(uint256(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000));
+
+    /// @notice AND bitmask to isolate the right half of an int256.
+    int256 internal constant RIGHT_HALF_BIT_MASK = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+
+    /*//////////////////////////////////////////////////////////////
+                               RIGHT SLOT
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the "right" slot from a bit pattern.
+    /// @param self The 256 bit value to extract the right half from
+    /// @return The right half of `self`
+    function rightSlot(LeftRightUnsigned self) internal pure returns (uint128) {
+        return uint128(LeftRightUnsigned.unwrap(self));
+    }
+
+    /// @notice Get the "right" slot from a bit pattern.
+    /// @param self The 256 bit value to extract the right half from
+    /// @return The right half of `self`
+    function rightSlot(LeftRightSigned self) internal pure returns (int128) {
+        return int128(LeftRightSigned.unwrap(self));
+    }
+
+    // All addToRightSlot functions add bits to the right slot without clearing it first
+    // Typically, the slot is already clear when writing to it, but if it is not, the bits will be added to the existing bits
+    // Therefore, the assumption must not be made that the bits will be cleared while using these helpers
+    // Note that the values *within* the slots are allowed to overflow, but overflows are contained and will not leak into the other slot
+
+    /// @notice Add to the "right" slot in a 256-bit pattern.
+    /// @param self The 256-bit pattern to be written to
+    /// @param right The value to be added to the right slot
+    /// @return `self` with `right` added (not overwritten, but added) to the value in its right 128 bits
+    function addToRightSlot(
+        LeftRightUnsigned self,
+        uint128 right
+    ) internal pure returns (LeftRightUnsigned) {
+        unchecked {
+            // prevent the right slot from leaking into the left one in the case of an overflow
+            // ff + 1 = (1)00, but we want just ff + 1 = 00
+            return
+                LeftRightUnsigned.wrap(
+                    (LeftRightUnsigned.unwrap(self) & LEFT_HALF_BIT_MASK) +
+                        uint256(uint128(LeftRightUnsigned.unwrap(self)) + right)
+                );
+        }
+    }
+
+    /// @notice Add to the "right" slot in a 256-bit pattern.
+    /// @param self The 256-bit pattern to be written to
+    /// @param right The value to be added to the right slot
+    /// @return `self` with `right` added (not overwritten, but added) to the value in its right 128 bits
+    function addToRightSlot(
+        LeftRightSigned self,
+        int128 right
+    ) internal pure returns (LeftRightSigned) {
+        // bit mask needed in case rightHalfBitPattern < 0 due to 2's complement
+        unchecked {
+            // prevent the right slot from leaking into the left one in the case of a positive sign change
+            // ff + 1 = (1)00, but we want just ff + 1 = 00
+            return
+                LeftRightSigned.wrap(
+                    (LeftRightSigned.unwrap(self) & LEFT_HALF_BIT_MASK_INT) +
+                        (int256(int128(LeftRightSigned.unwrap(self)) + right) & RIGHT_HALF_BIT_MASK)
+                );
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                               LEFT SLOT
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the "left" slot from a bit pattern.
+    /// @param self The 256 bit value to extract the left half from
+    /// @return The left half of `self`
+    function leftSlot(LeftRightUnsigned self) internal pure returns (uint128) {
+        return uint128(LeftRightUnsigned.unwrap(self) >> 128);
+    }
+
+    /// @notice Get the "left" slot from a bit pattern.
+    /// @param self The 256 bit value to extract the left half from
+    /// @return The left half of `self`
+    function leftSlot(LeftRightSigned self) internal pure returns (int128) {
+        return int128(LeftRightSigned.unwrap(self) >> 128);
+    }
+
+    /// All addToLeftSlot functions add bits to the left slot without clearing it first
+    // Typically, the slot is already clear when writing to it, but if it is not, the bits will be added to the existing bits
+    // Therefore, the assumption must not be made that the bits will be cleared while using these helpers
+    // Note that the values *within* the slots are allowed to overflow, but overflows are contained and will not leak into the other slot
+
+    /// @notice Add to the "left" slot in a 256-bit pattern.
+    /// @param self The 256-bit pattern to be written to
+    /// @param left The value to be added to the left slot
+    /// @return `self` with `left` added (not overwritten, but added) to the value in its left 128 bits
+    function addToLeftSlot(
+        LeftRightUnsigned self,
+        uint128 left
+    ) internal pure returns (LeftRightUnsigned) {
+        unchecked {
+            return LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(self) + (uint256(left) << 128));
+        }
+    }
+
+    /// @notice Add to the "left" slot in a 256-bit pattern.
+    /// @param self The 256-bit pattern to be written to
+    /// @param left The value to be added to the left slot
+    /// @return `self` with `left` added (not overwritten, but added) to the value in its left 128 bits
+    function addToLeftSlot(
+        LeftRightSigned self,
+        int128 left
+    ) internal pure returns (LeftRightSigned) {
+        unchecked {
+            return LeftRightSigned.wrap(LeftRightSigned.unwrap(self) + (int256(left) << 128));
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             MATH FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The augend
+    /// @param y The addend
+    /// @return z The sum `x + y`
+    function add(
+        LeftRightUnsigned x,
+        LeftRightUnsigned y
+    ) internal pure returns (LeftRightUnsigned z) {
+        unchecked {
+            // adding leftRight packed uint128's is same as just adding the values explicitly
+            // given that we check for overflows of the left and right values
+            z = LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(x) + LeftRightUnsigned.unwrap(y));
+
+            // on overflow z will be less than either x or y
+            // type cast z to uint128 to isolate the right slot and if it's lower than a value it's comprised of (x)
+            // then an overflow has occurred
+            if (
+                LeftRightUnsigned.unwrap(z) < LeftRightUnsigned.unwrap(x) ||
+                (uint128(LeftRightUnsigned.unwrap(z)) < uint128(LeftRightUnsigned.unwrap(x)))
+            ) revert Errors.UnderOverFlow();
+        }
+    }
+
+    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference `x - y`
+    function sub(
+        LeftRightUnsigned x,
+        LeftRightUnsigned y
+    ) internal pure returns (LeftRightUnsigned z) {
+        unchecked {
+            // subtracting leftRight packed uint128's is same as just subtracting the values explicitly
+            // given that we check for underflows of the left and right values
+            z = LeftRightUnsigned.wrap(LeftRightUnsigned.unwrap(x) - LeftRightUnsigned.unwrap(y));
+
+            // on underflow z will be greater than either x or y
+            // type cast z to uint128 to isolate the right slot and if it's higher than a value that was subtracted from (x)
+            // then an underflow has occurred
+            if (
+                LeftRightUnsigned.unwrap(z) > LeftRightUnsigned.unwrap(x) ||
+                (uint128(LeftRightUnsigned.unwrap(z)) > uint128(LeftRightUnsigned.unwrap(x)))
+            ) revert Errors.UnderOverFlow();
+        }
+    }
+
+    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The augend
+    /// @param y The addend
+    /// @return z The sum `x + y`
+    function add(LeftRightUnsigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
+        unchecked {
+            int256 left = int256(uint256(x.leftSlot())) + y.leftSlot();
+            int128 left128 = int128(left);
+
+            if (left128 != left) revert Errors.UnderOverFlow();
+
+            int256 right = int256(uint256(x.rightSlot())) + y.rightSlot();
+            int128 right128 = int128(right);
+
+            if (right128 != right) revert Errors.UnderOverFlow();
+
+            return z.addToRightSlot(right128).addToLeftSlot(left128);
+        }
+    }
+
+    /// @notice Add two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The augend
+    /// @param y The addend
+    /// @return z The sum `x + y`
+    function add(LeftRightSigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
+        unchecked {
+            int256 left256 = int256(x.leftSlot()) + y.leftSlot();
+            int128 left128 = int128(left256);
+
+            int256 right256 = int256(x.rightSlot()) + y.rightSlot();
+            int128 right128 = int128(right256);
+
+            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
+
+            return z.addToRightSlot(right128).addToLeftSlot(left128);
+        }
+    }
+
+    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference `x - y`
+    function sub(LeftRightSigned x, LeftRightSigned y) internal pure returns (LeftRightSigned z) {
+        unchecked {
+            int256 left256 = int256(x.leftSlot()) - y.leftSlot();
+            int128 left128 = int128(left256);
+
+            int256 right256 = int256(x.rightSlot()) - y.rightSlot();
+            int128 right128 = int128(right256);
+
+            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
+
+            return z.addToRightSlot(right128).addToLeftSlot(left128);
+        }
+    }
+
+    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference `x - y`
+    function sub(LeftRightSigned x, LeftRightUnsigned y) internal pure returns (LeftRightSigned z) {
+        unchecked {
+            int256 left256 = int256(x.leftSlot()) - int256(uint256(y.leftSlot()));
+            int128 left128 = int128(left256);
+
+            int256 right256 = int256(x.rightSlot()) - int256(uint256(y.rightSlot()));
+            int128 right128 = int128(right256);
+
+            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
+
+            return z.addToRightSlot(right128).addToLeftSlot(left128);
+        }
+    }
+
+    /// @notice Subtract two LeftRight-encoded words; revert on overflow or underflow.
+    /// @notice For each slot, rectify difference `x - y` to 0 if negative.
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference `x - y`
+    function subRect(
+        LeftRightSigned x,
+        LeftRightSigned y
+    ) internal pure returns (LeftRightUnsigned z) {
+        unchecked {
+            int256 left256 = int256(x.leftSlot()) - y.leftSlot();
+            int128 left128 = int128(left256);
+
+            int256 right256 = int256(x.rightSlot()) - y.rightSlot();
+            int128 right128 = int128(right256);
+
+            if (left128 != left256 || right128 != right256) revert Errors.UnderOverFlow();
+
+            return
+                z.addToRightSlot(uint128(uint256((Math.max(right128, 0))))).addToLeftSlot(
+                    uint128(uint256((Math.max(left128, 0))))
+                );
+        }
+    }
+
+    /// @notice Adds two sets of LeftRight-encoded words, freezing both right slots if either overflows, and vice versa.
+    /// @dev Used for linked accumulators, so if the accumulator for one side overflows for a token, both cease to accumulate.
+    /// @param x The first augend
+    /// @param dx The addend for `x`
+    /// @param y The second augend
+    /// @param dy The addend for `y`
+    /// @return The sum `x + dx`
+    /// @return The sum `y + dy`
+    function addCapped(
+        LeftRightUnsigned x,
+        LeftRightUnsigned dx,
+        LeftRightUnsigned y,
+        LeftRightUnsigned dy
+    ) internal pure returns (LeftRightUnsigned, LeftRightUnsigned) {
+        uint128 z_xR = (uint256(x.rightSlot()) + dx.rightSlot()).toUint128Capped();
+        uint128 z_xL = (uint256(x.leftSlot()) + dx.leftSlot()).toUint128Capped();
+        uint128 z_yR = (uint256(y.rightSlot()) + dy.rightSlot()).toUint128Capped();
+        uint128 z_yL = (uint256(y.leftSlot()) + dy.leftSlot()).toUint128Capped();
+
+        bool r_Enabled = !(z_xR == type(uint128).max || z_yR == type(uint128).max);
+        bool l_Enabled = !(z_xL == type(uint128).max || z_yL == type(uint128).max);
+
+        return (
+            LeftRightUnsigned.wrap(r_Enabled ? z_xR : x.rightSlot()).addToLeftSlot(
+                l_Enabled ? z_xL : x.leftSlot()
+            ),
+            LeftRightUnsigned.wrap(r_Enabled ? z_yR : y.rightSlot()).addToLeftSlot(
+                l_Enabled ? z_yL : y.leftSlot()
+            )
+        );
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+/// @title Library of Constants used in Panoptic.
+/// @author Axicon Labs Limited
+/// @notice This library provides constants used in Panoptic.
+library Constants {
+    /// @notice Fixed point multiplier: 2**96
+    uint256 internal constant FP96 = 0x1000000000000000000000000;
+
+    /// @notice Minimum possible price tick in a Uniswap V3 pool
+    int24 internal constant MIN_POOL_TICK = -887272;
+
+    /// @notice Maximum possible price tick in a Uniswap V3 pool
+    int24 internal constant MAX_POOL_TICK = 887272;
+
+    /// @notice Minimum possible sqrtPriceX96 in a Uniswap V3 pool
+    uint160 internal constant MIN_POOL_SQRT_RATIO = 4295128739;
+
+    /// @notice Maximum possible sqrtPriceX96 in a Uniswap V3 pool
+    uint160 internal constant MAX_POOL_SQRT_RATIO =
+        1461446703485210103287273052203988822378723970342;
+
+    /// @notice The maximum amount of change, in ticks, permitted before TICK_OFFSET is updated.
+    int24 internal constant MAX_RESIDUAL_THRESHOLD = 1024;
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+/// @title Custom Errors library.
+/// @author Axicon Labs Limited
+/// @notice Contains all custom error messages used in Panoptic.
+library Errors {
+    /// @notice PanopticPool: The account is not solvent enough to perform the desired action
+    error AccountInsolvent(uint256 solvent, uint256 numberOfTicks);
+
+    /// @notice Casting error
+    /// @dev e.g. uint128(uint256(a)) fails
+    error CastingError();
+
+    /// @notice CollateralTracker: Attempted to withdraw/redeem less than a single asset
+    error BelowMinimumRedemption();
+
+    /// @notice SFPM: Mints/burns of zero-liquidity chunks in Uniswap are not supported
+    error ChunkHasZeroLiquidity();
+
+    /// @notice CollateralTracker: Collateral token has already been initialized
+    error CollateralTokenAlreadyInitialized();
+
+    /// @notice CollateralTracker: The amount of shares (or assets) deposited is larger than the maximum permitted
+    error DepositTooLarge();
+
+    /// @notice PanopticPool: The list of provided TokenIds has a duplicate entry
+    error DuplicateTokenId();
+
+    /// @notice PanopticPool: The effective liquidity (X32) is greater than min(`MAX_SPREAD`, `USER_PROVIDED_THRESHOLD`) during a long mint or short burn
+    /// @dev Effective liquidity measures how much new liquidity is minted relative to how much is already in the pool
+    error EffectiveLiquidityAboveThreshold();
+
+    /// @notice CollateralTracker: Attempted to withdraw/redeem more than available liquidity, owned shares, or open positions would allow for
+    error ExceedsMaximumRedemption();
+
+    /// @notice PanopticPool: The provided list of option positions is incorrect or invalid
+    error InputListFail();
+
+    /// @notice Tick is not between `MIN_TICK` and `MAX_TICK`
+    error InvalidTick();
+
+    /// @notice Liquidity in a chunk is above 2**128
+    error LiquidityTooHigh();
+
+    /// @notice CollateralTracker: There is not enough available liquidity to fulfill a credit in the PanopticPool
+    error InsufficientCreditLiquidity();
+
+    /// @notice RiskEngine: invalid builder code
+    error InvalidBuilderCode();
+
+    /// @notice The TokenId provided by the user is malformed or invalid
+    /// @param parameterType poolId=0, ratio=1, tokenType=2, risk_partner=3, strike=4, width=5, two identical strike/width/tokenType chunks=6
+    error InvalidTokenIdParameter(uint256 parameterType);
+
+    /// @notice A mint or swap callback was attempted from an address that did not match the canonical Uniswap V3 pool with the claimed features
+    error InvalidUniswapCallback();
+
+    /// @notice RiskEngine: There is a mismatch between the length of the positionIdList and positionBalanceArray
+    error LengthMismatch();
+
+    /// @notice PanopticPool: The Net Liquidity is zero due to small positions and cannot be used to compute the liquiditySpread
+    error NetLiquidityZero();
+
+    /// @notice PanopticPool: None of the legs in a position are force-exercisable (they are all either short or ATM long)
+    error NoLegsExercisable();
+
+    /// @notice PanopticPool: The leg is not long, so premium cannot be settled through `settleLongPremium`
+    error NotALongLeg();
+
+    /// @notice builderWallet: can only be called by the Builder
+    error NotBuilder();
+
+    /// @notice PanopticPool: There is not enough available liquidity in the chunk for one of the long legs to be created (or for one of the short legs to be closed)
+    error NotEnoughLiquidityInChunk();
+
+    /// @notice CollateralTracker: The user does not own enough assets to open/close a position
+    error NotEnoughTokens(address tokenAddress, uint256 assetsRequested, uint256 assetBalance);
+
+    /// @notice RiskEngine: can only be called by the guardian
+    error NotGuardian();
+
+    /// @notice PanopticPool: Position is still solvent and cannot be liquidated
+    error NotMarginCalled();
+
+    /// @notice CollateralTracker: The caller for a permissioned function is not the Panoptic Pool
+    error NotPanopticPool();
+
+    /// @notice Uniswap pool has already been initialized in the SFPM or created in the factory
+    error PoolAlreadyInitialized();
+
+    /// @notice The Uniswap Pool has not been created, so it cannot be used in the SFPM or have a PanopticPool created for it by the factory
+    error PoolNotInitialized();
+
+    /// @notice CollateralTracker: The user has open/active option positions, so they cannot transfer collateral shares
+    error PositionCountNotZero();
+
+    /// @notice PanopticPool: A position with the given token ID is not owned by the user and has positionSize=0
+    error PositionNotOwned();
+
+    /// @notice SFPM: The maximum token deltas (excluding swaps) for a position exceed (2^127 - 5) at some valid price
+    error PositionTooLarge();
+
+    /// @notice The current tick in the pool (post-ITM-swap) has fallen outside a user-defined open interval slippage range
+    error PriceBoundFail(int24 currentTick);
+
+    /// @notice The Price impact of that trade is too large
+    error PriceImpactTooLarge();
+
+    /// @notice An oracle price is too far away from another oracle price or the current tick
+    /// @dev This is a safeguard against price manipulation during option mints, burns, liquidations, force exercises, and premium settlements
+    error StaleOracle();
+
+    /// @notice PanopticPool: The position being minted would increase the total amount of legs open for the account above the maximum
+    error TooManyLegsOpen();
+
+    /// @notice ERC20 or SFPM (ERC1155) token transfer did not complete successfully
+    error TransferFailed(address token, address from, uint256 amount, uint256 balance);
+
+    /// @notice The tick range given by the strike price and width is invalid
+    /// because the upper and lower ticks are not initializable multiples of `tickSpacing`
+    /// or one of the ticks exceeds the `MIN_TICK` or `MAX_TICK` bounds
+    error InvalidTickBound();
+
+    /// @notice An unlock callback was attempted from an address other than the canonical Uniswap V4 pool manager
+    error UnauthorizedUniswapCallback();
+
+    /// @notice An operation in a library has failed due to an underflow or overflow
+    error UnderOverFlow();
+
+    /// @notice PanopticPool: The supplied poolId does not match the poolId for that Uniswap Pool
+    error WrongPoolId();
+
+    /// @notice SFPM: The poolId's don't match
+    error WrongUniswapPool();
+
+    /// @notice PanopticFactory: the zero address was supplied as a parameter
+    error ZeroAddress();
+
+    /// @notice CollateralTracker: Mints/burns of a position returns no collateral requirement
+    error ZeroCollateralRequirement();
+
+    /// @notice PanopticMath: The supplied tokenId has no valid legs
+    error TokenIdHasZeroLegs();
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.24;
+
+type RiskParameters is uint256;
+using RiskParametersLibrary for RiskParameters global;
+
+/// @title A Panoptic Risk Parameters. Tracks the data outputted from the RiskEngine, like the safeMode, commission fees, (etc).
+/// @author Axicon Labs Limited
+//
+//
+// PACKING RULES FOR A RISKPARAMETERS:
+// =================================================================================================
+//  From the LSB to the MSB:
+// (1) safeMode             4 bits  : The safeMode state
+// (2) notionalFee          14 bits : The fee to be charged on notional at mint
+// (3) premiumFee           14 bits : The fee to be charged on the premium at burn
+// (4) protocolSplit        14 bits : The part of the fee that goes to the protocol w/ buildercodes
+// (5) builderSplit         14 bits : The part of the fee that goes to the builder w/ buildercodes
+// (6) tickDeltaLiquidation 13 bits : The MAX_TWAP_DELTA_LIQUIDATION. Tick deviation = 1.0001**(2**13) = +/- 126%
+// (7) maxSpread            22 bits : The MAX_SPREAD, in bps. Max fraction removed = 2**22/(2**22 + 10_000) = 99.76%
+// (8) bpDecreaseBuffer     26 bits : The BP_DECREASE_BUFFER, in millitick
+// (9) maxLegs              7 bits  : The MAX_OPEN_LEGS (constrained to be <128)
+// (9) feeRecipient         128bits : The recipient of the commission fee split
+// Total                    256bits  : Total bits used by a RiskParameters.
+// ===============================================================================================
+//
+// The bit pattern is therefore:
+//
+//          (9)              (8)          (7)              (6)             (5)            (4)          (3)             (2)              (1)
+//    <-- 128 bits --><-- 7 bits --><-- 26 bits --><-- 22 bits --><-- 13 bits --><-- 14 bits --><-- 14 bits --> <-- 14 bits --> <-- 14 bits --> <-- 4 bits -->
+//        feeRecipient   maxLegs      bpDecrease      maxSpread      tickDelta    builderSplit   protocolSplit    premiumFee    notionalFee         safeMode
+//
+//    <--- most significant bit                                                                  least significant bit --->
+//
+library RiskParametersLibrary {
+    /*//////////////////////////////////////////////////////////////
+                                ENCODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Create a new `RiskParameters` object.
+    /// @param _safeMode The safe mode state (uint6)
+    /// @param _notionalFee The commission fee (uint14)
+    /// @param _premiumFee The commission fee (uint14)
+    /// @param _protocolSplit The part of the fee that goes to the protocol w/ buildercodes (uint14)
+    /// @param _builderSplit The part of the fee that goes to the builder w/ buildercodes (uint14)
+    /// @param _tickDeltaLiquidation The MAX_TWAP_DELTA_LIQUIDATION (uint16)
+    /// @param _maxSpread The MAX_SPREAD, in bps (uint24)
+    /// @param _bpDecreaseBuffer The BP_DECREASE_BUFFER, in millitick (uint26)
+    /// @param _maxLegs The maximum allowed number of legs across all open positions for a user
+    /// @param _feeRecipient The recipient of the commission fee split (uint128)
+    /// @return result The new RiskParameters object
+    function storeRiskParameters(
+        uint256 _safeMode,
+        uint256 _notionalFee,
+        uint256 _premiumFee,
+        uint256 _protocolSplit,
+        uint256 _builderSplit,
+        uint256 _tickDeltaLiquidation,
+        uint256 _maxSpread,
+        uint256 _bpDecreaseBuffer,
+        uint256 _maxLegs,
+        uint256 _feeRecipient
+    ) internal pure returns (RiskParameters result) {
+        assembly {
+            result := add(
+                add(
+                    add(
+                        add(_safeMode, shl(4, _notionalFee)),
+                        add(shl(18, _premiumFee), shl(32, _protocolSplit))
+                    ),
+                    add(shl(46, _builderSplit), shl(60, _tickDeltaLiquidation))
+                ),
+                add(
+                    add(shl(73, _maxSpread), add(shl(95, _bpDecreaseBuffer), shl(121, _maxLegs))),
+                    shl(128, _feeRecipient)
+                )
+            )
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                DECODING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the safeMode state of `self`.
+    /// @param self The RiskParameters to retrieve the safeMode state from
+    /// @return result The safeMode of `self`
+    function safeMode(RiskParameters self) internal pure returns (uint8 result) {
+        assembly {
+            result := and(self, 0xF)
+        }
+    }
+
+    /// @notice Get the notionalFee of `self`.
+    /// @param self The RiskParameters to retrieve the notionalFee from
+    /// @return result The notionalFee of `self`
+    function notionalFee(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(4, self), 0x3FFF)
+        }
+    }
+
+    /// @notice Get the premiumFee of `self`.
+    /// @param self The RiskParameters to retrieve the premiumFee from
+    /// @return result The premiumFee of `self`
+    function premiumFee(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(18, self), 0x3FFF)
+        }
+    }
+
+    /// @notice Get the protocolSplit of `self`.
+    /// @param self The RiskParameters to retrieve the protocolSplit from
+    /// @return result The protocolSplit of `self`
+    function protocolSplit(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(32, self), 0x3FFF)
+        }
+    }
+
+    /// @notice Get the builderSplit of `self`.
+    /// @param self The RiskParameters to retrieve the builderSplit from
+    /// @return result The builderSplit of `self`
+    function builderSplit(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(46, self), 0x3FFF)
+        }
+    }
+
+    /// @notice Get the tickDeltaLiquidation of `self`.
+    /// @param self The RiskParameters to retrieve the tickDeltaLiquidation from
+    /// @return result The tickDeltaLiquidation of `self`
+    function tickDeltaLiquidation(RiskParameters self) internal pure returns (uint16 result) {
+        assembly {
+            result := and(shr(60, self), 0x1FFF)
+        }
+    }
+
+    /// @notice Get the maxSpread of `self`.
+    /// @param self The RiskParameters to retrieve the maxSpread from
+    /// @return result The maxSpread of `self`
+    function maxSpread(RiskParameters self) internal pure returns (uint24 result) {
+        assembly {
+            result := and(shr(73, self), 0x3FFFFF)
+        }
+    }
+
+    /// @notice Get the bpDecreaseBuffer of `self`.
+    /// @param self The RiskParameters to retrieve the bpDecreaseBuffer from
+    /// @return result The bpDecreaseBuffer of `self`
+    function bpDecreaseBuffer(RiskParameters self) internal pure returns (uint32 result) {
+        assembly {
+            result := and(shr(95, self), 0x3FFFFFF)
+        }
+    }
+
+    /// @notice Get the maxLegs of `self`.
+    /// @param self The RiskParameters to retrieve the maxLegs from
+    /// @return result The maxLegs of `self`
+    function maxLegs(RiskParameters self) internal pure returns (uint8 result) {
+        assembly {
+            result := and(shr(121, self), 0x7F)
+        }
+    }
+
+    /// @notice Get the feeRecipient of `self`.
+    /// @param self The RiskParameters to retrieve the feeRecipient from
+    /// @return result The feeRecipient of `self`
+    function feeRecipient(RiskParameters self) internal pure returns (uint128 result) {
+        assembly {
+            result := shr(128, self)
         }
     }
 }
