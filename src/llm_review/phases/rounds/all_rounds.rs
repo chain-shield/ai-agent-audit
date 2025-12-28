@@ -1,5 +1,4 @@
 use crate::llm_review::agent::agent_enums::{all_enum_variants, generate_enum_list};
-use crate::llm_review::phases::rounds::round_1::{Impact, Likelihood};
 use crate::llm_review::phases::rounds::utils::generate_pre_round_verify_json_requirement;
 use crate::llm_review::phases::verify_rounds::{FindingAnalysis, FindingStatus};
 use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
@@ -7,6 +6,51 @@ use log::info;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use strum_macros::EnumIter;
+
+#[derive(
+    Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    JsonSchema,
+    EnumIter,
+    Serialize,
+    Deserialize,
+    strum_macros::EnumString,
+    strum_macros::Display,
+)]
+pub enum Impact {
+    High,
+    #[default]
+    Medium,
+    Low,
+}
+
+#[derive(
+    Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    JsonSchema,
+    EnumIter,
+    Serialize,
+    Deserialize,
+    strum_macros::EnumString,
+    strum_macros::Display,
+)]
+pub enum Likelihood {
+    Common,
+    #[default]
+    Occasional,
+    Rare,
+}
 
 /// Verification result for a potential vulnerability
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
