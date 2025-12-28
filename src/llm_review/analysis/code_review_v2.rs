@@ -27,6 +27,7 @@ use crate::llm_review::{
     },
 };
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::utils::logging::print_first_n_lines;
 use log::info;
 use nanoid::nanoid;
 use std::{path::PathBuf, sync::Arc};
@@ -63,8 +64,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
-    // let custom_scoped_contracts: Option<Vec<_>> = None;
+    // let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
+    let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -124,6 +125,7 @@ pub async fn review_codebase_for_security_issues_v2(
         // generate list of potential bad actors for this contract
         let actor_capabilities =
             Arc::new(generate_multi_modal_context(&codeblock, &contract, repo).await?);
+        print_first_n_lines(20, &actor_capabilities);
 
         // Clone shared state for the spawned task
         let verify_agent = Arc::clone(&ai_verify_agent);

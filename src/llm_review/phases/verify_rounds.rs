@@ -1,9 +1,6 @@
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
 use crate::llm_review::pattern_phases::pattern_to_findings::generate_content_plus_context_block;
 use crate::llm_review::phases::rounds::all_rounds::{AllRoundLegitAnalysis, VerifyAllRound};
-use crate::llm_review::phases::rounds::round_1::{RoundOneLegitAnalysis, VerifyRoundOne};
-use crate::llm_review::phases::rounds::round_2::{RoundTwoLegitAnalysis, VerifyRoundTwo};
-use crate::llm_review::phases::rounds::round_3::{RoundThreeLegitAnalysis, VerifyRoundThree};
 use crate::llm_review::phases::rounds::utils::generate_post_round_verify_json_requirement;
 use crate::llm_review::phases::rounds::validate_round::{
     generate_dynamic_validation_json, generate_round_validation_prompt, FindingDowngradeValidation,
@@ -81,27 +78,6 @@ pub trait FindingAnalysis {
     fn id(&self) -> String;
     fn get_justification(&self) -> String;
     fn round_number() -> usize;
-}
-
-impl AnalysisRound for VerifyRoundOne {
-    type Spec = RoundOneLegitAnalysis;
-    fn findings(&self) -> &[Self::Spec] {
-        &self.findings
-    }
-}
-
-impl AnalysisRound for VerifyRoundTwo {
-    type Spec = RoundTwoLegitAnalysis;
-    fn findings(&self) -> &[Self::Spec] {
-        &self.findings
-    }
-}
-
-impl AnalysisRound for VerifyRoundThree {
-    type Spec = RoundThreeLegitAnalysis;
-    fn findings(&self) -> &[Self::Spec] {
-        &self.findings
-    }
 }
 
 impl AnalysisRound for VerifyAllRound {

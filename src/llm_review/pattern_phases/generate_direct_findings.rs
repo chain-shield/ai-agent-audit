@@ -21,7 +21,6 @@ use crate::{
         },
     },
     prepare_code::git_clone::RepoPaths,
-    utils::logging::print_first_n_lines,
 };
 use log::info;
 use serde::de::DeserializeOwned;
@@ -114,7 +113,7 @@ where
                         "security vulnerability pattern",
                         repo,
                     );
-                print_first_n_lines(30, &actor_context);
+                // print_first_n_lines(30, &actor_context);
                 let prompt = Arc::new(format!(
                     "{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
                 ));
