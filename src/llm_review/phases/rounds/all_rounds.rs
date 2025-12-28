@@ -87,9 +87,6 @@ pub struct VerifyAllRound {
 }
 
 impl FindingAnalysis for AllRoundLegitAnalysis {
-    fn round_number() -> usize {
-        3
-    }
     fn id(&self) -> String {
         self.finding_id.clone()
     }

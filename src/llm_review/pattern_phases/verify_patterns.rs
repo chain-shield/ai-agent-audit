@@ -4,11 +4,10 @@ use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::SKIP_PATTERN_VERIFICATION,
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
-        analysis::{context_state::get_metadata_context, semaphore::GENERAL_SEM},
+        analysis::context_state::get_metadata_context,
         threat_models::{
             invariants::ContractInvariants,
             issues::{IssueStructTrait, IssueTrait},
@@ -20,8 +19,19 @@ use log::info;
 
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+
+pub trait IsLegit {
+    fn id(&self) -> String;
+    fn is_legit(&self) -> bool;
+    fn get_justification(&self) -> String;
+}
+
+pub trait InvariantAnalysis {
+    type Spec: IsLegit;
+    fn findings(&self) -> &[Self::Spec];
+}
 
 /// Verification result for a potential pattern
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -37,10 +47,11 @@ pub struct VerifyInvariants {
     pub findings: Vec<LegitInvariant>,
 }
 
-pub trait IsLegit {
-    fn id(&self) -> String;
-    fn is_legit(&self) -> bool;
-    fn why_not_legit(&self) -> String;
+impl InvariantAnalysis for VerifyInvariants {
+    type Spec = LegitInvariant;
+    fn findings(&self) -> &[Self::Spec] {
+        &self.findings
+    }
 }
 
 impl IsLegit for LegitInvariant {
@@ -50,7 +61,7 @@ impl IsLegit for LegitInvariant {
     fn is_legit(&self) -> bool {
         self.is_legit_invariant
     }
-    fn why_not_legit(&self) -> String {
+    fn get_justification(&self) -> String {
         self.why_its_not_legit.clone().unwrap_or_default()
     }
 }
@@ -61,7 +72,7 @@ pub async fn verify_invariants(
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<ContractInvariants> {
-    execute::<ContractInvariants, LegitInvariant>(patterns, code, agent, repo).await
+    execute::<ContractInvariants, VerifyInvariants>(patterns, code, agent, repo).await
 }
 
 /// Executes the verification phase
@@ -77,32 +88,19 @@ pub async fn execute<T, M>(
 where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
     <T as IssueStructTrait>::Spec: Send + Sync + Clone + DeserializeOwned + IssueTrait + 'static,
-    M: Clone + DeserializeOwned + JsonSchema + IsLegit + Send + Sync,
+    M: Clone + DeserializeOwned + JsonSchema + InvariantAnalysis + Send + Sync,
+    <M as InvariantAnalysis>::Spec: Send + Sync + IsLegit + JsonSchema,
 {
     let issue_title = patterns.issue_title();
     info!("🔍 Phase 2: Deduplicating and verifying {}...", issue_title);
 
-    let mut handles = vec![];
-    let deduped_patterns: Arc<T> = Arc::new(patterns.dedup().await?);
+    let deduped_patterns: T = patterns.dedup().await?;
     let dedup_pattern_count = deduped_patterns.issues().len();
-
-    if SKIP_PATTERN_VERIFICATION {
-        info!(
-            "Skipping verification: # of {} AFTER deduping => {}",
-            &deduped_patterns.issue_title(),
-            dedup_pattern_count,
-        );
-        return Ok((*deduped_patterns).clone());
-    }
 
     let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
-    let arc_code_context = Arc::new(code_and_context);
-
-    let is_legit_pattern_vec: Arc<Mutex<Vec<bool>>> =
-        Arc::new(Mutex::new(vec![true; dedup_pattern_count]));
 
     info!(
         "# of {} AFTER deduping => {}",
@@ -111,61 +109,50 @@ where
     );
     info!("now verifying each {}...", &deduped_patterns.issue_title());
 
-    for i in 0..dedup_pattern_count {
-        let codeblock_plus_context = Arc::clone(&arc_code_context);
-        let arc_patterns = Arc::clone(&deduped_patterns);
-        let arc_agent = Arc::clone(&agent);
-        let arc_legit_patterns_vec = Arc::clone(&is_legit_pattern_vec);
-        let sem = Arc::clone(&GENERAL_SEM);
-        let title = issue_title.clone();
+    let verify_prompt = deduped_patterns.generate_verify_prompt();
+    let post_verify_json = T::verify_json_required_prompt();
 
-        handles.push(tokio::spawn(async move {
-            // ── acquire permit ────────────────────────
-            let _permit = sem.acquire_owned().await.expect("semaphore closed");
-            let result: Result<()> = async {
-                let instruction_prompt = arc_patterns.issues()[i].generate_verify_prompt();
+    let full_prompt = format!("{}{}{}", verify_prompt, code_and_context, post_verify_json);
 
-                // info!("verify instruction prompt => {}", instruction_prompt);
+    info!(
+        "Verifying {} {} in batch...",
+        dedup_pattern_count,
+        deduped_patterns.issue_title()
+    );
+    let invariant_analysis: M = agent.extract_with_retry(&full_prompt).await?;
 
-                let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
+    let r_map: HashMap<String, &M::Spec> = invariant_analysis
+        .findings()
+        .iter()
+        .map(|inv| (inv.id(), inv))
+        .collect();
 
-                // add to cost
-                info!("verifying {} #{}", title, i + 1);
-                let is_legit_struct: M = arc_agent.extract_with_retry(&full_prompt).await?;
-
-                let is_finding_legit = is_legit_struct.is_legit();
-                if !is_finding_legit {
-                    info!(
-                        "{} is NOT legit => {}",
-                        arc_patterns.issues()[i].title_str(),
-                        is_legit_struct.why_not_legit()
-                    );
-                }
-                let mut legit_patterns_vec = arc_legit_patterns_vec.lock().await;
-                legit_patterns_vec[i] = is_finding_legit;
-
-                Ok(())
-            }
-            .await;
-
-            if let Err(e) = result {
-                log::error!("Error verifying {} {}: {:?}", title, i, e);
-            }
-        }));
-    }
-
-    // Wait for all verification tasks to complete
-    for h in handles {
-        let _ = h.await;
-    }
-
-    let legit_findings_vec = is_legit_pattern_vec.lock().await;
     let verified_patterns: Vec<<T as IssueStructTrait>::Spec> = deduped_patterns
         .issues()
         .iter()
-        .enumerate()
-        .filter(|(idx, _)| legit_findings_vec[*idx])
-        .map(|(_, f)| f.clone())
+        .filter(|p| {
+            let p_id = p.id().unwrap_or_default();
+            let r_option = r_map.get(&p_id);
+            match r_option {
+                Some(r) => {
+                    if !r.is_legit() {
+                        info!("Invariant is Invalid: {}", r.get_justification());
+                        return false;
+                    } else {
+                        return true;
+                    }
+                }
+                None => {
+                    log::warn!(
+                        "Invariant '{}' (ID: {}) was not verified by LLM - filtering out",
+                        p.title_str(),
+                        p_id
+                    );
+                    return false;
+                }
+            }
+        })
+        .cloned()
         .collect();
 
     info!(

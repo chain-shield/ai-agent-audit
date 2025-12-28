@@ -30,8 +30,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use strum_macros::EnumIter;
 
-const RUN_SINGLE_ROUND: bool = true;
-
 #[derive(
     Default,
     Debug,
@@ -77,7 +75,6 @@ pub trait FindingAnalysis {
     fn generate_verify_json() -> String;
     fn id(&self) -> String;
     fn get_justification(&self) -> String;
-    fn round_number() -> usize;
 }
 
 impl AnalysisRound for VerifyAllRound {
@@ -261,7 +258,7 @@ where
         FindingReportType::NoPoC,
     );
 
-    info!("Round {} of Verification", T::Spec::round_number());
+    info!("Verification Round");
     let r_analysis: T = agent.extract_with_retry(&instruction_prompt).await?;
 
     // show analysis results
@@ -293,7 +290,6 @@ where
                 // finding passed!
                 return Finding {
                     status_justification: justification,
-                    verification_rounds_passed: Some(T::Spec::round_number() as u8),
                     ..f
                 };
             } else {
@@ -423,25 +419,9 @@ pub async fn run_round_validation(
 
             let updated_finding_status = validation_analysis.get_fixed_finding_status(&f);
 
-            // If validation returns None, all downgrade reasons were rejected -> upgrade to Valid or NeedsMoreInfo
-            // NOTE: only set as Valid if passed 2+ rounds (high confidence), otherwise set as NeedsMoreInfo
+            // If validation returns None, all downgrade reasons were rejected -> upgrade to Valid
             let final_status = if updated_finding_status.is_none() {
-                // If it passed 2 rounds, it means it failed Round 3, but that failure was overturned
-                // in the final validation round, therefore the finding is now Valid.
-                // If it passed fewer than 2 rounds, it needs human review (NeedsMoreInfo).
-                // Note: Some(3) won't appear here because those findings are already marked Valid
-                // and filtered out before validation.
-                if RUN_SINGLE_ROUND {
-                    Some(vec![FindingStatus::Valid])
-                } else {
-                    if f.verification_rounds_passed == Some(2)
-                        || f.verification_rounds_passed == Some(3)
-                    {
-                        Some(vec![FindingStatus::Valid])
-                    } else {
-                        Some(vec![FindingStatus::NeedsMoreInfo])
-                    }
-                }
+                Some(vec![FindingStatus::Valid])
             } else {
                 updated_finding_status
             };
