@@ -111,7 +111,6 @@ pub mod llm_review {
     }
     /// Security audit phases
     pub mod dynamic_prompts {
-        pub mod actor_findings;
         pub mod actors;
         pub mod findings;
         pub mod findings_template;

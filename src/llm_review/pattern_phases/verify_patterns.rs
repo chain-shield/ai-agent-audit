@@ -10,10 +10,8 @@ use crate::{
         agent::agent_enums::AIAgent,
         analysis::{context_state::get_metadata_context, semaphore::GENERAL_SEM},
         threat_models::{
-            actors::ActorAbuses,
             invariants::ContractInvariants,
             issues::{IssueStructTrait, IssueTrait},
-            patterns::Patterns,
         },
     },
     prepare_code::git_clone::RepoPaths,
@@ -27,66 +25,34 @@ use tokio::sync::Mutex;
 
 /// Verification result for a potential pattern
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct LegitPattern {
-    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub is_legit_pattern: bool,
-    pub why_its_not_legit: Option<String>,
-}
-
-/// Verification result for a potential pattern
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LegitInvariant {
+    pub invariant_id: String,
     #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
     pub is_legit_invariant: bool,
     pub why_its_not_legit: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
-pub struct LegitActorMalice {
-    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    is_legit_abuse: bool,
-    why_its_not_legit: Option<String>,
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyInvariants {
+    pub findings: Vec<LegitInvariant>,
 }
 
 pub trait IsLegit {
+    fn id(&self) -> String;
     fn is_legit(&self) -> bool;
     fn why_not_legit(&self) -> String;
 }
 
-impl IsLegit for LegitActorMalice {
-    fn is_legit(&self) -> bool {
-        self.is_legit_abuse
-    }
-    fn why_not_legit(&self) -> String {
-        self.why_its_not_legit.clone().unwrap_or_default()
-    }
-}
-
 impl IsLegit for LegitInvariant {
+    fn id(&self) -> String {
+        self.invariant_id.clone()
+    }
     fn is_legit(&self) -> bool {
         self.is_legit_invariant
     }
     fn why_not_legit(&self) -> String {
         self.why_its_not_legit.clone().unwrap_or_default()
     }
-}
-
-impl IsLegit for LegitPattern {
-    fn is_legit(&self) -> bool {
-        self.is_legit_pattern
-    }
-    fn why_not_legit(&self) -> String {
-        self.why_its_not_legit.clone().unwrap_or_default()
-    }
-}
-
-pub async fn verify_patterns(
-    patterns: Patterns,
-    code: &str,
-    agent: &Arc<AIAgent>,
-    repo: &RepoPaths,
-) -> Result<Patterns> {
-    execute::<Patterns, LegitPattern>(patterns, code, agent, repo).await
 }
 
 pub async fn verify_invariants(
@@ -98,14 +64,6 @@ pub async fn verify_invariants(
     execute::<ContractInvariants, LegitInvariant>(patterns, code, agent, repo).await
 }
 
-pub async fn verify_actor_abuses(
-    patterns: ActorAbuses,
-    code: &str,
-    agent: &Arc<AIAgent>,
-    repo: &RepoPaths,
-) -> Result<ActorAbuses> {
-    execute::<ActorAbuses, LegitActorMalice>(patterns, code, agent, repo).await
-}
 /// Executes the verification phase
 ///
 /// Deduplicates findings and verifies each one using AI analysis to ensure
