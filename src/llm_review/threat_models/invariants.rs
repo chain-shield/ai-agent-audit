@@ -52,6 +52,7 @@ pub enum InvariantStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InvariantFinding {
+    pub id: Option<String>,
     #[schemars(
         description = "Type: Arithmetic, Balance, Permission, Temporal, Referential, StateMachine"
     )]
