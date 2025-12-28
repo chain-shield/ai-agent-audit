@@ -14,20 +14,15 @@ use crate::{
             inv_findings::{
                 generate_invariant_to_findings, generate_multi_invariant_to_findings_prompt,
             },
-            invariants::generate_invariant_verify_prompt,
-            pattern_findings::{
-                generate_multipattern_to_findings_prompt, generate_pattern_to_findings_prompt,
+            invariants::{
+                generate_all_invariants_verify_prompt, generate_invariant_verify_prompt,
+                get_post_all_invariants_verify_json,
             },
-            patterns::generate_pattern_verify_prompt,
         },
         findings::findings::{Finding, Findings},
         phases::{rounds::all_rounds::AllRoundLegitAnalysis, verify_rounds::FindingAnalysis},
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
-        threat_models::patterns::VulnerabilityPattern,
-        utils::prompt_context::{
-            self, generate_formatted_invariant_finding, generate_formatted_pattern,
-            FindingReportType,
-        },
+        utils::prompt_context::{self, generate_formatted_invariant_finding, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
     utils::semantic_compare,
@@ -43,7 +38,6 @@ use async_trait::async_trait;
 use crate::llm_review::threat_models::{
     invariants::{ContractInvariants, InvariantFinding, InvariantType},
     pattern_category::PatternCategory,
-    patterns::{Pattern, Patterns},
 };
 
 pub enum IssuePrompt {
@@ -57,6 +51,8 @@ pub trait IssueStructTrait: Send + Sync + Sized + 'static {
     fn issues(&self) -> &[Self::Spec];
     fn issues_mut(&mut self) -> &mut Vec<Self::Spec>;
     fn new(issues: Vec<Self::Spec>) -> Self;
+    fn generate_verify_prompt(&self) -> String;
+    fn verify_json_required_prompt() -> String;
     fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String;
     fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String;
     async fn dedup(self) -> anyhow::Result<Self>;
@@ -65,6 +61,7 @@ pub trait IssueStructTrait: Send + Sync + Sized + 'static {
 
 #[async_trait]
 pub trait IssueTrait: Send + Sync {
+    fn id(&self) -> Option<String>;
     fn hash(&self) -> String;
     async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool>;
     fn get_issue_report(&self) -> String;
@@ -77,6 +74,9 @@ pub trait IssueTrait: Send + Sync {
 
 #[async_trait]
 impl IssueTrait for InvariantFinding {
+    fn id(&self) -> Option<String> {
+        self.id.clone()
+    }
     fn hash(&self) -> String {
         format!(
             "{}-{}-{}-{}",
@@ -115,45 +115,10 @@ impl IssueTrait for InvariantFinding {
 }
 
 #[async_trait]
-impl IssueTrait for Pattern {
-    fn hash(&self) -> String {
-        format!(
-            "{}-{}-{}",
-            self.issue_type.to_string(),
-            self.contract,
-            self.function,
-        )
-    }
-    async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
-        is_duplicate_pattern(self, issue, ai_agent).await
-    }
-    fn get_issue_report(&self) -> String {
-        generate_formatted_pattern(&self)
-    }
-    fn title_str(&self) -> String {
-        format!(
-            "{} - {}.{}",
-            self.issue_type.to_string(),
-            self.contract,
-            self.function
-        )
-    }
-    fn generate_verify_prompt(&self) -> String {
-        generate_pattern_verify_prompt(&self)
-    }
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String {
-        generate_pattern_to_findings_prompt(self, repo)
-    }
-    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
-        get_post_findings_json_requirement(&self.issue_type, &self.title, repo)
-    }
-}
-
-#[async_trait]
 impl IssueTrait for Finding {
+    fn id(&self) -> Option<String> {
+        self.id.clone()
+    }
     fn hash(&self) -> String {
         format!("{}-{}", self.contract, self.function,)
     }
@@ -174,17 +139,23 @@ impl IssueTrait for Finding {
     }
     // NOTE: not needed in this case
     fn pattern_to_findings_prompt(&self, _repo: &RepoPaths) -> String {
-        String::new()
+        unimplemented!("Not implimented for Finding");
     }
     // NOTE: not needed in this case
     fn findings_json_required_prompt(&self, _repo: &RepoPaths) -> String {
-        String::new()
+        unimplemented!("Not implimented for Finding");
     }
 }
 
 #[async_trait]
 impl IssueStructTrait for ContractInvariants {
     type Spec = InvariantFinding;
+    fn generate_verify_prompt(&self) -> String {
+        generate_all_invariants_verify_prompt(&self)
+    }
+    fn verify_json_required_prompt() -> String {
+        get_post_all_invariants_verify_json()
+    }
     fn issues(&self) -> &[InvariantFinding] {
         &self.invariants
     }
@@ -212,39 +183,6 @@ impl IssueStructTrait for ContractInvariants {
 }
 
 #[async_trait]
-impl IssueStructTrait for Patterns {
-    type Spec = Pattern;
-    fn issues(&self) -> &[Pattern] {
-        &self.patterns
-    }
-    fn issues_mut(&mut self) -> &mut Vec<Pattern> {
-        &mut self.patterns
-    }
-    fn new(issues: Vec<Pattern>) -> Self {
-        Self { patterns: issues }
-    }
-    async fn dedup(self) -> anyhow::Result<Self> {
-        dedup_pattern(self).await
-    }
-    fn issue_title(&self) -> String {
-        "pattern".to_string()
-    }
-    fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String {
-        generate_multipattern_to_findings_prompt(&self, repo)
-    }
-    fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
-        let vulnerability_patterns: Vec<VulnerabilityPattern> =
-            self.issues().iter().map(|p| p.issue_type).collect();
-
-        get_post_json_requirement_for_multipattern(
-            &vulnerability_patterns,
-            "Security vulnerability Pattern",
-            repo,
-        )
-    }
-}
-
-#[async_trait]
 impl IssueStructTrait for Findings {
     type Spec = Finding;
     fn issues(&self) -> &[Finding] {
@@ -264,11 +202,19 @@ impl IssueStructTrait for Findings {
     }
     // NOTE: not need for this case
     fn multi_issue_to_findings_prompt(&self, _repo: &RepoPaths) -> String {
-        String::new()
+        unimplemented!("Not implimented for Findings");
     }
     // NOTE: not need for this case
     fn multi_issue_findings_json_required_prompt(&self, _repo: &RepoPaths) -> String {
-        String::new()
+        unimplemented!("Not implimented for Findings");
+    }
+    // NOTE: not need for this case
+    fn generate_verify_prompt(&self) -> String {
+        unimplemented!("Not implimented for Findings");
+    }
+    // NOTE: not need for this case
+    fn verify_json_required_prompt() -> String {
+        unimplemented!("Not implimented for Findings");
     }
 }
 

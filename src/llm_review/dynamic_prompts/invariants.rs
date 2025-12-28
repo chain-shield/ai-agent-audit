@@ -1,9 +1,12 @@
 use crate::llm_review::{
     agent::agent_enums::{all_enum_variants, generate_enum_list},
     threat_models::invariants::{
-        InvariantFinding, InvariantSpec, InvariantStatus, InvariantType, INVARIANT_LIBRARY,
+        ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
+        INVARIANT_LIBRARY,
     },
-    utils::prompt_context::generate_formatted_invariant_finding,
+    utils::prompt_context::{
+        generate_formatted_invariant_finding, generate_full_list_of_invariant_findings,
+    },
 };
 
 pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
@@ -97,6 +100,32 @@ When designing each invariant:
     )
 }
 
+pub fn generate_all_invariants_verify_prompt(invs: &ContractInvariants) -> String {
+    let verify_json = get_pre_all_invariants_verify_json();
+    let inv_findings_report = generate_full_list_of_invariant_findings(invs);
+
+    format!(
+        r#"
+        {json} 
+
+        ## Your task: decide if EACH of the reported Invariants is legit or not.
+
+        Please continue until you have carefully evaluated ALL invariants.
+
+        Based on your assessment please provided the following for EACH invariant:
+
+        *invariant id*: insert invariant id (from 'id' field)
+        *is legit invariant*: true | false
+
+        ## INVARIANTS TO VERIFY
+        {report} 
+
+        "#,
+        json = verify_json,
+        report = inv_findings_report
+    )
+}
+
 pub fn generate_invariant_verify_prompt(inv: &InvariantFinding) -> String {
     let verify_json = get_invariant_verify_json();
     let inv_finding_report = generate_formatted_invariant_finding(inv);
@@ -164,6 +193,58 @@ pub fn get_invariant_json(inv: &[InvariantType]) -> String {
     "#,
         types = invariant_type_list,
         status = status_enum_list
+    )
+}
+
+pub fn get_post_all_invariants_verify_json() -> String {
+    let json = get_all_invariants_verify_json();
+
+    format!(
+        r#"
+
+        ## OUTPUT REQUIREMENTS 
+
+        *Please respond with ONLY valid JSON in the following exact format:*
+
+        {json}
+
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        they match up correctly.
+    "#
+    )
+}
+
+pub fn get_pre_all_invariants_verify_json() -> String {
+    let json = get_all_invariants_verify_json();
+
+    format!(
+        r#"
+
+        Before instructions are provided on the task please note required output format:
+
+        ## JSON Output Requirement
+
+        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+
+        {json}
+    "#
+    )
+}
+
+pub fn get_all_invariants_verify_json() -> String {
+    format!(
+        r#"
+        {{
+            "findings": [
+                {{
+                    "invariant_id": "'id' field from finding",
+                    "is_legit_invariant": true|false,
+                    "why_its_not_legit": "in 40 words less explain why NOT legit (OMIT if legit)"
+                }}
+            ]
+        }}
+        "#
     )
 }
 

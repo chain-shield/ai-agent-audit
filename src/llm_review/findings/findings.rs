@@ -45,16 +45,6 @@ pub struct Finding {
     pub mitigation: Option<String>,
     pub status: Option<Vec<FindingStatus>>,
     pub status_justification: Option<String>,
-    /// Tracks the highest verification round this finding passed before being downgraded.
-    /// - None: Never passed any round (failed Round 1)
-    /// - Some(1): Passed Round 1, failed Round 2
-    /// - Some(2): Passed Rounds 1 & 2, failed Round 3
-    /// - Some(3): Passed all 3 rounds (will have status = Valid, won't reach validation)
-    ///
-    /// Used in validation to determine confidence level:
-    /// - Some(2): High confidence → upgrade to Valid if validation overturns downgrade
-    /// - Some(1) or None: Low confidence → set to NeedsMoreInfo for human review
-    pub verification_rounds_passed: Option<u8>,
     // competition ready report (C4, Sherlock,etc) for issue, only produced if All Tests Passed for PoC
     pub competition_report: Option<CompetitionReport>,
     pub finding_complexity: Option<u8>,

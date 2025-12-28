@@ -21,7 +21,7 @@ use crate::llm_review::{
     findings::findings::Findings,
     pattern_phases,
     threat_models::{
-        invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
+        invariants::{ContractInvariants, InvariantFinding, InvariantType},
         issues::{IssuePrompt, IssueStructTrait},
         pattern_category::PatternCategory,
     },
@@ -315,11 +315,6 @@ pub async fn generate_ai_agents(
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_openai_reasoning_effort("high");
 
-    let _verify_config_gemini = AgentConfig::new(Some(repo.clone()))
-        .with_temperature(1.0)
-        .with_model("gemini-3-pro-preview")
-        .with_preamble(verify_preamble);
-
     let _finding_verify_config = AgentConfig::new(Some(repo.clone()))
         .with_temperature(0.2)
         .with_model(CLAUDE_4_5_SONNET)
@@ -452,7 +447,7 @@ async fn process_invariants(
 
     // Phase 1: Generate invariants
     info!("PHASE 1: GENERATE INVARIANTS");
-    let mut raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
+    let raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
         invariant_prompt,
         codeblock,
         invariant_discovery_agent,
@@ -465,28 +460,22 @@ async fn process_invariants(
         raw_invariants.invariants.len()
     );
 
-    // Filter for invariant violations only
-    let violations: Vec<InvariantFinding> = raw_invariants
-        .issues()
-        .iter()
-        .filter(|inv| inv.status == InvariantStatus::PossibleViolation)
-        .map(|inv| inv.to_owned())
-        .collect();
-
-    raw_invariants = ContractInvariants {
-        invariants: violations,
+    let invariants_with_id: ContractInvariants = ContractInvariants {
+        invariants: raw_invariants
+            .invariants
+            .into_iter()
+            .map(|inv| InvariantFinding {
+                id: Some(nanoid!()),
+                ..inv
+            })
+            .collect(),
     };
-
-    info!(
-        "{} invariant violations found!",
-        raw_invariants.invariants.len()
-    );
 
     // Phase 2: Verify invariants
     info!("PHASE 2: VERIFY INVARIANTS");
-    let verified_invariants = if !raw_invariants.issues().is_empty() {
+    let verified_invariants = if !invariants_with_id.issues().is_empty() {
         pattern_phases::verify_patterns::verify_invariants(
-            raw_invariants,
+            invariants_with_id,
             codeblock,
             ai_verify_agent,
             repo,
@@ -495,6 +484,11 @@ async fn process_invariants(
     } else {
         ContractInvariants::default()
     };
+
+    info!(
+        "{} verified invariants found!",
+        verified_invariants.invariants.len()
+    );
 
     info!("PHASE 3: GENERATE FINDINGS FROM INVARIANTS");
 

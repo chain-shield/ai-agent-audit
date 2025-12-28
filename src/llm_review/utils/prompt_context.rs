@@ -4,7 +4,10 @@ use crate::{
     config::CREATE_TESTS,
     llm_review::{
         findings::findings::{Finding, Findings},
-        threat_models::{invariants::InvariantFinding, patterns::Pattern},
+        threat_models::{
+            invariants::{ContractInvariants, InvariantFinding},
+            patterns::Pattern,
+        },
     },
     utils::finding_status_string::finding_status_to_string,
 };
@@ -71,6 +74,18 @@ pub fn generate_prompt_for_multi_finding_issue_check(
 
     prompt
 }
+
+pub fn generate_full_list_of_invariant_findings(invariants: &ContractInvariants) -> String {
+    let mut invariant_findings = String::new();
+
+    for invariant in &invariants.invariants {
+        let finding = generate_formatted_invariant_finding(invariant);
+        invariant_findings.push_str(&finding);
+    }
+    invariant_findings.push_str("\n\n");
+
+    invariant_findings
+}
 pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
     let mut invariant_finding = String::new();
 
@@ -78,6 +93,10 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
         "\n\n ### Invariant Type: {}\n",
         &invariant.inv_type.to_string()
     ));
+
+    if let Some(id) = &invariant.id {
+        invariant_finding.push_str(&format!("\n\n ### Invariant Id: {}\n", id));
+    }
 
     invariant_finding.push_str(&format!(
         "\n ### Relevant Function/Location: {}.{}\n",
@@ -93,19 +112,11 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
     invariant_finding.push_str("\n ### Checks\n");
     invariant_finding.push_str(&invariant.checks.join(", "));
 
-    invariant_finding.push_str(&format!(
-        "\n ### Status: {}\n",
-        &invariant.status.to_string()
-    ));
-
     invariant_finding.push_str("\n ### Pre-State\n");
     invariant_finding.push_str(&invariant.pre_state.clone().unwrap_or_default());
 
     invariant_finding.push_str("\n ### Post-State\n");
     invariant_finding.push_str(&invariant.post_state.clone().unwrap_or_default());
-
-    // invariant_finding.push_str("\n ### Impact\n");
-    // invariant_finding.push_str(&invariant.impact.clone().unwrap_or_default());
 
     invariant_finding
 }
