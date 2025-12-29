@@ -97,6 +97,7 @@ async fn test_validation_round_puppy_raffle() -> Result<()> {
     let validated_findings = verify_rounds::run_round_validation(
         findings.clone(),
         &code_with_context,
+        None,
         audit_scope,
         &repo,
     )
@@ -204,7 +205,6 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Follow checks-effects-interactions pattern. Update state before external call.".to_string()),
             status: Some(vec![FindingStatus::InvalidBugDoesNotExist]),
             status_justification: Some("Verification round incorrectly flagged this as non-existent".to_string()),
-            verification_rounds_passed: Some(2), // Passed R1 & R2, failed R3
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
@@ -229,7 +229,6 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Add timelock or multi-sig for critical parameter changes.".to_string()),
             status: Some(vec![FindingStatus::InvalidOutOfScope]),
             status_justification: Some("Centralization risks are out of scope for this audit".to_string()),
-            verification_rounds_passed: Some(1), // Passed R1, failed R2
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
@@ -256,7 +255,6 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Use uint256 for totalFees and remove unsafe casting.".to_string()),
             status: Some(vec![FindingStatus::InvalidGovernanceRisk]),
             status_justification: Some("Incorrectly marked as governance risk".to_string()),
-            verification_rounds_passed: Some(2), // Passed R1 & R2, failed R3
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
@@ -286,7 +284,6 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
                 FindingStatus::LowSeverityDueToLowImpact,
             ]),
             status_justification: Some("Marked as non-existent and low impact, but bug exists and impact is medium".to_string()),
-            verification_rounds_passed: Some(2), // Passed R1 & R2, failed R3
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,

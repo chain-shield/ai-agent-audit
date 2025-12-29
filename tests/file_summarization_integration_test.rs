@@ -160,7 +160,7 @@ async fn test_file_summarization_and_categorization() {
     println!("   Using model: gpt-5-mini");
     println!("   This will take several minutes as each file is analyzed by the LLM...");
 
-    let summaries = summarize_src_files_with_model(&repo, &semantics_path, "gpt-5-mini")
+    let summaries = summarize_src_files_with_model(&repo, "gpt-5-mini")
         .await
         .expect("Failed to generate summaries");
 
