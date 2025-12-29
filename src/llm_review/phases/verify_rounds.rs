@@ -375,7 +375,7 @@ pub async fn run_round_validation(
                 {}",actors));
         instruction_prompt.push_str("\n\n");
         instruction_prompt.push_str(&format!("## LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
-                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis. Also, this is NOT a complete list of invariants, other may exist in codebase.\n\n
+                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis. Also, this is NOT a complete list of invariants, others may exist in codebase.\n\n
                 {}",invariants));
     }
 
