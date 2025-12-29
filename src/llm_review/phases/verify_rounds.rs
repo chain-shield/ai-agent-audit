@@ -1,4 +1,5 @@
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
+use crate::llm_review::analysis::context_state::MultiModalContext;
 use crate::llm_review::pattern_phases::pattern_to_findings::generate_content_plus_context_block;
 use crate::llm_review::phases::rounds::all_rounds::{AllRoundLegitAnalysis, VerifyAllRound};
 use crate::llm_review::phases::rounds::utils::generate_post_round_verify_json_requirement;
@@ -91,7 +92,7 @@ impl AnalysisRound for VerifyAllRound {
 pub async fn execute_rounds(
     findings: Findings,
     code: &str,
-    actors_capabilities: Option<Arc<String>>,
+    multimodal_context: Option<Arc<MultiModalContext>>,
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
@@ -118,7 +119,7 @@ pub async fn execute_rounds(
     let all_round_findings = run_all_round(
         deduped_findings,
         &code_and_context,
-        actors_capabilities.clone(),
+        multimodal_context.clone(),
         &audit_scope,
         agent,
     )
@@ -151,7 +152,7 @@ pub async fn execute_rounds(
     let verified_findings = run_round_validation(
         labeled_findings,
         &code_and_context,
-        actors_capabilities,
+        multimodal_context,
         &audit_scope,
         repo,
     )
@@ -197,14 +198,14 @@ pub fn tagged_findings(findings: &Findings) -> usize {
 pub async fn run_all_round(
     findings: Findings,
     code_and_context: &str,
-    actors_capabilities: Option<Arc<String>>,
+    multimodal_context: Option<Arc<MultiModalContext>>,
     audit_scope: &str,
     agent: &AIAgent,
 ) -> Result<Findings> {
     run_round::<VerifyAllRound>(
         findings,
         code_and_context,
-        actors_capabilities,
+        multimodal_context,
         audit_scope,
         agent,
     )
@@ -214,7 +215,7 @@ pub async fn run_all_round(
 pub async fn run_round<T>(
     findings: Findings,
     code_and_context: &str,
-    actors_capabilities: Option<Arc<String>>,
+    multimodal_context: Option<Arc<MultiModalContext>>,
     audit_scope: &str,
     agent: &AIAgent,
 ) -> Result<Findings>
@@ -253,7 +254,7 @@ where
         &code_and_context,
         &clean_findings,
         &r_prompt,
-        actors_capabilities,
+        multimodal_context,
         &post_verify_json,
         FindingReportType::NoPoC,
     );
@@ -319,7 +320,7 @@ where
 pub async fn run_round_validation(
     findings: Findings,
     code_and_context: &str,
-    actors_capabilities: Option<Arc<String>>,
+    multimodal_context: Option<Arc<MultiModalContext>>,
     audit_scope: &str,
     repo: &RepoPaths,
 ) -> Result<Findings> {
@@ -367,12 +368,15 @@ pub async fn run_round_validation(
 
     let mut instruction_prompt = format!("{}\n\n", main_instructions);
 
-    if let Some(actors) = actors_capabilities {
+    if let Some(MultiModalContext { actors, invariants }) = multimodal_context.as_deref() {
         instruction_prompt.push_str("\n\n");
         instruction_prompt.push_str(&format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
                  **NOTE**: The actors below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis\n\n
                 {}",actors));
         instruction_prompt.push_str("\n\n");
+        instruction_prompt.push_str(&format!("## LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
+                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis. Also, this is NOT a complete list of invariants, other may exist in codebase.\n\n
+                {}",invariants));
     }
 
     instruction_prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");

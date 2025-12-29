@@ -93,10 +93,15 @@ where
     };
 
     match issue_prompt {
-        IssuePrompt::Combined((pattern_category, actors_capabilities)) => {
+        IssuePrompt::Combined((pattern_category, actors_capabilities, invariant_list)) => {
             let actor_context = format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITY\n
-                 **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis\n\n
+                 **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis.\n\n
                 {}",actors_capabilities);
+
+            let invariant_context = format!("## LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITIES\n
+                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your analysis.\n\n
+                 Also, this is NOT a complete list of invariants, other may exist in codebase.
+                {}",invariant_list);
 
             for (i, category) in pattern_category.into_iter().enumerate() {
                 let category_spec =
@@ -115,7 +120,7 @@ where
                     );
                 // print_first_n_lines(30, &actor_context);
                 let prompt = Arc::new(format!(
-                    "{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
+                    "{instruction_prompt}{actor_context}{invariant_context}{code_plus_context}{json_requirement_prompt}"
                 ));
 
                 // info!("pattern prompt => {}", prompt);

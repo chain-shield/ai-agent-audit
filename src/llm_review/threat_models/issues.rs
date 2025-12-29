@@ -15,14 +15,14 @@ use crate::{
                 generate_invariant_to_findings, generate_multi_invariant_to_findings_prompt,
             },
             invariants::{
-                generate_all_invariants_verify_prompt, generate_invariant_verify_prompt,
+                self, generate_all_invariants_verify_prompt, generate_invariant_verify_prompt,
                 get_post_all_invariants_verify_json,
             },
         },
         findings::findings::{Finding, Findings},
         phases::{rounds::all_rounds::AllRoundLegitAnalysis, verify_rounds::FindingAnalysis},
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
-        utils::prompt_context::{self, generate_formatted_invariant_finding, FindingReportType},
+        utils::prompt_context::{self, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
     utils::semantic_compare,
@@ -42,7 +42,7 @@ use crate::llm_review::threat_models::{
 
 pub enum IssuePrompt {
     Invariant(Vec<InvariantType>),
-    Combined((Vec<PatternCategory>, String)),
+    Combined((Vec<PatternCategory>, String, String)),
 }
 
 #[async_trait]
@@ -90,7 +90,7 @@ impl IssueTrait for InvariantFinding {
         is_duplicate_pattern(self, issue, ai_agent).await
     }
     fn get_issue_report(&self) -> String {
-        generate_formatted_invariant_finding(&self)
+        invariants::generate_formatted_invariant_finding(&self)
     }
     fn description(&self) -> String {
         self.desc.clone()

@@ -3,11 +3,9 @@ use std::sync::Arc;
 use crate::{
     config::CREATE_TESTS,
     llm_review::{
+        analysis::context_state::MultiModalContext,
         findings::findings::{Finding, Findings},
-        threat_models::{
-            invariants::{ContractInvariants, InvariantFinding},
-            patterns::Pattern,
-        },
+        threat_models::patterns::Pattern,
     },
     utils::finding_status_string::finding_status_to_string,
 };
@@ -41,18 +39,21 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     code: &str,
     finding: &Findings,
     instructions: &str,
-    actors_capabilities: Option<Arc<String>>,
+    multimodal_context: Option<Arc<MultiModalContext>>,
     post_instructions: &str,
     report_type: FindingReportType,
 ) -> String {
     let mut prompt = instructions.to_string();
 
-    if let Some(actors) = actors_capabilities {
+    if let Some(MultiModalContext { actors, invariants }) = multimodal_context.as_deref() {
         prompt.push_str("\n\n");
         prompt.push_str(&format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
                  **NOTE**: The actors below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis\n\n
                 {}",actors));
         prompt.push_str("\n\n");
+        prompt.push_str(&format!("## LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
+                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis. Also, this is NOT a complete list of invariants, other may exist in codebase.\n\n
+                {}",invariants));
     }
 
     prompt.push_str("\n\n");
@@ -73,66 +74,6 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     prompt.push_str(post_instructions);
 
     prompt
-}
-
-pub fn generate_full_list_of_invariant_findings(invariants: &ContractInvariants) -> String {
-    let mut invariant_findings = String::new();
-
-    for invariant in &invariants.invariants {
-        let finding = generate_formatted_invariant_finding(invariant);
-        invariant_findings.push_str(&finding);
-    }
-    invariant_findings.push_str("\n\n");
-
-    invariant_findings
-}
-pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
-    let mut invariant_finding = String::new();
-
-    invariant_finding.push_str(&format!(
-        "\n\n ### Invariant Type: {}\n",
-        &invariant.inv_type.to_string()
-    ));
-
-    if let Some(id) = &invariant.id {
-        invariant_finding.push_str(&format!("\n\n ### Invariant Id: {}\n", id));
-    }
-
-    invariant_finding.push_str(&format!(
-        "\n ### Relevant Function/Location: {}.{}\n",
-        invariant.contract, invariant.function
-    ));
-
-    invariant_finding.push_str("\n ### Predicate\n");
-    invariant_finding.push_str(&invariant.predicate);
-
-    invariant_finding.push_str("\n ### Description/Code Snippet\n");
-    invariant_finding.push_str(&invariant.desc.to_string());
-
-    invariant_finding.push_str("\n ### Checks\n");
-    invariant_finding.push_str(&invariant.checks.join(", "));
-
-    invariant_finding.push_str("\n ### Pre-State\n");
-    invariant_finding.push_str(&invariant.pre_state.clone().unwrap_or_default());
-
-    invariant_finding.push_str("\n ### Post-State\n");
-    invariant_finding.push_str(&invariant.post_state.clone().unwrap_or_default());
-
-    invariant_finding
-}
-
-pub fn generate_formatted_multiple_invariant_findings(invariants: &[InvariantFinding]) -> String {
-    let mut invariant_finding = String::new();
-
-    for invariant in invariants {
-        let invariant_details = generate_formatted_invariant_finding(invariant);
-
-        invariant_finding.push_str("\n");
-        invariant_finding.push_str(&invariant_details);
-        invariant_finding.push_str("\n");
-    }
-
-    invariant_finding
 }
 
 pub fn generate_formatted_pattern(pattern: &Pattern) -> String {

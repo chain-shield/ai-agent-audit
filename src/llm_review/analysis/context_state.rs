@@ -5,30 +5,69 @@ use anyhow::Result;
 /// and reused across all AI agents for consistent analysis. Provides thread-safe
 /// access to protocol information including summaries and semantic data.
 use once_cell::sync::Lazy;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
+        summarize::{FileSummaryType, summarize_protocol, summarize_src_files},
     },
     cost::cost_data::get_token_count,
     llm_review::{
-        agent::agent_factory::{AgentConfig, AgentFactory},
-        dynamic_prompts::actors,
-        pattern_phases,
-        threat_models::actors::Actors,
+        analysis::pre_audit_analysis,
+        dynamic_prompts::{actors, invariants},
     },
     prepare_code::git_clone::RepoPaths,
 };
+
+/// Multi-modal context containing actor and invariant analysis for a contract.
+///
+/// This context is generated once per contract during the pre-audit analysis phase
+/// and cached for reuse across all vulnerability detection and verification phases.
+/// It provides enriched context to AI agents by including:
+///
+/// - **Actors**: Formatted list of potential bad actors and their capabilities
+/// - **Invariants**: Formatted list of verified protocol invariants
+///
+/// # Usage
+///
+/// The context is generated via [`generate_multi_modal_context`] and cached globally.
+/// Subsequent calls to [`get_multi_modal_context`] retrieve the cached version,
+/// avoiding redundant LLM calls.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Generate and cache context (called once per contract)
+/// let context = generate_multi_modal_context(&codeblock, &contract, repo).await?;
+///
+/// // Retrieve cached context (called during pattern detection and verification)
+/// let cached = get_multi_modal_context(&contract, repo).await;
+/// ```
+#[derive(Clone, Debug)]
+pub struct MultiModalContext {
+    /// Formatted list of actors and their capabilities relevant to the contract.
+    ///
+    /// This string contains a human-readable description of potential bad actors
+    /// (e.g., malicious users, MEV bots, compromised admins) and their capabilities
+    /// within the protocol context.
+    pub actors: String,
+
+    /// Formatted list of verified invariants for the contract.
+    ///
+    /// This string contains verified protocol invariants with their predicates,
+    /// pre/post states, and relevant code locations. These invariants are used
+    /// to guide vulnerability detection and verification.
+    pub invariants: String,
+}
 
 /// Global metadata context shared across all AI agents
 
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
-pub static MULTI_MODAL_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
+pub static MULTI_MODAL_CONTEXT: Lazy<Arc<Mutex<HashMap<String, MultiModalContext>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub static METADATA_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
@@ -46,18 +85,17 @@ pub fn get_context_key(repo: &RepoPaths) -> String {
 /// # Arguments
 /// * `repo` - Repository paths and metadata
 /// * `semantics_path` - Path to semantic analysis database
-pub async fn generate_and_save_metadata_context(
-    repo: &RepoPaths,
-    semantics_path: &Path,
-) -> anyhow::Result<()> {
+pub async fn generate_and_save_metadata_context(repo: &RepoPaths) -> anyhow::Result<()> {
     let mut metadata = String::new();
 
     // full context
-    let full_context = generate_context_for_code_review(repo, semantics_path).await?;
+    let full_context = generate_context_for_code_review(repo).await?;
 
-    let summaries = summarize_src_files(repo, semantics_path).await?;
+    let summaries = summarize_src_files(repo).await?;
 
-    // add file summaries to context summary
+    // NOTE: adding file summaries to full context ONLY to create protocol_summary
+    // final metadata DOES NOT CONTAIN file summaries, because its too many tokens, and we no
+    // longer need it for audit context
     let mut full_context_plus_summaries = full_context.clone();
     full_context_plus_summaries.push_str("\n## SUMMARY OF SOURCE CODE FILES\n\n");
     for summary in summaries {
@@ -103,33 +141,17 @@ pub async fn get_metadata_context(repo: &RepoPaths) -> Option<String> {
     metadata_cache.get(&key).cloned()
 }
 
-pub async fn generate_context_for_code_review(
-    repo: &RepoPaths,
-    semantics_path: &Path,
-) -> Result<String> {
-    log::info!("generate slither metadata");
-    let slither_metadata = generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
-    log::info!("generate summary of all files");
-
+pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String> {
     let mut full_prompt_context = String::new();
 
-    // NOTE: now excluding file summarizes from metadata
-    // let mut file_summaries = String::new();
-    // let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
-    // for summary in summaries {
-    //     let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
-    //     if file_type == FileSummaryType::DeployScript {
-    //         file_summaries.push_str(&format!(
-    //             "\n## SUMMARY OF DEPLOY SCRIPT: {}\n",
-    //             summary.filename
-    //         ));
-    //         file_summaries.push_str(&summary.summary);
-    //         file_summaries.push_str("\n\n");
-    //     }
-    // }
+    let src_file_list = get_all_files_src(repo)?;
+    log::info!("src file list => {}", src_file_list);
 
-    // full_prompt_context.push_str(&file_summaries);
-    full_prompt_context.push_str(&slither_metadata);
+    // prompt_context.push_str("\n## Slither Contract Summary\n");
+    // prompt_context.push_str(&contract_summary);
+    full_prompt_context.push_str("\n## Main List of Files in Project\n\n");
+    full_prompt_context.push_str(&src_file_list);
+    full_prompt_context.push_str("\n\n");
 
     // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = repo.extract_content_from_docs()?;
@@ -201,50 +223,6 @@ pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
     Ok(audit_scope)
 }
 
-pub async fn generate_slither_metadata_prompt_context(
-    repo: &RepoPaths,
-    _semantics_path: &Path,
-) -> Result<String> {
-    let key = cache_key(&repo.root, "prompt_context", None);
-    // Return cached output if exists
-    // Return cached output if exists
-    if let Some(cached) = PROMPT_CONTEXT.lock().await.get(&key).cloned() {
-        return Ok(cached);
-    }
-
-    // 1 . gather IR + storage  (re-use existing function)
-    log::info!("get contract summary and source files");
-    // let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
-    // let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
-    // let contract_summary = run_printer(repo, "contract-summary").await?;
-    let src_file_list = get_all_files_src(repo)?;
-    log::info!("src file list => {}", src_file_list);
-
-    let mut prompt_context = String::new();
-
-    // prompt_context.push_str("\n## Slither Contract Summary\n");
-    // prompt_context.push_str(&contract_summary);
-    prompt_context.push_str("\n## Main List of Files in Project\n\n");
-    prompt_context.push_str(&src_file_list);
-    prompt_context.push_str("\n\n");
-    // prompt_context.push_str("\n## Slither Call Graph\n");
-    // prompt_context.push_str(&callgraph);
-    // prompt_context.push_str("\n## Slither Inheritance Json\n");
-    // prompt_context.push_str(&inheritance);
-    // prompt_context.push_str("\n## Slither Detector\n");
-    // prompt_context.push_str(&slither_scan_results);
-
-    log::info!(
-        "file list context token count ==> {}",
-        get_token_count(&prompt_context)
-    );
-
-    let cache = Arc::clone(&PROMPT_CONTEXT);
-    let mut context_cache = cache.lock().await;
-    context_cache.insert(key, prompt_context.clone());
-    Ok(prompt_context)
-}
-
 /// Generate cache key for multi-modal context (actors, invariants, etc.)
 fn generate_multimodal_key(contract: &str, repo: &RepoPaths) -> String {
     format!("{}-{}", repo.root.to_string_lossy(), contract)
@@ -256,52 +234,45 @@ pub async fn generate_multi_modal_context(
     codeblock: &str,
     contract: &str,
     repo: &RepoPaths,
-) -> Result<String> {
+) -> Result<MultiModalContext> {
     let key = generate_multimodal_key(contract, repo);
-    let multimodal_context = Arc::clone(&MULTI_MODAL_CONTEXT);
-    let multimodal_cache = multimodal_context.lock().await;
+    let multimodal = Arc::clone(&MULTI_MODAL_CONTEXT);
+    let multimodal_cache = multimodal.lock().await;
 
-    if let Some(actors) = multimodal_cache.get(&key) {
-        return Ok(actors.to_string());
+    if let Some(multimodal_context) = multimodal_cache.get(&key) {
+        return Ok(multimodal_context.clone());
     }
 
     // Release lock before expensive operation
     drop(multimodal_cache);
 
-    // custom agent for digging up list of actors
-    let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.2")
-        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
-        .with_file_retrieval(false)
-        .with_openai_reasoning_effort("high");
-
-    let actor_discovery_agent =
-        Arc::new(AgentFactory::create_openai_agent(&actor_discovery_config)?);
-
-    // Phase 1: Generate actors and their capabilities
-    log::info!("PRE-PHASE: GENERATE ACTORS");
-    let actors: Actors =
-        pattern_phases::generate_actors::execute(codeblock, &actor_discovery_agent, repo).await?;
-
-    let actor_count = actors.actors.len();
-    log::info!("total of {} Actors found!", actor_count);
-
+    let actors = pre_audit_analysis::generate_actors(codeblock, repo).await?;
     let actors_capabilities = actors::generate_formated_list_from_actor_data(&actors.actors);
 
+    let invariants = pre_audit_analysis::generate_invariants(codeblock, repo).await?;
+    let invariant_list = invariants::generate_full_list_of_invariant_findings(&invariants);
+
+    let multimodal_context = MultiModalContext {
+        actors: actors_capabilities,
+        invariants: invariant_list,
+    };
+
     // CACHE RESULT
-    let multimodal_context = Arc::clone(&MULTI_MODAL_CONTEXT);
-    let mut multimodal_cache = multimodal_context.lock().await;
-    multimodal_cache.insert(key, actors_capabilities.clone());
-    Ok(actors_capabilities)
+    let mut multimodal_cache = multimodal.lock().await;
+    multimodal_cache.insert(key, multimodal_context.clone());
+    Ok(multimodal_context)
 }
 
-pub async fn get_multi_modal_context(contract: &str, repo: &RepoPaths) -> Option<String> {
+pub async fn get_multi_modal_context(
+    contract: &str,
+    repo: &RepoPaths,
+) -> Option<MultiModalContext> {
     let key = generate_multimodal_key(contract, repo);
-    let multimodal_context = Arc::clone(&MULTI_MODAL_CONTEXT);
-    let multimodal_cache = multimodal_context.lock().await;
+    let multimodal = Arc::clone(&MULTI_MODAL_CONTEXT);
+    let multimodal_cache = multimodal.lock().await;
 
-    if let Some(actors) = multimodal_cache.get(&key) {
-        Some(actors.to_string())
+    if let Some(multimodal_context) = multimodal_cache.get(&key) {
+        Some(multimodal_context.clone())
     } else {
         None
     }
