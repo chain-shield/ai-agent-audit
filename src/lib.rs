@@ -100,6 +100,7 @@ pub mod llm_review {
         pub mod code_review_v2;
         /// Global context management
         pub mod context_state;
+        pub mod pre_audit_analysis;
         pub mod semaphore;
     }
     pub mod threat_models {

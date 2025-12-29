@@ -7,6 +7,7 @@ use crate::error::{AuditError, Result};
 use crate::llm_review::analysis::context_state::{
     generate_multi_modal_context, get_multi_modal_context,
 };
+use crate::llm_review::analysis::pre_audit_analysis;
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_category::{
     get_contract_spec_from_category, ContractCategory,
@@ -21,7 +22,6 @@ use crate::llm_review::{
     findings::findings::Findings,
     pattern_phases,
     threat_models::{
-        invariants::{ContractInvariants, InvariantFinding, InvariantType},
         issues::{IssuePrompt, IssueStructTrait},
         pattern_category::PatternCategory,
     },
@@ -31,7 +31,6 @@ use crate::utils::logging::print_first_n_lines;
 use log::info;
 use nanoid::nanoid;
 use std::{path::PathBuf, sync::Arc};
-use strum::IntoEnumIterator;
 use tokio::sync::Mutex;
 
 /// Multi-LLM security analysis orchestration.
@@ -77,12 +76,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // ]);
     let custom_out_of_scoped_contracts: Option<Vec<String>> = None;
 
-    let (
-        ai_verify_agent,
-        pattern_discovery_agent,
-        finding_ai_verify_agent,
-        finding_discovery_agent,
-    ) = generate_ai_agents(repo).await?;
+    let (_, pattern_discovery_agent, finding_ai_verify_agent, finding_discovery_agent) =
+        generate_ai_agents(repo).await?;
 
     let findings_db = Arc::new(Mutex::new(FindingsDb::open()?));
 
@@ -123,19 +118,19 @@ pub async fn review_codebase_for_security_issues_v2(
         info!("{} {} is in scope", contract_type.to_string(), contract);
 
         // generate list of potential bad actors for this contract
-        let actor_capabilities =
+        let multimodal_context =
             Arc::new(generate_multi_modal_context(&codeblock, &contract, repo).await?);
-        print_first_n_lines(20, &actor_capabilities);
+        print_first_n_lines(20, &(*multimodal_context).actors);
+        print_first_n_lines(20, &(*multimodal_context).invariants);
 
         // Clone shared state for the spawned task
-        let verify_agent = Arc::clone(&ai_verify_agent);
         let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
         let pattern_discovery_agent = Arc::clone(&pattern_discovery_agent);
         let finding_discovery_agent = Arc::clone(&finding_discovery_agent);
         let results_db = Arc::clone(&findings_db);
         let all_issues = Arc::clone(&all_security_issues);
         let repo_clone = repo.clone();
-        let actors = Arc::clone(&actor_capabilities);
+        let arc_multimodal_context = Arc::clone(&multimodal_context);
 
         // semaphore
         let sem = Arc::clone(&CONTRACT_REVEW_SEM);
@@ -155,13 +150,7 @@ pub async fn review_codebase_for_security_issues_v2(
                             &pattern_discovery_agent,
                             &repo_clone
                         ),
-                        process_invariants(
-                            &codeblock,
-                            &pattern_discovery_agent,
-                            &finding_discovery_agent,
-                            &verify_agent,
-                            &repo_clone
-                        ),
+                        process_invariants(&codeblock, &finding_discovery_agent, &repo_clone),
                     )
                 };
 
@@ -195,7 +184,7 @@ pub async fn review_codebase_for_security_issues_v2(
                     let mut verify_findings = phases::verify_rounds::execute_rounds(
                         findings_with_id,
                         &codeblock,
-                        Some(actors),
+                        Some(arc_multimodal_context),
                         &finding_verify_agent,
                         &repo_clone,
                     )
@@ -421,8 +410,12 @@ async fn process_combined_patterns(
     }
 
     let actors = get_multi_modal_context(&contract, repo).await;
-    let actors_capabilities = actors.expect("could not unwrap actor capabilities, generate_multi_modal_context(...) must be called first");
-    let pattern_prompt = IssuePrompt::Combined((pattern_categories, actors_capabilities));
+    let multimodal_context = actors.expect("could not unwrap multimodal_context, generate_multi_modal_context(...) must be called first");
+    let pattern_prompt = IssuePrompt::Combined((
+        pattern_categories,
+        multimodal_context.actors,
+        multimodal_context.invariants,
+    ));
 
     info!("PHASE 1-3: GENERATE FINDINGS DIRECT FROM PATTERN");
     let findings = pattern_phases::generate_direct_findings::execute(
@@ -438,57 +431,10 @@ async fn process_combined_patterns(
 /// Process ipattern_discovery_config_gemininvariant analysis: generate, verify, and convert to findings
 async fn process_invariants(
     codeblock: &str,
-    invariant_discovery_agent: &Arc<AIAgent>,
     finding_discovery_agent: &Arc<AIAgent>,
-    ai_verify_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    let invariant_prompt = IssuePrompt::Invariant(InvariantType::iter().collect());
-
-    // Phase 1: Generate invariants
-    info!("PHASE 1: GENERATE INVARIANTS");
-    let raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
-        invariant_prompt,
-        codeblock,
-        invariant_discovery_agent,
-        repo,
-    )
-    .await?;
-
-    info!(
-        "total of {} invariant found!",
-        raw_invariants.invariants.len()
-    );
-
-    let invariants_with_id: ContractInvariants = ContractInvariants {
-        invariants: raw_invariants
-            .invariants
-            .into_iter()
-            .map(|inv| InvariantFinding {
-                id: Some(nanoid!()),
-                ..inv
-            })
-            .collect(),
-    };
-
-    // Phase 2: Verify invariants
-    info!("PHASE 2: VERIFY INVARIANTS");
-    let verified_invariants = if !invariants_with_id.issues().is_empty() {
-        pattern_phases::verify_patterns::verify_invariants(
-            invariants_with_id,
-            codeblock,
-            ai_verify_agent,
-            repo,
-        )
-        .await?
-    } else {
-        ContractInvariants::default()
-    };
-
-    info!(
-        "{} verified invariants found!",
-        verified_invariants.invariants.len()
-    );
+    let verified_invariants = pre_audit_analysis::generate_invariants(codeblock, repo).await?;
 
     info!("PHASE 3: GENERATE FINDINGS FROM INVARIANTS");
 
