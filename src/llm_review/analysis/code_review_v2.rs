@@ -1,4 +1,6 @@
-use crate::config::{CREATE_TESTS, SKIP_COMBINED_PATTERN_RUNS, SKIP_LIBRARIES};
+use crate::config::{
+    CREATE_TESTS, SKIP_COMBINED_PATTERN_RUNS, SKIP_LIBRARIES, SKIP_SOLO_INVARIANT_RUNS,
+};
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::analysis::context_state::{
@@ -392,6 +394,9 @@ async fn process_invariants(
     finding_discovery_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
+    if SKIP_SOLO_INVARIANT_RUNS {
+        return Ok(Findings::default());
+    }
     let verified_invariants = pre_audit_analysis::generate_invariants(codeblock, repo).await?;
 
     info!("PHASE 3: GENERATE FINDINGS FROM INVARIANTS");
