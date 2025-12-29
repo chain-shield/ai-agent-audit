@@ -12,15 +12,18 @@ use rig::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
 use std::sync::Arc;
 use strum_macros::EnumString;
 use tokio::sync::Semaphore;
 
+use crate::utils::check_folder_name::is_script_file;
 use crate::{
-    build_brain::summarize_db::{
-        get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
-        insert_file_summary_to_db,
+    build_brain::{
+        slither_ffi::get_all_files_src,
+        summarize_db::{
+            get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
+            insert_file_summary_to_db,
+        },
     },
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::{
@@ -32,7 +35,6 @@ use crate::{
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
-use crate::{llm_review::analysis::context_state, utils::check_folder_name::is_script_file};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumString, strum_macros::Display)]
 pub enum FileSummaryType {
@@ -67,16 +69,12 @@ pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 100;
 pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 20;
 pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
 
-pub async fn summarize_src_files(
-    repo: &RepoPaths,
-    semantics_path: &Path,
-) -> Result<Vec<SrcFileSummary>> {
-    summarize_src_files_with_model(repo, semantics_path, "gpt-5").await
+pub async fn summarize_src_files(repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
+    summarize_src_files_with_model(repo, "gpt-5").await
 }
 
 pub async fn summarize_src_files_with_model(
     repo: &RepoPaths,
-    semantics_path: &Path,
     model: &str,
 ) -> Result<Vec<SrcFileSummary>> {
     // pull summaries from db if avaliable
@@ -89,8 +87,14 @@ pub async fn summarize_src_files_with_model(
 
     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
-    let mut context =
-        context_state::generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
+    let mut context = String::new();
+    let src_file_list = get_all_files_src(repo)?;
+
+    // prompt_context.push_str("\n## Slither Contract Summary\n");
+    // prompt_context.push_str(&contract_summary);
+    context.push_str("\n## Main List of Files in Project\n\n");
+    context.push_str(&src_file_list);
+    context.push_str("\n\n");
 
     // add docs to context
     let documentation = repo.extract_content_from_docs()?;

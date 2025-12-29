@@ -82,7 +82,7 @@ where
     };
 
     match issue_prompt {
-        IssuePrompt::Combined((pattern_category, _)) => {
+        IssuePrompt::Combined((pattern_category, _, _)) => {
             for (i, category) in pattern_category.into_iter().enumerate() {
                 let category_spec =
                     get_category_library_spec(&category).expect("could not extract category spec");
