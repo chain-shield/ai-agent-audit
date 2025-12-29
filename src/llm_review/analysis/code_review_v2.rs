@@ -1,7 +1,4 @@
-use crate::config::{
-    ALL_PATTERN_APPROACH, CREATE_TESTS, NICHE_PATTERN_ANALYSIS_MODE, SKIP_COMBINED_PATTERN_RUNS,
-    SKIP_LIBRARIES,
-};
+use crate::config::{CREATE_TESTS, SKIP_COMBINED_PATTERN_RUNS, SKIP_LIBRARIES};
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::analysis::context_state::{
@@ -9,9 +6,6 @@ use crate::llm_review::analysis::context_state::{
 };
 use crate::llm_review::analysis::pre_audit_analysis;
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
-use crate::llm_review::contract::contract_category::{
-    get_contract_spec_from_category, ContractCategory,
-};
 use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::findings::findings::{Finding, CLAUDE_4_5_SONNET};
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
@@ -83,7 +77,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
     let mut contract_handles = Vec::new();
 
-    for (contract, (codeblock, contract_category)) in contracts.into_iter() {
+    for (contract, (codeblock, _)) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
         if let Some(scoped_contracts) = &custom_scoped_contracts {
@@ -121,7 +115,7 @@ pub async fn review_codebase_for_security_issues_v2(
         let multimodal_context =
             Arc::new(generate_multi_modal_context(&codeblock, &contract, repo).await?);
         print_first_n_lines(20, &(*multimodal_context).actors);
-        print_first_n_lines(20, &(*multimodal_context).invariants);
+        print_first_n_lines(50, &(*multimodal_context).invariants);
 
         // Clone shared state for the spawned task
         let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
@@ -140,13 +134,11 @@ pub async fn review_codebase_for_security_issues_v2(
             let result: Result<()> = async move {
                 // Run pattern, invariant, and actor analysis concurrently within this task
                 let (combined_res, invariants_res) = {
-                    let pattern_categories =
-                        get_pattern_category_from_contract_category(contract_category);
                     tokio::join!(
                         process_combined_patterns(
                             &codeblock,
                             &contract,
-                            pattern_categories,
+                            vec![PatternCategory::R1, PatternCategory::R2],
                             &pattern_discovery_agent,
                             &repo_clone
                         ),
@@ -363,40 +355,6 @@ pub async fn generate_ai_agents(
     ))
 }
 
-fn get_pattern_category_from_contract_category(
-    contract_category: ContractCategory,
-) -> Vec<PatternCategory> {
-    if ALL_PATTERN_APPROACH {
-        return vec![PatternCategory::R1, PatternCategory::R2];
-    }
-    let default_pattern_categories = vec![
-        PatternCategory::Top,
-        PatternCategory::MostObserved,
-        PatternCategory::Rare,
-        PatternCategory::Frequent,
-        PatternCategory::Top,
-        PatternCategory::Frequent,
-    ];
-
-    // if NICHE_PATTERN_ANALYSIS is false than always return default_pattern_categories
-    if contract_category == ContractCategory::Unknown || !NICHE_PATTERN_ANALYSIS_MODE {
-        return default_pattern_categories;
-    }
-
-    if let Some(contract_spec) = get_contract_spec_from_category(&contract_category) {
-        vec![
-            contract_spec.pattern_category.clone(),
-            PatternCategory::General,
-            PatternCategory::Top,
-            PatternCategory::MostObserved,
-            PatternCategory::Rare,
-            PatternCategory::Frequent,
-        ]
-    } else {
-        default_pattern_categories
-    }
-}
-
 async fn process_combined_patterns(
     codeblock: &str,
     contract: &str,
@@ -428,7 +386,7 @@ async fn process_combined_patterns(
 
     Ok(findings)
 }
-/// Process ipattern_discovery_config_gemininvariant analysis: generate, verify, and convert to findings
+
 async fn process_invariants(
     codeblock: &str,
     finding_discovery_agent: &Arc<AIAgent>,
