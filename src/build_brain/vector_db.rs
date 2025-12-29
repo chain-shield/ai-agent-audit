@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Qdrant vector database operations for semantic search.
 ///
@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 use crate::config::audit_config;
 use crate::error::{AuditError, Result};
 use log::info;
+use qdrant_client::qdrant::{
+    vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
+    VectorParams, VectorsConfig,
+};
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
-use qdrant_client::qdrant::{
-    CreateCollection, Distance, PointStruct, UpsertPointsBuilder, VectorParams, VectorsConfig,
-    vectors_config::Config,
-};
 
 use crate::build_brain::enbeddings::embed_files;
 use crate::build_brain::slither_ffi;
@@ -35,7 +35,6 @@ use super::enbeddings::SourceChunk;
 /// * `semantic_db` - Path to semantic analysis database
 pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     repo: &RepoPaths,
-    semantic_db: &Path,
 ) -> Result<()> {
     // check if vector db for this repo already exists
     if does_qdrant_vector_db_for_this_repo_already_exist(&repo).await? {
@@ -49,12 +48,8 @@ pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     info!("generating slither ssa into txt files that contain function or storage var");
 
     // Extract IR and storage information using Slither and write to text files
-    let slither_chunk_paths = slither_ffi::save_code_metadata_and_analysis_to_txt_files(
-        repo,
-        tmp_dir.path(),
-        &semantic_db,
-    )
-    .await?;
+    let slither_chunk_paths =
+        slither_ffi::save_code_metadata_and_analysis_to_txt_files(repo, tmp_dir.path()).await?;
     info!("slither ssa file count => {}", slither_chunk_paths.len());
     // ────────────────────────────────
     // 4. Assemble the *full* file list to embed
