@@ -105,14 +105,18 @@ pub fn generate_all_invariants_verify_prompt(invs: &ContractInvariants) -> Strin
         r#"
         {json} 
 
-        ## Your task: decide if EACH of the reported Invariants is legit or not.
+        ## Your task: decide if EACH reported Invariant is valid and should be respected, and if so, does it hold in the code or is it violated? 
+
+        You should return `"true"` for `is_invariant_valid` if invariant is valid and description, predicate, and status all check out.
+        Otherwise return `"false"`.
 
         Please continue until you have carefully evaluated ALL invariants.
 
         Based on your assessment please provided the following for EACH invariant:
 
         *invariant id*: insert invariant id (from 'id' field)
-        *is legit invariant*: true | false
+        *is invariant valid*: true | false
+        *is invariant violated*: true | false (OMIT if invariant is invalid) 
 
         ## INVARIANTS TO VERIFY
         {report} 
@@ -129,9 +133,9 @@ pub fn generate_invariant_verify_prompt(inv: &InvariantFinding) -> String {
 
     format!(
         r#"
-        ## Your task: decide if the reported Invariant is legit or not.
+        ## Your task: decide if the reported Invariant is valid and should be respected, and if so, does it hold in the code or is it violated? 
         
-        You should return `"true"` if invariant is legit and description, predicate, and status all check out.
+        You should return `"true"` if invariant is valid and description, predicate, and status all check out.
         Otherwise return `"false"`.
 
         ## INVARIANT TO VERIFY
@@ -236,8 +240,9 @@ pub fn get_all_invariants_verify_json() -> String {
             "findings": [
                 {{
                     "invariant_id": "'id' field from finding",
-                    "is_legit_invariant": true|false,
-                    "why_its_not_legit": "in 40 words less explain why NOT legit (OMIT if legit)"
+                    "is_invariant_valid": true|false,
+                    "is_invariant_violated": true|false, (OMIT this field if invariant is not valid)
+                    "why_its_not_valid": "in 40 words less explain why NOT valid (OMIT if valid)"
                 }}
             ]
         }}
@@ -249,8 +254,8 @@ pub fn get_invariant_verify_json() -> String {
     format!(
         r#"
         {{
-            "is_legit_invariant": true|false,
-            "why_its_not_legit": "in 40 words less explain why NOT legit (OMIT if legit)"
+            "is_invariant_valid": true|false,
+            "why_its_not_valid": "in 40 words less explain why NOT legit (OMIT if legit)"
         }}
         "#
     )
