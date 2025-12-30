@@ -39,22 +39,10 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     code: &str,
     finding: &Findings,
     instructions: &str,
-    multimodal_context: Option<Arc<MultiModalContext>>,
     post_instructions: &str,
     report_type: FindingReportType,
 ) -> String {
     let mut prompt = instructions.to_string();
-
-    if let Some(MultiModalContext { actors, invariants }) = multimodal_context.as_deref() {
-        prompt.push_str("\n\n");
-        prompt.push_str(&format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
-                 **NOTE**: The actors below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis\n\n
-                {}",actors));
-        prompt.push_str("\n\n");
-        prompt.push_str(&format!("## LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
-                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis. Also, this is NOT a complete list of invariants, other may exist in codebase.\n\n
-                {}",invariants));
-    }
 
     prompt.push_str("\n\n");
     prompt.push_str("## **SECURITY FINDINGS TO EVALUATE**");

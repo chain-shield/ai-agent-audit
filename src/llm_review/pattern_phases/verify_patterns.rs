@@ -38,8 +38,9 @@ pub trait InvariantAnalysis {
 pub struct LegitInvariant {
     pub invariant_id: String,
     #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub is_legit_invariant: bool,
-    pub why_its_not_legit: Option<String>,
+    pub is_invariant_valid: bool,
+    pub is_invariant_violated: Option<bool>,
+    pub why_its_not_valid: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -59,10 +60,10 @@ impl IsLegit for LegitInvariant {
         self.invariant_id.clone()
     }
     fn is_legit(&self) -> bool {
-        self.is_legit_invariant
+        self.is_invariant_valid
     }
     fn get_justification(&self) -> String {
-        self.why_its_not_legit.clone().unwrap_or_default()
+        self.why_its_not_valid.clone().unwrap_or_default()
     }
 }
 
