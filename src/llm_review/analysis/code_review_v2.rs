@@ -3,9 +3,7 @@ use crate::config::{
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
-use crate::llm_review::analysis::context_state::{
-    generate_multi_modal_context, get_multi_modal_context,
-};
+use crate::llm_review::analysis::context_state::generate_multi_modal_context;
 use crate::llm_review::analysis::pre_audit_analysis;
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_file_map::ContractType;
@@ -59,8 +57,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    // let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -113,12 +111,6 @@ pub async fn review_codebase_for_security_issues_v2(
 
         info!("{} {} is in scope", contract_type.to_string(), contract);
 
-        // generate list of potential bad actors for this contract
-        let multimodal_context =
-            Arc::new(generate_multi_modal_context(&codeblock, &contract, repo).await?);
-        print_first_n_lines(20, &(*multimodal_context).actors);
-        print_first_n_lines(50, &(*multimodal_context).invariants);
-
         // Clone shared state for the spawned task
         let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
         let pattern_discovery_agent = Arc::clone(&pattern_discovery_agent);
@@ -126,7 +118,6 @@ pub async fn review_codebase_for_security_issues_v2(
         let results_db = Arc::clone(&findings_db);
         let all_issues = Arc::clone(&all_security_issues);
         let repo_clone = repo.clone();
-        let arc_multimodal_context = Arc::clone(&multimodal_context);
 
         // semaphore
         let sem = Arc::clone(&CONTRACT_REVEW_SEM);
@@ -178,7 +169,6 @@ pub async fn review_codebase_for_security_issues_v2(
                     let mut verify_findings = phases::verify_rounds::execute_rounds(
                         findings_with_id,
                         &codeblock,
-                        Some(arc_multimodal_context),
                         &finding_verify_agent,
                         &repo_clone,
                     )
@@ -369,13 +359,13 @@ async fn process_combined_patterns(
         return Ok(Findings::default());
     }
 
-    let actors = get_multi_modal_context(&contract, repo).await;
-    let multimodal_context = actors.expect("could not unwrap multimodal_context, generate_multi_modal_context(...) must be called first");
-    let pattern_prompt = IssuePrompt::Combined((
-        pattern_categories,
-        multimodal_context.actors,
-        multimodal_context.invariants,
-    ));
+    // generate list of potential bad actors for this contract
+    let multimodal = generate_multi_modal_context(&codeblock, &contract, repo).await?;
+    print_first_n_lines(20, &multimodal.actors);
+    print_first_n_lines(50, &multimodal.invariants);
+
+    let pattern_prompt =
+        IssuePrompt::Combined((pattern_categories, multimodal.actors, multimodal.invariants));
 
     info!("PHASE 1-3: GENERATE FINDINGS DIRECT FROM PATTERN");
     let findings = pattern_phases::generate_direct_findings::execute(
