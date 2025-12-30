@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{FileSummaryType, summarize_protocol, summarize_src_files},
+        summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
     },
     cost::cost_data::get_token_count,
     llm_review::{
@@ -246,11 +246,16 @@ pub async fn generate_multi_modal_context(
     // Release lock before expensive operation
     drop(multimodal_cache);
 
-    let actors = pre_audit_analysis::generate_actors(codeblock, repo).await?;
-    let actors_capabilities = actors::generate_formated_list_from_actor_data(&actors.actors);
+    let (actors_res, invariants_res) = tokio::join!(
+        pre_audit_analysis::generate_actors(codeblock, repo),
+        pre_audit_analysis::generate_invariants(codeblock, repo)
+    );
 
-    let invariants = pre_audit_analysis::generate_invariants(codeblock, repo).await?;
+    let invariants = invariants_res.expect("generating invariants failed");
+    let actors = actors_res.expect("generating invariants failed");
+
     let invariant_list = invariants::generate_full_list_of_invariant_findings(&invariants);
+    let actors_capabilities = actors::generate_formated_list_from_actor_data(&actors.actors);
 
     let multimodal_context = MultiModalContext {
         actors: actors_capabilities,
