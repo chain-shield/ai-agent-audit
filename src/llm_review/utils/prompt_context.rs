@@ -1,9 +1,6 @@
-use std::sync::Arc;
-
 use crate::{
     config::CREATE_TESTS,
     llm_review::{
-        analysis::context_state::MultiModalContext,
         findings::findings::{Finding, Findings},
         threat_models::patterns::Pattern,
     },
