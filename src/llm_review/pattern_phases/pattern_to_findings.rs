@@ -147,7 +147,7 @@ where
 pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
     let mut code_plus_context = String::new();
 
-    code_plus_context.push_str("\n\n# SOLIDITY CONTRACT + STORAGE TO CODE REVIEW\n\n");
+    code_plus_context.push_str("\n\n");
     code_plus_context.push_str(codeblock);
 
     code_plus_context

@@ -2,7 +2,7 @@ use crate::{
     config::{
         MAX_PATTERN_GENERAL, MAX_PATTERN_LIBRARY, MAX_PATTERN_NICHE, MAX_PATTERN_RELEVANT_FREQUENT,
         MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_MOST, MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
-        MAX_PATTERN_R_FREQUENT,
+        R1_RUNS, R2_RUNS,
     },
     llm_review::threat_models::patterns::VulnerabilityPattern,
 };
@@ -283,14 +283,14 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         title: "Common Code4rena",
         issues: R1_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: MAX_PATTERN_R_FREQUENT,
+        runs: R1_RUNS,
     },
     PatternCategorySpec {
         category: PatternCategory::R2,
         title: "Complex Code4rena",
         issues: R2_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: MAX_PATTERN_R_FREQUENT,
+        runs: R2_RUNS,
     },
     PatternCategorySpec {
         category: PatternCategory::Relevant,

@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
 
     // Generate and cache protocol metadata context for AI analysis
     info!("generating metadata context...");
-    context_state::generate_and_save_metadata_context(&repo, &semantics_db).await?;
+    context_state::generate_and_save_metadata_context(&repo).await?;
 
     // ────────────────────────────────
     // 2.5. Build Inheritance Map (Custom Solidity Parsing)
@@ -134,8 +134,7 @@ async fn main() -> Result<()> {
     if slither_succeeded {
         // Create embeddings and store in Qdrant for semantic search
         // This also saves contract IR and metadata via save_code_metadata_and_analysis_to_txt_files
-        vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
-            .await?;
+        vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo).await?;
     } else {
         warn!("⚠️  Slither analysis failed. Skipping vector database generation and IR metadata.");
         warn!("The audit will continue using import-only traversal for code discovery.");

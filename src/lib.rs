@@ -100,6 +100,7 @@ pub mod llm_review {
         pub mod code_review_v2;
         /// Global context management
         pub mod context_state;
+        pub mod pre_audit_analysis;
         pub mod semaphore;
     }
     pub mod threat_models {
@@ -111,7 +112,6 @@ pub mod llm_review {
     }
     /// Security audit phases
     pub mod dynamic_prompts {
-        pub mod actor_findings;
         pub mod actors;
         pub mod findings;
         pub mod findings_template;
@@ -123,15 +123,11 @@ pub mod llm_review {
     pub mod phases {
         pub mod add_poc_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
-        pub mod verify_findings;
         pub mod verify_rounds;
         // Phase 7: Create professaionl competition-grade report
         pub mod create_report;
         pub mod rounds {
             pub mod all_rounds;
-            pub mod round_1;
-            pub mod round_2;
-            pub mod round_3;
             pub mod utils;
             pub mod validate_round;
         }

@@ -3,7 +3,7 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::{ACTOR_RUNS, INVARIANT_RUNS},
+    config::INVARIANT_RUNS,
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -16,7 +16,6 @@ use crate::{
             invariants::{generate_invariant_prompt, get_invariant_json},
         },
         threat_models::{
-            actors::ACTOR_CENTRIC_VULN_PATTERNS,
             issues::{IssuePrompt, IssueStructTrait},
             pattern_category::get_category_library_spec,
         },
@@ -42,9 +41,8 @@ where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
 {
     let issue_title = match issue_prompt {
-        IssuePrompt::Pattern(_) => "vulnerability patterns",
+        IssuePrompt::Combined(_) => "vulnerability patterns",
         IssuePrompt::Invariant(_) => "invariants",
-        IssuePrompt::Actor(_) => "actor",
     };
     info!(
         "🔍 Phase 1: Generating {} from contract codebase...",
@@ -63,7 +61,7 @@ where
     let combined_context = if audit_scope.is_empty() {
         context
     } else {
-        format!("{context}\n\n## AUDIT SCOPE AND KEY INVARIANTS\n\n{audit_scope}")
+        format!("{context}\n\n ===================== # AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT ===================== \n{audit_scope}")
     };
 
     let codeblock = Arc::new(code.to_string());
@@ -73,21 +71,15 @@ where
         generate_content_plus_context_block(&codeblock, &added_content_from_brain);
 
     // Simple local closure to DRY out spawn logic without extra generics
-    let mut spawn_run = |prompt: Arc<String>, run_index: usize| {
+    let mut spawn_run = |prompt: Arc<String>| {
         let agent = Arc::clone(arc_agent);
         let sem = Arc::clone(&GENERAL_SEM);
         let shared_patterns = Arc::clone(&all_patterns);
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
-            if let Err(e) = run_security_prompt(
-                agent,
-                "security exploits",
-                prompt,
-                run_index,
-                shared_patterns,
-            )
-            .await
+            if let Err(e) =
+                run_security_prompt(agent, "security exploits", prompt, shared_patterns).await
             {
                 log::error!("Prompt task failed: {e:#}");
             }
@@ -95,8 +87,25 @@ where
     };
 
     match issue_prompt {
-        IssuePrompt::Pattern(pattern_category) => {
-            for (i, category) in pattern_category.into_iter().enumerate() {
+        IssuePrompt::Combined((pattern_category, actors_capabilities, invariant_list)) => {
+            let actor_context = if actors_capabilities.is_some() {
+                format!("\n ===================== # POTENTIAL BAD ACTORS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITY ===================== \n
+                 **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis.\n\n
+                {}",actors_capabilities.clone().unwrap_or_default())
+            } else {
+                String::new()
+            };
+
+            let invariant_context = if invariant_list.is_some() {
+                format!("\n ===================== # LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITIES ===================== \n
+                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your analysis.\n\n
+                 Also, this is NOT a complete list of invariants, other may exist in codebase.
+                {}",invariant_list.clone().unwrap_or_default())
+            } else {
+                String::new()
+            };
+
+            for category in pattern_category.into_iter() {
                 let category_spec =
                     get_category_library_spec(&category).expect("could not extract category spec");
 
@@ -111,34 +120,33 @@ where
                         "security vulnerability pattern",
                         repo,
                     );
-                let prompt = Arc::new(format!(
-                    "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
+
+                let prompt_actors = Arc::new(format!(
+                    "{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
                 ));
 
-                // info!("pattern prompt => {}", prompt);
+                // log::info!("{}", prompt_actors);
+
+                let prompt_invariant = Arc::new(format!(
+                    "{instruction_prompt}{invariant_context}{code_plus_context}{json_requirement_prompt}"
+                ));
 
                 for run in 0..category_spec.runs {
-                    spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
+                    if actors_capabilities.is_some() {
+                        info!(
+                            "---- #{} LLM analysis Round for Finding with Actors----",
+                            run + 1
+                        );
+                        spawn_run(Arc::clone(&prompt_actors));
+                    }
+                    if invariant_list.is_some() {
+                        info!(
+                            "---- #{} LLM analysis Round for Finding with Invariants----",
+                            run + 1
+                        );
+                        spawn_run(Arc::clone(&prompt_invariant));
+                    }
                 }
-            }
-        }
-        IssuePrompt::Actor(actors) => {
-            // construct prompt
-            let instruction_prompt =
-                dynamic_prompts::findings::generate_bad_actor_to_findings_prompt(&actors, repo);
-            let json_requirement_prompt =
-                dynamic_prompts::findings_template::get_post_json_requirement_for_multipattern(
-                    &ACTOR_CENTRIC_VULN_PATTERNS,
-                    "bad actor",
-                    repo,
-                );
-
-            let prompt = Arc::new(format!(
-                "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
-            ));
-
-            for run in 0..ACTOR_RUNS {
-                spawn_run(Arc::clone(&prompt), run + 1);
             }
         }
         IssuePrompt::Invariant(invariants) => {
@@ -148,8 +156,8 @@ where
                 "{inv_prompt}{code_plus_context}{json_requirement_prompt}"
             ));
             // info!("invariant prompt => {}", prompt);
-            for run in 0..INVARIANT_RUNS {
-                spawn_run(Arc::clone(&prompt), run + 1);
+            for _ in 0..INVARIANT_RUNS {
+                spawn_run(Arc::clone(&prompt));
             }
         }
     }
@@ -179,17 +187,12 @@ pub async fn run_security_prompt<T>(
     agent: Arc<AIAgent>,
     title: &str,
     prompt: Arc<String>,
-    idx_of_review_round: usize,
     shared_patterns: Arc<Mutex<T>>,
 ) -> Result<()>
 where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
 {
     // 2. Send to the right provider
-    info!(
-        "---- #{} LLM analysis Round for Finding {}----",
-        idx_of_review_round, title
-    );
     let patterns: T = agent.extract_with_retry(&prompt).await?;
 
     let issues_found = patterns.issues().len();
@@ -211,10 +214,13 @@ where
 fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
     let mut code_plus_context = String::new();
 
-    code_plus_context.push_str("\n\nSOLIDITY CONTRACT + STORAGE TO CODE REVIEW\n\n");
+    code_plus_context.push_str(
+        "\n\n ===================== # SOLIDITY CODE TO REVIEW ===================== \n\n",
+    );
     code_plus_context.push_str(codeblock);
 
-    code_plus_context.push_str("\n\n ## ADDITIONAL CONTEXT \n\n");
+    code_plus_context
+        .push_str("\n\n ===================== # ADDITIONAL CONTEXT ===================== \n\n");
     code_plus_context.push_str(&added_context);
     code_plus_context.push_str("\n\n");
 

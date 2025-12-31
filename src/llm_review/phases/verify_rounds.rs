@@ -1,9 +1,6 @@
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
 use crate::llm_review::pattern_phases::pattern_to_findings::generate_content_plus_context_block;
 use crate::llm_review::phases::rounds::all_rounds::{AllRoundLegitAnalysis, VerifyAllRound};
-use crate::llm_review::phases::rounds::round_1::{RoundOneLegitAnalysis, VerifyRoundOne};
-use crate::llm_review::phases::rounds::round_2::{RoundTwoLegitAnalysis, VerifyRoundTwo};
-use crate::llm_review::phases::rounds::round_3::{RoundThreeLegitAnalysis, VerifyRoundThree};
 use crate::llm_review::phases::rounds::utils::generate_post_round_verify_json_requirement;
 use crate::llm_review::phases::rounds::validate_round::{
     generate_dynamic_validation_json, generate_round_validation_prompt, FindingDowngradeValidation,
@@ -32,8 +29,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use strum_macros::EnumIter;
-
-const RUN_SINGLE_ROUND: bool = true;
 
 #[derive(
     Default,
@@ -80,28 +75,6 @@ pub trait FindingAnalysis {
     fn generate_verify_json() -> String;
     fn id(&self) -> String;
     fn get_justification(&self) -> String;
-    fn round_number() -> usize;
-}
-
-impl AnalysisRound for VerifyRoundOne {
-    type Spec = RoundOneLegitAnalysis;
-    fn findings(&self) -> &[Self::Spec] {
-        &self.findings
-    }
-}
-
-impl AnalysisRound for VerifyRoundTwo {
-    type Spec = RoundTwoLegitAnalysis;
-    fn findings(&self) -> &[Self::Spec] {
-        &self.findings
-    }
-}
-
-impl AnalysisRound for VerifyRoundThree {
-    type Spec = RoundThreeLegitAnalysis;
-    fn findings(&self) -> &[Self::Spec] {
-        &self.findings
-    }
 }
 
 impl AnalysisRound for VerifyAllRound {
@@ -208,33 +181,6 @@ pub fn tagged_findings(findings: &Findings) -> usize {
         .count()
 }
 
-pub async fn run_round_1(
-    findings: Findings,
-    code_and_context: &str,
-    audit_scope: &str,
-    agent: &AIAgent,
-) -> Result<Findings> {
-    run_round::<VerifyRoundOne>(findings, code_and_context, audit_scope, agent).await
-}
-
-pub async fn run_round_2(
-    findings: Findings,
-    code_and_context: &str,
-    audit_scope: &str,
-    agent: &AIAgent,
-) -> Result<Findings> {
-    run_round::<VerifyRoundTwo>(findings, code_and_context, audit_scope, agent).await
-}
-
-pub async fn run_round_3(
-    findings: Findings,
-    code_and_context: &str,
-    audit_scope: &str,
-    agent: &AIAgent,
-) -> Result<Findings> {
-    run_round::<VerifyRoundThree>(findings, code_and_context, audit_scope, agent).await
-}
-
 pub async fn run_all_round(
     findings: Findings,
     code_and_context: &str,
@@ -289,7 +235,7 @@ where
         FindingReportType::NoPoC,
     );
 
-    info!("Round {} of Verification", T::Spec::round_number());
+    info!("Verification Round");
     let r_analysis: T = agent.extract_with_retry(&instruction_prompt).await?;
 
     // show analysis results
@@ -321,7 +267,6 @@ where
                 // finding passed!
                 return Finding {
                     status_justification: justification,
-                    verification_rounds_passed: Some(T::Spec::round_number() as u8),
                     ..f
                 };
             } else {
@@ -398,6 +343,17 @@ pub async fn run_round_validation(
 
     let mut instruction_prompt = format!("{}\n\n", main_instructions);
 
+    // if let Some(MultiModalContext { actors, invariants }) = multimodal_context.as_deref() {
+    //     instruction_prompt.push_str("\n\n");
+    //     instruction_prompt.push_str(&format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
+    //              **NOTE**: The actors below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis\n\n
+    //             {}",actors));
+    //     instruction_prompt.push_str("\n\n");
+    //     instruction_prompt.push_str(&format!("## LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
+    //              **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis. Also, this is NOT a complete list of invariants, others may exist in codebase.\n\n
+    //             {}",invariants));
+    // }
+
     instruction_prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");
     instruction_prompt.push_str("\n\n");
 
@@ -442,25 +398,9 @@ pub async fn run_round_validation(
 
             let updated_finding_status = validation_analysis.get_fixed_finding_status(&f);
 
-            // If validation returns None, all downgrade reasons were rejected -> upgrade to Valid or NeedsMoreInfo
-            // NOTE: only set as Valid if passed 2+ rounds (high confidence), otherwise set as NeedsMoreInfo
+            // If validation returns None, all downgrade reasons were rejected -> upgrade to Valid
             let final_status = if updated_finding_status.is_none() {
-                // If it passed 2 rounds, it means it failed Round 3, but that failure was overturned
-                // in the final validation round, therefore the finding is now Valid.
-                // If it passed fewer than 2 rounds, it needs human review (NeedsMoreInfo).
-                // Note: Some(3) won't appear here because those findings are already marked Valid
-                // and filtered out before validation.
-                if RUN_SINGLE_ROUND {
-                    Some(vec![FindingStatus::Valid])
-                } else {
-                    if f.verification_rounds_passed == Some(2)
-                        || f.verification_rounds_passed == Some(3)
-                    {
-                        Some(vec![FindingStatus::Valid])
-                    } else {
-                        Some(vec![FindingStatus::NeedsMoreInfo])
-                    }
-                }
+                Some(vec![FindingStatus::Valid])
             } else {
                 updated_finding_status
             };

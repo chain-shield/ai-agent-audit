@@ -1,9 +1,9 @@
 use crate::llm_review::{
     agent::agent_enums::{all_enum_variants, generate_enum_list},
     threat_models::invariants::{
-        InvariantFinding, InvariantSpec, InvariantStatus, InvariantType, INVARIANT_LIBRARY,
+        ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
+        INVARIANT_LIBRARY,
     },
-    utils::prompt_context::generate_formatted_invariant_finding,
 };
 
 pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
@@ -97,15 +97,45 @@ When designing each invariant:
     )
 }
 
+pub fn generate_all_invariants_verify_prompt(invs: &ContractInvariants) -> String {
+    let verify_json = get_pre_all_invariants_verify_json();
+    let inv_findings_report = generate_full_list_of_invariant_findings(invs);
+
+    format!(
+        r#"
+        {json} 
+
+        ## Your task: decide if EACH reported Invariant is valid and should be respected, and if so, does it hold in the code or is it violated? 
+
+        You should return `"true"` for `is_invariant_valid` if invariant is valid and description, predicate, and status all check out.
+        Otherwise return `"false"`.
+
+        Please continue until you have carefully evaluated ALL invariants.
+
+        Based on your assessment please provided the following for EACH invariant:
+
+        *invariant id*: insert invariant id (from 'id' field)
+        *is invariant valid*: true | false
+        *is invariant violated*: true | false (OMIT if invariant is invalid) 
+
+        ## INVARIANTS TO VERIFY
+        {report} 
+
+        "#,
+        json = verify_json,
+        report = inv_findings_report
+    )
+}
+
 pub fn generate_invariant_verify_prompt(inv: &InvariantFinding) -> String {
     let verify_json = get_invariant_verify_json();
     let inv_finding_report = generate_formatted_invariant_finding(inv);
 
     format!(
         r#"
-        ## Your task: decide if the reported Invariant is legit or not.
+        ## Your task: decide if the reported Invariant is valid and should be respected, and if so, does it hold in the code or is it violated? 
         
-        You should return `"true"` if invariant is legit and description, predicate, and status all check out.
+        You should return `"true"` if invariant is valid and description, predicate, and status all check out.
         Otherwise return `"false"`.
 
         ## INVARIANT TO VERIFY
@@ -167,12 +197,65 @@ pub fn get_invariant_json(inv: &[InvariantType]) -> String {
     )
 }
 
+pub fn get_post_all_invariants_verify_json() -> String {
+    let json = get_all_invariants_verify_json();
+
+    format!(
+        r#"
+
+        ## OUTPUT REQUIREMENTS 
+
+        *Please respond with ONLY valid JSON in the following exact format:*
+
+        {json}
+
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        they match up correctly.
+    "#
+    )
+}
+
+pub fn get_pre_all_invariants_verify_json() -> String {
+    let json = get_all_invariants_verify_json();
+
+    format!(
+        r#"
+
+        Before instructions are provided on the task please note required output format:
+
+        ## JSON Output Requirement
+
+        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+
+        {json}
+    "#
+    )
+}
+
+pub fn get_all_invariants_verify_json() -> String {
+    format!(
+        r#"
+        {{
+            "findings": [
+                {{
+                    "invariant_id": "'id' field from finding",
+                    "is_invariant_valid": true|false,
+                    "is_invariant_violated": true|false, (OMIT this field if invariant is not valid)
+                    "why_its_not_valid": "in 40 words less explain why NOT valid (OMIT if valid)"
+                }}
+            ]
+        }}
+        "#
+    )
+}
+
 pub fn get_invariant_verify_json() -> String {
     format!(
         r#"
         {{
-            "is_legit_invariant": true|false,
-            "why_its_not_legit": "in 40 words less explain why NOT legit (OMIT if legit)"
+            "is_invariant_valid": true|false,
+            "why_its_not_valid": "in 40 words less explain why NOT legit (OMIT if legit)"
         }}
         "#
     )
@@ -211,4 +294,51 @@ pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantTy
     }
 
     top_invariant_list
+}
+
+pub fn generate_full_list_of_invariant_findings(invariants: &ContractInvariants) -> String {
+    let mut invariant_findings = String::new();
+
+    for invariant in &invariants.invariants {
+        let finding = generate_formatted_invariant_finding(invariant);
+        invariant_findings.push_str(&finding);
+    }
+    invariant_findings.push_str("\n\n");
+
+    invariant_findings
+}
+
+pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
+    let mut invariant_finding = String::new();
+
+    invariant_finding.push_str(&format!(
+        "\n\n ### Invariant Type: {}\n",
+        &invariant.inv_type.to_string()
+    ));
+
+    if let Some(id) = &invariant.id {
+        invariant_finding.push_str(&format!("\n\n ### Invariant Id: {}\n", id));
+    }
+
+    invariant_finding.push_str(&format!(
+        "\n ### Relevant Function/Location: {}.{}\n",
+        invariant.contract, invariant.function
+    ));
+
+    invariant_finding.push_str("\n ### Predicate\n");
+    invariant_finding.push_str(&invariant.predicate);
+
+    invariant_finding.push_str("\n ### Description/Code Snippet\n");
+    invariant_finding.push_str(&invariant.desc.to_string());
+
+    invariant_finding.push_str("\n ### Checks\n");
+    invariant_finding.push_str(&invariant.checks.join(", "));
+
+    invariant_finding.push_str("\n ### Pre-State\n");
+    invariant_finding.push_str(&invariant.pre_state.clone().unwrap_or_default());
+
+    invariant_finding.push_str("\n ### Post-State\n");
+    invariant_finding.push_str(&invariant.post_state.clone().unwrap_or_default());
+
+    invariant_finding
 }

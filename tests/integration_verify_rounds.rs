@@ -129,6 +129,7 @@ async fn test_verify_rounds_puppy_raffle() -> Result<()> {
     let verified_findings = verify_rounds::execute_rounds(
         findings,
         &code_with_context,
+        None,
         &agent,
         &repo,
     )

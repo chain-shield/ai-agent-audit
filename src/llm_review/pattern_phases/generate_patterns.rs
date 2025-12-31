@@ -3,7 +3,7 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::{ACTOR_RUNS, INVARIANT_RUNS},
+    config::INVARIANT_RUNS,
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -38,9 +38,8 @@ where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
 {
     let issue_title = match issue_prompt {
-        IssuePrompt::Pattern(_) => "vulnerability patterns",
+        IssuePrompt::Combined(_) => "vulnerability patterns",
         IssuePrompt::Invariant(_) => "invariants",
-        IssuePrompt::Actor(_) => "actor",
     };
     info!(
         "🔍 Phase 1: Generating {} from contract codebase...",
@@ -83,7 +82,7 @@ where
     };
 
     match issue_prompt {
-        IssuePrompt::Pattern(pattern_category) => {
+        IssuePrompt::Combined((pattern_category, _, _)) => {
             for (i, category) in pattern_category.into_iter().enumerate() {
                 let category_spec =
                     get_category_library_spec(&category).expect("could not extract category spec");
@@ -102,18 +101,6 @@ where
                 for run in 0..category_spec.runs {
                     spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
                 }
-            }
-        }
-        IssuePrompt::Actor(actors) => {
-            // construct prompt
-            let instruction_prompt = dynamic_prompts::actors::generate_actor_abuses_prompt(&actors);
-            let json_requirement_prompt = dynamic_prompts::actors::get_actor_abuse_json();
-            let prompt = Arc::new(format!(
-                "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
-            ));
-
-            for run in 0..ACTOR_RUNS {
-                spawn_run(Arc::clone(&prompt), run + 1);
             }
         }
         IssuePrompt::Invariant(invariants) => {

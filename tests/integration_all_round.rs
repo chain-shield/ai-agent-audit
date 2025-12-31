@@ -67,9 +67,14 @@ async fn test_all_round_integration_with_ai() -> Result<()> {
     println!("🔍 Starting All-Round Verification...");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-    let verified_findings =
-        verify_rounds::run_all_round(findings.clone(), &code_with_context, audit_scope, &agent)
-            .await?;
+    let verified_findings = verify_rounds::run_all_round(
+        findings.clone(),
+        &code_with_context,
+        None,
+        audit_scope,
+        &agent,
+    )
+    .await?;
 
     // Display results
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -159,7 +164,6 @@ fn create_test_findings() -> Findings {
             mitigation: Some("Follow checks-effects-interactions pattern. Update state before external call.".to_string()),
             status: None,
             status_justification: None,
-            verification_rounds_passed: None,
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
@@ -184,7 +188,6 @@ fn create_test_findings() -> Findings {
             mitigation: Some("Use SafeMath library.".to_string()),
             status: None,
             status_justification: None,
-            verification_rounds_passed: None,
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
@@ -209,7 +212,6 @@ fn create_test_findings() -> Findings {
             mitigation: Some("Add timelock or multi-sig for pause function.".to_string()),
             status: None,
             status_justification: None,
-            verification_rounds_passed: None,
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
