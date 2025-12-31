@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::llm_review::{
     findings::findings::{Finding, Findings},
     phases::verify_rounds::FindingStatus,
-    utils::prompt_context::{get_finding_report, FindingReportType},
+    utils::prompt_context::{FindingReportType, get_finding_report},
 };
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -14,7 +14,7 @@ pub struct FindingDowngradeValidation {
 }
 
 /// Verification result for a potential vulnerability
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ValidateLegitAnalysis {
     pub finding_id: String,
     pub finding_title: String,

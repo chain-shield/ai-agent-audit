@@ -12,11 +12,12 @@ use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cac
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::extract_ir::robust_extract_fn_metadata_from_func_id;
 use crate::enumerator::parse_solidity::{
-    ImportDependencies, detect_scripts_connected_to_contract, detect_source_code_dependencies,
+    detect_scripts_connected_to_contract, detect_source_code_dependencies,
     is_standard_interface_name, is_standard_library_contract_name, should_exclude_this_library,
+    ImportDependencies,
 };
 use crate::enumerator::utils::{
-    SolFileType, get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
+    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir, SolFileType,
 };
 use crate::llm_review::contract::contract_category::ContractCategory;
 use crate::llm_review::contract::contract_file_map::{
@@ -374,7 +375,7 @@ pub async fn generate_codeblock_from_codebase(
         let (main_contract_code, contract_file) =
             get_contract_file_content(&main_contract, None, repo).await?;
         let main_section = format!(
-            "\n## *MAIN TARGET CONTRACT* TO REVIEW\n\n{}",
+            "\n ------------ ## *MAIN TARGET CONTRACT* TO REVIEW\n\n{} ------------",
             main_contract_code
         );
         let main_tokens = get_token_count(&main_section);
@@ -393,10 +394,11 @@ pub async fn generate_codeblock_from_codebase(
                 current_token_count, token_budget
             );
         }
-        markdown_codeblock_for_llm.push_str("\nEND OF MAIN TARGET CONTRACT\n");
+        markdown_codeblock_for_llm
+            .push_str("\n ------------ END OF MAIN TARGET CONTRACT ------------ \n");
 
         // Add parent and called contracts (prioritized by importance)
-        let supporting_header = "\n## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES\n";
+        let supporting_header = "\n ------------ ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES ------------ \n";
         markdown_codeblock_for_llm.push_str(supporting_header);
         current_token_count += get_token_count(supporting_header);
 
@@ -565,7 +567,7 @@ pub async fn generate_codeblock_from_codebase(
         );
 
         let supporting_lib_header =
-            "\n## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS\n";
+            "\n## ------------ SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS ------------ \n";
         markdown_codeblock_for_llm.push_str(supporting_lib_header);
         current_token_count += get_token_count(supporting_lib_header);
 
@@ -701,7 +703,8 @@ pub async fn generate_codeblock_from_codebase(
             impl_skipped_budget
         );
 
-        let supporting_lib_header = "\n## SUPPORTING CONTEXT: EXTERNAL LIBRARIES\n";
+        let supporting_lib_header =
+            "\n## ------------ SUPPORTING CONTEXT: EXTERNAL LIBRARIES ------------ \n";
         markdown_codeblock_for_llm.push_str(supporting_lib_header);
         current_token_count += get_token_count(supporting_lib_header);
 
@@ -754,8 +757,11 @@ pub async fn generate_codeblock_from_codebase(
             }
         }
 
-        markdown_codeblock_for_llm.push_str("\nEND OF SUPPORTING CONTRACTS AND INTERFACES\n\n");
-        markdown_codeblock_for_llm.push_str("\nDEPLOYMENT SCRIPTS\n\n");
+        markdown_codeblock_for_llm.push_str(
+            "\n ------------ END OF SUPPORTING CONTRACTS AND INTERFACES ------------ \n\n",
+        );
+        markdown_codeblock_for_llm
+            .push_str("\n ------------ ## DEPLOYMENT SCRIPTS ------------ \n\n");
 
         // Add relevant deploy scripts
         let contract_scripts = detect_scripts_connected_to_contract(&main_contract, repo).await?;

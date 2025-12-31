@@ -4,7 +4,7 @@ use crate::{
     config::AuditType,
     llm_review::{
         agent::agent_enums::{
-            EnumData, all_enum_variants, generate_enum_bulleted_list, generate_enum_list,
+            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
         },
         findings::{
             finding_enums::{Severity, VulnerabilityType},
@@ -34,13 +34,17 @@ pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
     };
 
     format!(
-        r#"Your job is to take the previously discovered **{issue_type}** and turn them into **concrete, in-scope & valid findings**.
+        r#"
+
+===================== # INSTRUCTIONS =====================
+
+Your job is to take the previously discovered **{issue_type}** and turn them into **concrete, in-scope & valid findings**.
 
 ## **Persist until you've thoroughly anlyzed ALL possible exploits from provided pattern**
    - Do **not** stop at the first interesting exploit.
    - Your goal is **maximum coverage** – unearth every valid finding.
 
-## Rules
+------------ ## Rules ------------
 
 - Only report exploits **directly tied** to the provided {issue_type}, **not** unrelated issues.
 - Only analyze code **actually present** in the codebase. 
@@ -54,13 +58,13 @@ pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
 
 ---
 
-## Severity rubric
+------------ ## Severity rubric ------------
 
 {severity_rubic}
 
 ---
 
-## Exploit guidelines
+------------ ## Exploit guidelines ------------
 
 - Severity priority: **Theft > DoS > accounting mismatch**.
 - Bigger **blast radius** and simpler execution are more valuable.
@@ -69,7 +73,7 @@ pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
 
 ---
 
-## {issue_type} Overview
+------------ ## {issue_type} Overview ------------ 
 
 - Type: {pattern_name}
 - Definition: {issue_definition}
@@ -80,7 +84,7 @@ pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
 
 ---
 
-## {title_all_caps} TO ANALYZE
+------------ ## {title_all_caps} TO ANALYZE ------------ 
 
 {issue_full_spec}
 

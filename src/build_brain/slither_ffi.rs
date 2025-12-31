@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -245,7 +245,7 @@ pub fn build_slither_args(
     // 3. For static analysis, exact compiler version match is less critical than for builds
 
     args.extend([
-        "ghcr.io/trailofbits/eth-security-toolbox:nightly".to_string(),
+        "trailofbits/eth-security-toolbox:nightly".to_string(),
         "slither".to_string(),
     ]);
 
@@ -727,7 +727,6 @@ pub async fn get_slither_ir_and_storage(
 pub async fn save_code_metadata_and_analysis_to_txt_files(
     repo: &RepoPaths,
     dir: &Path,
-    semantics_path: &Path,
 ) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
@@ -743,7 +742,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     };
     let contract_summary_vec = parse_slithir_contract_summary(&contract_summary);
     let src_file_list = get_all_files_src(repo)?;
-    let summaries = summarize_src_files(repo, &semantics_path).await?;
+    let summaries = summarize_src_files(repo).await?;
 
     // 2 . serialise each artefact → one text file
     let mut out_paths = Vec::new();

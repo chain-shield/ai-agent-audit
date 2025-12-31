@@ -45,6 +45,7 @@ fn mock_repo_paths() -> RepoPaths {
 
 fn sample_invariant_finding() -> InvariantFinding {
     InvariantFinding {
+        id: None,
         inv_type: InvariantType::Arithmetic,
         contract: "Vault".to_string(),
         function: "deposit".to_string(),

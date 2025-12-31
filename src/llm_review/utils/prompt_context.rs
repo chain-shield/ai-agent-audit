@@ -2,7 +2,7 @@ use crate::{
     config::CREATE_TESTS,
     llm_review::{
         findings::findings::{Finding, Findings},
-        threat_models::{invariants::InvariantFinding, patterns::Pattern},
+        threat_models::patterns::Pattern,
     },
     utils::finding_status_string::finding_status_to_string,
 };
@@ -42,7 +42,7 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     let mut prompt = instructions.to_string();
 
     prompt.push_str("\n\n");
-    prompt.push_str("## SECURITY FINDINGS TO EVALUATE");
+    prompt.push_str("## **SECURITY FINDINGS TO EVALUATE**");
     prompt.push_str("\n\n");
 
     for finding in &finding.findings {
@@ -59,58 +59,6 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     prompt.push_str(post_instructions);
 
     prompt
-}
-pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
-    let mut invariant_finding = String::new();
-
-    invariant_finding.push_str(&format!(
-        "\n\n ### Invariant Type: {}\n",
-        &invariant.inv_type.to_string()
-    ));
-
-    invariant_finding.push_str(&format!(
-        "\n ### Relevant Function/Location: {}.{}\n",
-        invariant.contract, invariant.function
-    ));
-
-    invariant_finding.push_str("\n ### Predicate\n");
-    invariant_finding.push_str(&invariant.predicate);
-
-    invariant_finding.push_str("\n ### Description/Code Snippet\n");
-    invariant_finding.push_str(&invariant.desc.to_string());
-
-    invariant_finding.push_str("\n ### Checks\n");
-    invariant_finding.push_str(&invariant.checks.join(", "));
-
-    invariant_finding.push_str(&format!(
-        "\n ### Status: {}\n",
-        &invariant.status.to_string()
-    ));
-
-    invariant_finding.push_str("\n ### Pre-State\n");
-    invariant_finding.push_str(&invariant.pre_state.clone().unwrap_or_default());
-
-    invariant_finding.push_str("\n ### Post-State\n");
-    invariant_finding.push_str(&invariant.post_state.clone().unwrap_or_default());
-
-    // invariant_finding.push_str("\n ### Impact\n");
-    // invariant_finding.push_str(&invariant.impact.clone().unwrap_or_default());
-
-    invariant_finding
-}
-
-pub fn generate_formatted_multiple_invariant_findings(invariants: &[InvariantFinding]) -> String {
-    let mut invariant_finding = String::new();
-
-    for invariant in invariants {
-        let invariant_details = generate_formatted_invariant_finding(invariant);
-
-        invariant_finding.push_str("\n");
-        invariant_finding.push_str(&invariant_details);
-        invariant_finding.push_str("\n");
-    }
-
-    invariant_finding
 }
 
 pub fn generate_formatted_pattern(pattern: &Pattern) -> String {

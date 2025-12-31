@@ -53,7 +53,7 @@ pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result
         format!("{}:/workspace", repo.root.display()),
         "-w".to_string(),
         "/workspace".to_string(),
-        "ghcr.io/trailofbits/eth-security-toolbox:nightly".to_string(),
+        "trailofbits/eth-security-toolbox:nightly".to_string(),
         "sh".to_string(),
         "-lc".to_string(),
         full_command,

@@ -1,16 +1,11 @@
 use crate::{
     config::AuditType,
     llm_review::{
-        dynamic_prompts::{
-            actors, findings_template::get_pre_json_requirement_for_multipattern, patterns,
-        },
+        dynamic_prompts::{findings_template::get_pre_json_requirement_for_multipattern, patterns},
         prompt_support::severity_rubics::{
             CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
         },
-        threat_models::{
-            actors::{Actor, ACTOR_CENTRIC_VULN_PATTERNS},
-            pattern_category,
-        },
+        threat_models::pattern_category,
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -160,15 +155,4 @@ pub fn generate_pattern_category_to_findings_prompt(
         &pattern_categories,
         severity_rubic,
     )
-}
-
-pub fn generate_bad_actor_to_findings_prompt(actors: &[Actor], repo: &RepoPaths) -> String {
-    let actors_capabilities = actors::generate_formated_list_from_actor_data(actors);
-    let severity_rubic = severity_rubric_for_repo(repo);
-    let title = "bad actor";
-
-    let pre_json =
-        get_pre_json_requirement_for_multipattern(&ACTOR_CENTRIC_VULN_PATTERNS, title, repo);
-
-    generate_shared_findings_prompt_body(&pre_json, title, &actors_capabilities, severity_rubic)
 }

@@ -1,8 +1,5 @@
 use ai_agent_audit::llm_review::phases::{
-    rounds::{
-        all_rounds::{AllRoundLegitAnalysis, VerifyAllRound},
-        round_1::{Impact, Likelihood},
-    },
+    rounds::all_rounds::{AllRoundLegitAnalysis, Impact, Likelihood, VerifyAllRound},
     verify_rounds::{FindingAnalysis, FindingStatus},
 };
 
@@ -398,11 +395,6 @@ fn test_all_round_generate_verify_prompt() {
     assert!(prompt.contains("future speculation"));
     assert!(prompt.contains("non standard token"));
     assert!(prompt.contains("justification"));
-}
-
-#[test]
-fn test_all_round_round_number() {
-    assert_eq!(AllRoundLegitAnalysis::round_number(), 3);
 }
 
 #[test]

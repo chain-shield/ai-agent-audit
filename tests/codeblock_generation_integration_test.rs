@@ -148,7 +148,7 @@ async fn test_codeblock_generation_with_contract_category() {
     }
 
     // Generate summaries using LLM
-    summarize_src_files_with_model(&repo, &semantics_path, "gpt-5-mini")
+    summarize_src_files_with_model(&repo, "gpt-5-mini")
         .await
         .expect("Failed to generate file summaries");
 

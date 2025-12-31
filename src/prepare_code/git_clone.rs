@@ -19,7 +19,7 @@ use std::{
 use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
-use crate::config::{audit_config, AuditType};
+use crate::config::{AuditType, audit_config};
 use crate::utils::check_folder_name::{
     is_library_package_json, is_monorepo_config_file, is_root_config_file, is_script_file,
     is_test_file,
@@ -513,7 +513,7 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
             &format!("{}:/workspace", docker_volume),
             "-w",
             "/workspace",
-            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
+            "trailofbits/eth-security-toolbox:nightly",
             "bash",
             "-c",
             &clone_and_build_command,
