@@ -192,12 +192,15 @@ impl OpenAIConfig {
 pub struct GeminiConfig {
     /// Thinking level for Gemini 3 Pro models ("low" or "high")
     pub thinking_level: Option<String>,
+    /// Top-p (nucleus sampling) parameter (0.0-1.0, default: 0.95)
+    pub top_p: Option<f64>,
 }
 
 impl Default for GeminiConfig {
     fn default() -> Self {
         Self {
             thinking_level: Some("high".to_string()),
+            top_p: Some(0.95),
         }
     }
 }
@@ -214,6 +217,21 @@ impl GeminiConfig {
                     "Invalid thinking level '{}'. Valid options: {}",
                     level,
                     VALID_THINKING_LEVELS.join(", ")
+                ),
+            ))
+        }
+    }
+
+    /// Validates the top_p value (must be between 0.0 and 1.0)
+    pub fn validate_top_p(top_p: f64) -> Result<()> {
+        if (0.0..=1.0).contains(&top_p) {
+            Ok(())
+        } else {
+            Err(AuditError::configuration(
+                "gemini_top_p",
+                &format!(
+                    "Invalid top_p value '{}'. Must be between 0.0 and 1.0",
+                    top_p
                 ),
             ))
         }
@@ -372,6 +390,16 @@ impl AgentConfig {
             panic!("Invalid thinking level in config builder: {}", e);
         }
         self.gemini_config.thinking_level = Some(level);
+        self
+    }
+
+    /// Sets the Gemini top_p (nucleus sampling) parameter (0.0-1.0, default: 0.95).
+    /// Validates the input and panics on invalid values during development.
+    pub fn with_top_p(mut self, top_p: f64) -> Self {
+        if let Err(e) = GeminiConfig::validate_top_p(top_p) {
+            panic!("Invalid top_p in config builder: {}", e);
+        }
+        self.gemini_config.top_p = Some(top_p);
         self
     }
 
@@ -660,6 +688,9 @@ impl AgentFactory {
         if let Some(ref level) = config.gemini_config.thinking_level {
             GeminiConfig::validate_thinking_level(level)?;
         }
+        if let Some(top_p) = config.gemini_config.top_p {
+            GeminiConfig::validate_top_p(top_p)?;
+        }
 
         // Disable safety filters for security research (analyzing vulnerabilities)
         let safety_settings = vec![
@@ -683,10 +714,11 @@ impl AgentFactory {
 
         // Set max output tokens to prevent truncation
         // Gemini 3 Pro supports up to 65,536 output tokens
-        // Configure thinking level for Gemini 3 Pro models
+        // Configure thinking level and top_p for Gemini 3 Pro models
         let mut generation_config = GenerationConfig {
             max_output_tokens: Some(64_000),
             temperature: Some(config.temperature),
+            top_p: config.gemini_config.top_p,
             ..Default::default()
         };
 
@@ -906,5 +938,46 @@ mod tests {
         let _ = init_config();
 
         let _config = AgentConfig::new(None).with_gemini_thinking_level("invalid");
+    }
+
+    #[test]
+    fn test_gemini_top_p_config() {
+        // Test default config
+        let config = GeminiConfig::default();
+        assert_eq!(config.top_p, Some(0.95));
+
+        // Test validation - valid values
+        assert!(GeminiConfig::validate_top_p(0.0).is_ok());
+        assert!(GeminiConfig::validate_top_p(0.5).is_ok());
+        assert!(GeminiConfig::validate_top_p(0.95).is_ok());
+        assert!(GeminiConfig::validate_top_p(1.0).is_ok());
+
+        // Test validation - invalid values
+        assert!(GeminiConfig::validate_top_p(-0.1).is_err());
+        assert!(GeminiConfig::validate_top_p(1.1).is_err());
+        assert!(GeminiConfig::validate_top_p(2.0).is_err());
+    }
+
+    #[test]
+    fn test_agent_config_with_top_p() {
+        use crate::config::init_config;
+
+        // Initialize config (required for AgentConfig::new)
+        let _ = init_config();
+
+        let config = AgentConfig::new(None).with_top_p(0.8);
+
+        assert_eq!(config.gemini_config.top_p, Some(0.8));
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid top_p")]
+    fn test_agent_config_with_invalid_top_p() {
+        use crate::config::init_config;
+
+        // Initialize config (required for AgentConfig::new)
+        let _ = init_config();
+
+        let _config = AgentConfig::new(None).with_top_p(1.5);
     }
 }

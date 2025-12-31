@@ -13,6 +13,7 @@ use crate::{
         slither_ffi::{cache_key, get_all_files_src},
         summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
     },
+    config::{SKIP_ACTOR_PATTERN_RUNS, SKIP_INVARIANT_RUNS},
     cost::cost_data::get_token_count,
     llm_review::{
         analysis::pre_audit_analysis,
@@ -97,7 +98,9 @@ pub async fn generate_and_save_metadata_context(repo: &RepoPaths) -> anyhow::Res
     // final metadata DOES NOT CONTAIN file summaries, because its too many tokens, and we no
     // longer need it for audit context
     let mut full_context_plus_summaries = full_context.clone();
-    full_context_plus_summaries.push_str("\n## SUMMARY OF SOURCE CODE FILES\n\n");
+    full_context_plus_summaries.push_str(
+        "\n ===================== ## SUMMARY OF SOURCE CODE FILES ===================== \n\n",
+    );
     for summary in summaries {
         let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
         if file_type == FileSummaryType::Source {
@@ -110,7 +113,7 @@ pub async fn generate_and_save_metadata_context(repo: &RepoPaths) -> anyhow::Res
     let protocol_summary = summarize_protocol(repo, Some(&full_context_plus_summaries)).await?;
 
     metadata.push_str(&format!(
-        "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
+        "\n ------------ ## PROTOCOL OVERVIEW ------------ \n\n{}\n\n",
         protocol_summary
     ));
 
@@ -149,26 +152,28 @@ pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String
 
     // prompt_context.push_str("\n## Slither Contract Summary\n");
     // prompt_context.push_str(&contract_summary);
-    full_prompt_context.push_str("\n## Main List of Files in Project\n\n");
+    full_prompt_context
+        .push_str("\n ------------ ## Main List of Files in Project ------------ \n\n");
     full_prompt_context.push_str(&src_file_list);
     full_prompt_context.push_str("\n\n");
 
     // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = repo.extract_content_from_docs()?;
     // adding FULL DOCS not doc_summaries
-    full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
+    full_prompt_context.push_str("\n ------------ ## DOCUMENTATION: ------------ \n\n ");
     full_prompt_context.push_str(&documentation);
 
     let lib_config_headers = repo.extract_lib_config_headers()?;
-    full_prompt_context.push_str("\n ## PACKAGE.JSON HEADERS OF LIB PACKAGES: \n");
-    full_prompt_context.push_str("\n Note: Check for important lib version info\n\n ");
+    full_prompt_context
+        .push_str("\n ------------ ## PACKAGE.JSON HEADERS OF LIB PACKAGES ------------ \n");
+    full_prompt_context.push_str("\n *Note*: Check for important lib version info\n\n ");
     full_prompt_context.push_str("\n When code reviewing be mindful of which version of openzepplin, chainlink, etc the package version is using.\n\n ");
     full_prompt_context.push_str(&lib_config_headers);
 
     let config_files_content = repo.extract_content_from_config_files()?;
     // adding config files: foundry.toml, package.json, etc
-    full_prompt_context.push_str("\n ## CONFIG FILES: \n");
-    full_prompt_context.push_str("\n Note: Check for important package version info.\n\n ");
+    full_prompt_context.push_str("\n ------------ ## CONFIG FILES ------------ \n");
+    full_prompt_context.push_str("\n *Note*: Check for important package version info.\n\n ");
     full_prompt_context.push_str(&config_files_content);
 
     log::info!(
@@ -193,7 +198,7 @@ pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
 
     let mut audit_scope = "#r 
 
-        ## Privileged Roles 
+        ------------ ## Privileged Roles ------------
 
         All Privileged Roles are TRUSTED by default unless listed as untrusted below.
 
@@ -246,16 +251,19 @@ pub async fn generate_multi_modal_context(
     // Release lock before expensive operation
     drop(multimodal_cache);
 
-    let (actors_res, invariants_res) = tokio::join!(
-        pre_audit_analysis::generate_actors(codeblock, repo),
-        pre_audit_analysis::generate_invariants(codeblock, repo)
-    );
+    let actors_capabilities = if !SKIP_ACTOR_PATTERN_RUNS {
+        let actors = pre_audit_analysis::generate_actors(codeblock, repo).await?;
+        actors::generate_formated_list_from_actor_data(&actors.actors)
+    } else {
+        String::new()
+    };
 
-    let invariants = invariants_res.expect("generating invariants failed");
-    let actors = actors_res.expect("generating invariants failed");
-
-    let invariant_list = invariants::generate_full_list_of_invariant_findings(&invariants);
-    let actors_capabilities = actors::generate_formated_list_from_actor_data(&actors.actors);
+    let invariant_list = if !SKIP_INVARIANT_RUNS {
+        let invariants = pre_audit_analysis::generate_invariants(codeblock, repo).await?;
+        invariants::generate_full_list_of_invariant_findings(&invariants)
+    } else {
+        String::new()
+    };
 
     let multimodal_context = MultiModalContext {
         actors: actors_capabilities,

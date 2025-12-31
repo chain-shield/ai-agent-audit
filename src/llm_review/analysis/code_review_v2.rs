@@ -1,10 +1,9 @@
-use crate::config::{
-    CREATE_TESTS, SKIP_COMBINED_PATTERN_RUNS, SKIP_LIBRARIES, SKIP_SOLO_INVARIANT_RUNS,
-};
+use crate::config::{CREATE_TESTS, SKIP_ACTOR_PATTERN_RUNS, SKIP_LIBRARIES};
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
-use crate::llm_review::analysis::context_state::generate_multi_modal_context;
-use crate::llm_review::analysis::pre_audit_analysis;
+use crate::llm_review::analysis::context_state::{
+    generate_multi_modal_context, get_multi_modal_context,
+};
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::findings::findings::{Finding, CLAUDE_4_5_SONNET};
@@ -15,10 +14,7 @@ use crate::llm_review::{
     analysis::analysis_db::FindingsDb,
     findings::findings::Findings,
     pattern_phases,
-    threat_models::{
-        issues::{IssuePrompt, IssueStructTrait},
-        pattern_category::PatternCategory,
-    },
+    threat_models::{issues::IssuePrompt, pattern_category::PatternCategory},
 };
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::logging::print_first_n_lines;
@@ -68,10 +64,10 @@ pub async fn review_codebase_for_security_issues_v2(
     //     "BasePositions".to_string(),
     //     "MEVCapture".to_string(),
     // ]);
+
     let custom_out_of_scoped_contracts: Option<Vec<String>> = None;
 
-    let (_, pattern_discovery_agent, finding_ai_verify_agent, finding_discovery_agent) =
-        generate_ai_agents(repo).await?;
+    let (_, pattern_discovery_agent, finding_ai_verify_agent, _) = generate_ai_agents(repo).await?;
 
     let findings_db = Arc::new(Mutex::new(FindingsDb::open()?));
 
@@ -111,10 +107,13 @@ pub async fn review_codebase_for_security_issues_v2(
 
         info!("{} {} is in scope", contract_type.to_string(), contract);
 
+        // generate list of potential bad actors for this contract and invariants
+        // NOTE: below is needed to cache results
+        let _ = generate_multi_modal_context(&codeblock, &contract, repo).await?;
+
         // Clone shared state for the spawned task
         let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
         let pattern_discovery_agent = Arc::clone(&pattern_discovery_agent);
-        let finding_discovery_agent = Arc::clone(&finding_discovery_agent);
         let results_db = Arc::clone(&findings_db);
         let all_issues = Arc::clone(&all_security_issues);
         let repo_clone = repo.clone();
@@ -125,31 +124,14 @@ pub async fn review_codebase_for_security_issues_v2(
         contract_handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
-                // Run pattern, invariant, and actor analysis concurrently within this task
-                let (combined_res, invariants_res) = {
-                    tokio::join!(
-                        process_combined_patterns(
-                            &codeblock,
-                            &contract,
-                            vec![PatternCategory::R1, PatternCategory::R2],
-                            &pattern_discovery_agent,
-                            &repo_clone
-                        ),
-                        process_invariants(&codeblock, &finding_discovery_agent, &repo_clone),
-                    )
-                };
-
-                let mut raw_findings = Findings::default();
-
-                // Helper to merge findings or log errors
-                let mut merge_findings =
-                    |result: Result<Findings>, analysis_type: &str| match result {
-                        Ok(findings) => raw_findings.findings.extend(findings.findings),
-                        Err(e) => log::error!("{} analysis failed: {:#}", analysis_type, e),
-                    };
-
-                merge_findings(invariants_res, "invariant");
-                merge_findings(combined_res, "combined");
+                let raw_findings = process_combined_patterns(
+                    &codeblock,
+                    &contract,
+                    vec![PatternCategory::R1, PatternCategory::R2],
+                    &pattern_discovery_agent,
+                    &repo_clone,
+                )
+                .await?;
 
                 if !raw_findings.findings.is_empty() {
                     // add uuid to each finding to uniquely identify
@@ -315,8 +297,17 @@ pub async fn generate_ai_agents(
 
     let pattern_discovery_config_gemini = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
+        .with_top_p(0.95)
         .with_model("gemini-3-pro-preview")
         .with_preamble(solidity_auditor_preamble);
+
+    // let pattern_discovery_config_claude = AgentConfig::new(Some(repo.clone()))
+    //     .with_temperature(0.2)
+    //     .with_model(CLAUDE_4_5_SONNET)
+    //     .with_max_tokens(64_000)
+    //     .with_preamble(solidity_auditor_preamble)
+    //     .with_file_picker(false) // Disabled to avoid rate limits
+    //     .with_file_retrieval(false);
 
     let _pattern_discovery_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5.2")
@@ -325,25 +316,19 @@ pub async fn generate_ai_agents(
         .with_openai_reasoning_effort("high")
         .with_file_picker(false);
 
-    // let pattern_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
-    //     &pattern_discovery_config,
-    // )?);
-    // let finding_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
-    //     &pattern_discovery_config,
-    // )?);
-
-    let pattern_discovery_gemini_agent = Arc::new(AgentFactory::create_gemini_agent(
+    let pattern_discovery_agent = Arc::new(AgentFactory::create_gemini_agent(
         &pattern_discovery_config_gemini,
     )?);
-    // let ai_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
-    //     &discovery_config_claude,
-    // )?);
 
+    // let pattern_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
+    //     &pattern_discovery_config_claude,
+    // )?);
+    //
     Ok((
         ai_finding_verify_agent.clone(),
-        pattern_discovery_gemini_agent.clone(),
+        pattern_discovery_agent.clone(),
         ai_finding_verify_agent,
-        pattern_discovery_gemini_agent,
+        pattern_discovery_agent,
     ))
 }
 
@@ -355,17 +340,28 @@ async fn process_combined_patterns(
     repo: &RepoPaths,
 ) -> Result<Findings> {
     // check flag
-    if SKIP_COMBINED_PATTERN_RUNS {
+    if SKIP_ACTOR_PATTERN_RUNS {
         return Ok(Findings::default());
     }
 
-    // generate list of potential bad actors for this contract
-    let multimodal = generate_multi_modal_context(&codeblock, &contract, repo).await?;
-    print_first_n_lines(20, &multimodal.actors);
-    print_first_n_lines(50, &multimodal.invariants);
+    let multi_modal_context = get_multi_modal_context(&contract, repo).await;
+    let multimodal = multi_modal_context.expect("could not unwrap multimodal_context, generate_multi_modal_context(...) must be called first");
+    print_first_n_lines(30, &multimodal.actors);
+    print_first_n_lines(30, &multimodal.invariants);
 
-    let pattern_prompt =
-        IssuePrompt::Combined((pattern_categories, multimodal.actors, multimodal.invariants));
+    let actors = if !multimodal.actors.is_empty() {
+        Some(multimodal.actors)
+    } else {
+        None
+    };
+
+    let invariants = if !multimodal.invariants.is_empty() {
+        Some(multimodal.invariants)
+    } else {
+        None
+    };
+
+    let pattern_prompt = IssuePrompt::Combined((pattern_categories, actors, invariants));
 
     info!("PHASE 1-3: GENERATE FINDINGS DIRECT FROM PATTERN");
     let findings = pattern_phases::generate_direct_findings::execute(
@@ -377,31 +373,4 @@ async fn process_combined_patterns(
     .await?;
 
     Ok(findings)
-}
-
-async fn process_invariants(
-    codeblock: &str,
-    finding_discovery_agent: &Arc<AIAgent>,
-    repo: &RepoPaths,
-) -> Result<Findings> {
-    if SKIP_SOLO_INVARIANT_RUNS {
-        return Ok(Findings::default());
-    }
-    let verified_invariants = pre_audit_analysis::generate_invariants(codeblock, repo).await?;
-
-    info!("PHASE 3: GENERATE FINDINGS FROM INVARIANTS");
-
-    if !verified_invariants.issues().is_empty() {
-        let findings_from_invariants = pattern_phases::multipattern_to_findings::execute(
-            verified_invariants,
-            codeblock,
-            finding_discovery_agent,
-            repo,
-        )
-        .await?;
-
-        Ok(findings_from_invariants)
-    } else {
-        Ok(Findings::default())
-    }
 }

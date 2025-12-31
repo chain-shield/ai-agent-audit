@@ -42,7 +42,7 @@ use crate::llm_review::threat_models::{
 
 pub enum IssuePrompt {
     Invariant(Vec<InvariantType>),
-    Combined((Vec<PatternCategory>, String, String)),
+    Combined((Vec<PatternCategory>, Option<String>, Option<String>)),
 }
 
 #[async_trait]
