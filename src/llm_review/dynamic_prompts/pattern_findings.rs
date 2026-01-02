@@ -2,31 +2,12 @@ use std::collections::HashSet;
 
 use crate::{
     llm_review::{
-        agent::agent_enums::EnumData,
-        dynamic_prompts::findings_template::{
-            generate_findings_prompt, generate_findings_prompt_for_multiple_patterns,
-        },
-        threat_models::patterns::{
-            Pattern, Patterns, VulnerabilityPattern, VulnerabilityPatternSpec,
-        },
-        utils::prompt_context::{generate_formatted_multiple_patterns, generate_formatted_pattern},
+        dynamic_prompts::findings_template::generate_findings_prompt_for_multiple_patterns,
+        threat_models::patterns::{Patterns, VulnerabilityPattern},
+        utils::prompt_context::generate_formatted_multiple_patterns,
     },
     prepare_code::git_clone::RepoPaths,
 };
-
-pub fn generate_pattern_to_findings_prompt(pattern: &Pattern, repo: &RepoPaths) -> String {
-    let pattern_data: VulnerabilityPatternSpec = pattern.issue_type.get_spec();
-    let pattern_full_spec = generate_formatted_pattern(pattern);
-    let pattern_type = "Security Vulnerability Pattern";
-
-    generate_findings_prompt(
-        pattern_type,
-        &pattern_data.definition,
-        &pattern_full_spec,
-        &pattern.issue_type,
-        &repo,
-    )
-}
 
 pub fn generate_multipattern_to_findings_prompt(patterns: &Patterns, repo: &RepoPaths) -> String {
     let vulnerability_patterns: Vec<VulnerabilityPattern> = patterns
