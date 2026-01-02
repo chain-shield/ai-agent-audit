@@ -18,89 +18,15 @@ use crate::{
 };
 use strum::IntoEnumIterator;
 
-pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
-    issue_type: &str,
-    issue_definition: &str,
-    issue_full_spec: &str,
-    issue_enum: &T,
-    repo: &RepoPaths,
-) -> String {
-    let exploit_enums = issue_enum.to_types();
-    let exploit_bullets = generate_enum_bulleted_list(exploit_enums); // "- Oracle\n- Reentrancy\n..."
-    let severity_rubic = match repo.audit_type {
-        AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
-        AuditType::Cantina => CANTINA_SEVERITY_RUBRIC,
-        _ => CODE4RENA_SEVERITY_RUBRIC,
-    };
-
-    format!(
-        r#"
-
-===================== # INSTRUCTIONS =====================
-
-Your job is to take the previously discovered **{issue_type}** and turn them into **concrete, in-scope & valid findings**.
-
-## **Persist until you've thoroughly anlyzed ALL possible exploits from provided pattern**
-   - Do **not** stop at the first interesting exploit.
-   - Your goal is **maximum coverage** – unearth every valid finding.
-
------------- ## Rules ------------
-
-- Only report exploits **directly tied** to the provided {issue_type}, **not** unrelated issues.
-- Only analyze code **actually present** in the codebase. 
-- Prefer exploits accessible to **unprivileged EOAs**; if an exploit requires a trusted role, make that clear via the `"privilege"` field (as specified in the JSON instructions).
-- Focus on **present-state** bugs in the current code. Ignore one-time deployment/upgrade windows unless the same condition can be recreated or abused permissionlessly later.
-- A valid finding must be:
-  - In-scope,
-  - Backed by a credible exploit path,
-  - And clearly Valid finding according to the rubric.
-- If nothing meets these criteria, return `{{"findings":[]}}`.
-
----
-
------------- ## Severity rubric ------------
-
-{severity_rubic}
-
----
-
------------- ## Exploit guidelines ------------
-
-- Severity priority: **Theft > DoS > accounting mismatch**.
-- Bigger **blast radius** and simpler execution are more valuable.
-- Assert conditions using `assertGt` / `assertEq`, not just logs.
-- For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
-
----
-
------------- ## {issue_type} Overview ------------ 
-
-- Type: {pattern_name}
-- Definition: {issue_definition}
-
-### Common Exploits
-
-{exploit_bullets}
-
----
-
------------- ## {title_all_caps} TO ANALYZE ------------ 
-
-{issue_full_spec}
-
----
-        "#,
-        pattern_name = issue_enum.to_string(),
-        title_all_caps = issue_type.to_uppercase()
-    )
-}
-
-pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Display>(
+pub fn generate_findings_prompt_for_multiple_patterns<T>(
     issue_type: &str,
     full_spec_of_issues: &str,
     enum_issues: &[T],
     repo: &RepoPaths,
-) -> String {
+) -> String
+where
+    T: EnumData + std::fmt::Display + Default,
+{
     let exploit_enums: Vec<VulnerabilityType> = enum_issues
         .iter()
         .flat_map(|e| e.to_types())
@@ -122,6 +48,8 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
 
         {json}
 
+        ===================== # INSTRUCTIONS =====================
+
         Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
 
         ## **Persist until all patterns are considered**
@@ -130,7 +58,7 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
         - Systematically go through **every** candidate block in "{title_all_caps} TO ANALYZE" and decide:
             - "Real in-scope vulnerability keep as a finding"
 
-        ## Rules
+        ------------ ## Rules ------------
 
         - Only report exploits **directly tied** to the provided {pattern_type} (patterns or invariants), **not** unrelated issues.
         - Only analyze code **actually present** in the codebase. 
@@ -142,12 +70,12 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
         - And clearly severity according to the rubric.
         - If nothing meets these criteria, return `{{"findings":[]}}`.
 
-        ## Severity rubric
+        ------------ ## Severity rubric ------------
 
         {rubric}
 
 
-        ## Exploit guidelines
+        ------------ ## Exploit guidelines ------------
 
         - Severity priority: **Theft > DoS > accounting mismatch**.
         - Bigger **blast radius** and simpler execution are more valuable.
@@ -156,7 +84,7 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
 
         ---
 
-        ## {pattern_type} Overview
+        ------------ ## {issue_type} Overview ------------ 
 
         ### Common Exploits
 
@@ -164,7 +92,7 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
 
         ---
 
-        ## {title_all_caps} TO ANALYZE
+        ------------ ## {title_all_caps} TO ANALYZE ------------ 
 
         {full_spec}
 
@@ -174,71 +102,6 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
         exploit_bullets = exploit_bullets,
         full_spec = full_spec_of_issues,
         title_all_caps = issue_type.to_uppercase()
-    )
-}
-
-pub fn get_post_findings_json_requirement<T>(
-    pattern: &T,
-    pattern_description: &str,
-    repo: &RepoPaths,
-) -> String
-where
-    T: std::fmt::Display + EnumData,
-{
-    let issue_list = generate_enum_list(pattern.to_types());
-    let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
-    let severity_enums_standard: Vec<Severity> = Severity::iter()
-        .filter(|s| *s != Severity::Critical)
-        .collect();
-    let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
-    let severity_list = match repo.audit_type {
-        AuditType::Code4rena => severity_enums_list_standard,
-        AuditType::Sherlock => severity_enums_list_standard,
-        AuditType::Cantina => severity_enums_list_standard,
-        _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),
-    };
-
-    format!(
-        r#"
-
-        ## OUTPUT REQUIREMENTS 
-
-        *Please respond with ONLY valid JSON in the following exact format:*
-
-        {{
-        "findings": [
-            {{
-            "derived_from": "{pattern_description}",
-            "title": "200 chars or less audit report friendly title i.e. DOS due to unbounded loop in <contract_name>.<function_name> bricking withdrawals",
-            "description": "Detailed explanation + vulnerable snippet",
-            "exploit_type": "{issues}",
-            "privilege": "{privileges}",
-            "contract": "{{contract_name}}", 
-            "function": "{{function_name}}", 
-            "impact": "monetary/functional consequences",
-            "proof_of_concept": "Step-by-step exploitation scenario",
-            "proof_of_code": "compilable Foundry unit test",
-            "severity": "{severity}",
-            "mitigation": "concrete code fix"
-            }}
-        ]
-        }}
-
-        - Keep "derived_from" exactly as shown
-        - *privilege* -> least privilege to trigger vulnerability
-        - If no vulnerabilities are found, return: 
-
-        {{
-        "findings": []
-        }}
-
-        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
-        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
-        they match up correctly.
-       "#,
-        issues = issue_list,
-        privileges = privilege_enum_list,
-        severity = severity_list,
     )
 }
 
