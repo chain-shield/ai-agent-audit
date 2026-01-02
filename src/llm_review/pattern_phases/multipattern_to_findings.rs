@@ -41,7 +41,6 @@ where
 
     let all_findings = Arc::new(Mutex::new(Findings {
         findings: Vec::new(),
-        checked_for: None,
     }));
 
     let mut handles = vec![];

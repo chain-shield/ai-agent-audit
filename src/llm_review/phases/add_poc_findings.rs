@@ -11,14 +11,14 @@ use crate::{
             finding_enums::Severity,
             findings::{Finding, Findings},
         },
-        pattern_phases::pattern_to_findings::generate_content_plus_context_block,
+        pattern_phases::generate_patterns::generate_content_plus_context_block,
         prompt_support::{
             make_poc_prompt::{generate_poc_prompt, generate_rewrite_poc_prompt},
             post_poc::POST_CREATE_POC,
             pre_poc::PRE_CREATE_POC,
         },
         utils::{
-            prompt_context::{FindingReportType, generate_prompt_for_issue_check},
+            prompt_context::{generate_prompt_for_issue_check, FindingReportType},
             save_run_poc::save_and_run_poc_test,
         },
     },
