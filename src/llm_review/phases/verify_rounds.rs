@@ -1,5 +1,5 @@
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
-use crate::llm_review::pattern_phases::pattern_to_findings::generate_content_plus_context_block;
+use crate::llm_review::pattern_phases::generate_patterns::generate_content_plus_context_block;
 use crate::llm_review::phases::rounds::all_rounds::{AllRoundLegitAnalysis, VerifyAllRound};
 use crate::llm_review::phases::rounds::utils::generate_post_round_verify_json_requirement;
 use crate::llm_review::phases::rounds::validate_round::{
