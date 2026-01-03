@@ -2,13 +2,14 @@ use crate::llm_review::{
     agent::agent_enums::{all_enum_variants, generate_enum_list},
     findings::findings::PrivilegeLevel,
     threat_models::{
-        pattern_category::{PatternCategory, get_category_library_spec},
+        pattern_category::{get_category_library_spec, PatternCategory},
         patterns::{
-            Pattern, VULNERABILITY_PATTERN_LIBRARY, VulnerabilityPattern, VulnerabilityPatternSpec,
+            Pattern, VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY,
         },
     },
     utils::prompt_context::generate_formatted_pattern,
 };
+use rand::seq::SliceRandom;
 
 pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
     let category_spec = get_category_library_spec(&category).expect("could not find category");
@@ -311,11 +312,15 @@ pub fn get_pattern_verify_json() -> String {
 pub fn generate_formated_list_from_pattern_data(
     patterns_to_use: &[VulnerabilityPattern],
 ) -> String {
-    let top_patterns_spec: Vec<VulnerabilityPatternSpec> = VULNERABILITY_PATTERN_LIBRARY
+    let mut top_patterns_spec: Vec<VulnerabilityPatternSpec> = VULNERABILITY_PATTERN_LIBRARY
         .iter()
         .filter(|v| patterns_to_use.contains(&v.key))
         .map(|v| v.to_owned())
         .collect();
+
+    // Randomize the order of patterns
+    let mut rng = rand::rng();
+    top_patterns_spec.shuffle(&mut rng);
 
     let mut top_patterns_list = String::new();
 

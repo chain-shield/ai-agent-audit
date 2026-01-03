@@ -17,7 +17,6 @@ use crate::llm_review::{
     threat_models::{issues::IssuePrompt, pattern_category::PatternCategory},
 };
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::logging::print_first_n_lines;
 use log::info;
 use nanoid::nanoid;
 use std::{path::PathBuf, sync::Arc};
@@ -346,16 +345,14 @@ async fn process_combined_patterns(
 
     let multi_modal_context = get_multi_modal_context(&contract, repo).await;
     let multimodal = multi_modal_context.expect("could not unwrap multimodal_context, generate_multi_modal_context(...) must be called first");
-    print_first_n_lines(30, &multimodal.actors);
-    print_first_n_lines(30, &multimodal.invariants);
 
-    let actors = if !multimodal.actors.is_empty() {
+    let actors = if !multimodal.actors.actors.is_empty() {
         Some(multimodal.actors)
     } else {
         None
     };
 
-    let invariants = if !multimodal.invariants.is_empty() {
+    let invariants = if !multimodal.invariants.invariants.is_empty() {
         Some(multimodal.invariants)
     } else {
         None
