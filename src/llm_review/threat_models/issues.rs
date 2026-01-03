@@ -8,12 +8,8 @@ use crate::{
             agent_factory::{AgentConfig, AgentFactory},
         },
         dynamic_prompts::{
-            findings_template::{
-                get_post_findings_json_requirement, get_post_json_requirement_for_multipattern,
-            },
-            inv_findings::{
-                generate_invariant_to_findings, generate_multi_invariant_to_findings_prompt,
-            },
+            findings_template::get_post_json_requirement_for_multipattern,
+            inv_findings::generate_multi_invariant_to_findings_prompt,
             invariants::{
                 self, generate_all_invariants_verify_prompt, generate_invariant_verify_prompt,
                 get_post_all_invariants_verify_json,
@@ -68,8 +64,6 @@ pub trait IssueTrait: Send + Sync {
     fn title_str(&self) -> String;
     fn description(&self) -> String;
     fn generate_verify_prompt(&self) -> String;
-    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String;
-    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String;
 }
 
 #[async_trait]
@@ -106,12 +100,6 @@ impl IssueTrait for InvariantFinding {
     fn generate_verify_prompt(&self) -> String {
         generate_invariant_verify_prompt(&self)
     }
-    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String {
-        generate_invariant_to_findings(self, repo)
-    }
-    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
-        get_post_findings_json_requirement(&self.inv_type, &self.predicate, repo)
-    }
 }
 
 #[async_trait]
@@ -136,14 +124,6 @@ impl IssueTrait for Finding {
     }
     fn description(&self) -> String {
         self.description.clone().unwrap_or_default()
-    }
-    // NOTE: not needed in this case
-    fn pattern_to_findings_prompt(&self, _repo: &RepoPaths) -> String {
-        unimplemented!("Not implimented for Finding");
-    }
-    // NOTE: not needed in this case
-    fn findings_json_required_prompt(&self, _repo: &RepoPaths) -> String {
-        unimplemented!("Not implimented for Finding");
     }
 }
 

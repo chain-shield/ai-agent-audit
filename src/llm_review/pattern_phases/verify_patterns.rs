@@ -1,3 +1,4 @@
+use crate::llm_review::pattern_phases::generate_patterns;
 use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
 /// Phase 3: Deduplication and verification of discovered security findings
 ///
@@ -101,7 +102,7 @@ where
     let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
-    let code_and_context = generate_content_plus_context_block(code, &context);
+    let code_and_context = generate_patterns::generate_content_plus_context_block(code, &context);
 
     info!(
         "# of {} AFTER deduping => {}",
@@ -163,22 +164,4 @@ where
     );
 
     Ok(T::new(verified_patterns))
-}
-
-/// Generates the combined content and context block for verification analysis
-///
-/// Combines the contract code with additional context information
-/// in a structured format for optimal verification processing.
-pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
-    let mut code_plus_context = String::new();
-
-    code_plus_context.push_str("\n\n# SOLIDITY CONTRACT + STORAGE TO CODE REVIEW\n\n");
-    code_plus_context.push_str(codeblock);
-
-    code_plus_context
-        .push_str("\n\n ## ADDITIONAL CONTEXT TO ASSIST WITH SECURITY REVIEW OF ABOVE CODE \n\n");
-    code_plus_context.push_str(&added_context);
-    code_plus_context.push_str("\n\n");
-
-    code_plus_context
 }

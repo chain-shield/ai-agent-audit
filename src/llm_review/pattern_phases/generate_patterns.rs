@@ -170,13 +170,14 @@ where
 ///
 /// Combines the contract code with additional context information
 /// in a structured format for optimal LLM processing.
-fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
+pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
     let mut code_plus_context = String::new();
 
     code_plus_context.push_str("\n\nSOLIDITY CONTRACT + STORAGE TO CODE REVIEW\n\n");
     code_plus_context.push_str(codeblock);
 
-    code_plus_context.push_str("\n\n ## ADDITIONAL CONTEXT \n\n");
+    code_plus_context
+        .push_str("\n\n ## ADDITIONAL CONTEXT TO ASSIST WITH SECURITY REVIEW OF ABOVE CODE \n\n");
     code_plus_context.push_str(&added_context);
     code_plus_context.push_str("\n\n");
 
