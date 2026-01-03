@@ -5,9 +5,8 @@
 /// while tracking inference costs across different providers.
 use crate::cost::cost_data::add_to_inference_cost_by_type;
 use crate::cost::cost_data::TokenType;
-use crate::llm_review::enums::AgentMetadata;
-use crate::llm_review::findings::FromLLMJson;
-use reqwest::StatusCode;
+use crate::llm_review::agent::agent_enums::AgentMetadata;
+use crate::llm_review::findings::findings::FromLLMJson;
 use rig::agent::Agent;
 use rig::completion::CompletionError;
 use rig::completion::CompletionModel;
@@ -15,6 +14,7 @@ use rig::completion::Prompt;
 use rig::completion::PromptError;
 use rig::extractor::ExtractionError;
 use rig::extractor::Extractor;
+use rig::http_client;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::de::Error as _; // <- bring the trait’s methods into scope
@@ -23,7 +23,7 @@ use serde_json::Error as JsonError;
 use std::{thread, time::Duration};
 
 /// Maximum retry attempts for failed LLM requests
-const MAX_ATTEMPTS: usize = 3;
+const MAX_ATTEMPTS: usize = 10;
 
 /// Retries LLM extraction with exponential backoff and cost tracking.
 ///
@@ -94,11 +94,12 @@ where
             Ok(f) => return Ok(f), // ✅ success
             Err(e) => {
                 let msg = e.to_string();
+
                 // Check if we should retry based on the original error
                 let should_retry = should_retry_based_on_error(&msg) && attempt < MAX_ATTEMPTS;
 
                 if should_retry {
-                    eprintln!("parse error ({msg}) – retrying {attempt}/{MAX_ATTEMPTS}");
+                    eprintln!("parse error – retrying {attempt}/{MAX_ATTEMPTS}");
                     // sleep(delay).await; --> NOT Send
                     continue;
                 } else {
@@ -151,34 +152,37 @@ fn should_retry_based_on_error(e: &str) -> bool {
 /// `false` → give up / bubble the error
 fn should_retry_prompt_err(e: &PromptError) -> bool {
     match e {
-        // Unpack the CompletionError variant  ──────────────────────────
+        // Unpack the CompletionError variant
         PromptError::CompletionError(inner) => match inner {
             /* 1) HTTP transport layer issues -------------------------- */
-            CompletionError::HttpError(http_err) => {
-                // 1a) Too-Many-Requests (OpenAI & friends)
-                if http_err.status() == Some(StatusCode::TOO_MANY_REQUESTS) {
-                    return true;
+            CompletionError::HttpError(http_err) => match http_err {
+                // Status code–based retry logic
+                http_client::Error::InvalidStatusCode(code)
+                | http_client::Error::InvalidStatusCodeWithMessage(code, _) => {
+                    let code = code.as_u16();
+                    // 429 Too-Many-Requests or any 5xx server error
+                    code == 429 || (500..=599).contains(&code)
                 }
-                // 1b) Any 5xx server error
-                if let Some(status) = http_err.status() {
-                    if status.is_server_error() {
-                        return true;
-                    }
-                }
-                // 1c) Network time-outs
-                if http_err.is_timeout() {
-                    return true;
-                }
-                false
-            }
+                // Network/transport errors from the underlying HTTP client
+                http_client::Error::Instance(_) => true,
+                _ => false,
+            },
 
-            /* 2) Provider said “I’m busy / overloaded / rate-limited”  */
+            /* 2) Provider said "I'm busy / overloaded / rate-limited"  */
             CompletionError::ProviderError(msg) | CompletionError::ResponseError(msg) => {
                 let m = msg.to_lowercase();
+                // Transient provider-side issues we should retry
                 m.contains("overload")
                     || m.contains("rate limit")
                     || m.contains("busy")
                     || m.contains("try again later")
+                    || m.contains("server_error")
+                    || m.contains("server error")
+                    || m.contains("internal server error")
+                    || m.contains("error occurred while processing your request")
+                    || m.contains("help.openai.com")
+                    || m.contains("empty")  // Gemini sometimes returns empty responses
+                    || m.contains("no message") // "Response contained no message or tool call (empty)"
             }
 
             /* 3) Anything else – usually not transient */
@@ -187,5 +191,76 @@ fn should_retry_prompt_err(e: &PromptError) -> bool {
 
         /* Tool-call failures, depth-limit, etc. -> *not* transient */
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rig::completion::CompletionError;
+    use rig::completion::PromptError;
+
+    #[test]
+    fn test_should_retry_on_gemini_empty_response() {
+        // Test the exact error message from Gemini
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_string(),
+        ));
+        assert!(
+            should_retry_prompt_err(&err),
+            "Should retry on Gemini empty response error"
+        );
+    }
+
+    #[test]
+    fn test_should_retry_on_empty_keyword() {
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "Response is empty".to_string(),
+        ));
+        assert!(
+            should_retry_prompt_err(&err),
+            "Should retry on 'empty' keyword"
+        );
+    }
+
+    #[test]
+    fn test_should_retry_on_no_message_keyword() {
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "No message received from provider".to_string(),
+        ));
+        assert!(
+            should_retry_prompt_err(&err),
+            "Should retry on 'no message' keyword"
+        );
+    }
+
+    #[test]
+    fn test_should_retry_on_rate_limit() {
+        let err = PromptError::CompletionError(CompletionError::ProviderError(
+            "Rate limit exceeded".to_string(),
+        ));
+        assert!(should_retry_prompt_err(&err), "Should retry on rate limit");
+    }
+
+    #[test]
+    fn test_should_retry_on_server_error() {
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "Internal server error".to_string(),
+        ));
+        assert!(
+            should_retry_prompt_err(&err),
+            "Should retry on server error"
+        );
+    }
+
+    #[test]
+    fn test_should_not_retry_on_invalid_api_key() {
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "Invalid API key".to_string(),
+        ));
+        assert!(
+            !should_retry_prompt_err(&err),
+            "Should NOT retry on invalid API key"
+        );
     }
 }

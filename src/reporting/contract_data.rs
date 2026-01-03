@@ -1,6 +1,10 @@
 use crate::{
+    cost::cost_data::get_token_count,
     enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::context_state::{get_metadata_context, ContextType},
+    llm_review::{
+        analysis::context_state::get_metadata_context, contract::contract_file_map::ContractType,
+        utils::contract_in_scope::contract_scope_and_type,
+    },
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_file_locally,
 };
@@ -19,7 +23,10 @@ use std::path::{Path, PathBuf};
 /// # Arguments
 // * `codeblocks_path` - Path to the code blocks database
 /// * `repo` - Repository paths and metadata for naming
-pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> anyhow::Result<()> {
+pub async fn save_codeblocks_locally(
+    codeblocks_path: &PathBuf,
+    repo: &RepoPaths,
+) -> anyhow::Result<()> {
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
 
     // grab all solidity contracts from database
@@ -27,8 +34,25 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     let output_dir = Path::new(&repo.repo_name);
 
-    for (contract, codeblock) in contracts {
-        let filename = format!("{}-{}.md", contract, repo.unique_repo_hash());
+    for (contract, (codeblock, contract_category)) in contracts {
+        // check contract in inscope!
+        let (is_contract_in_scope, contract_type_option) =
+            contract_scope_and_type(&contract, repo).await?;
+
+        let contract_type = contract_type_option.unwrap_or(ContractType::Contract);
+
+        if !is_contract_in_scope {
+            continue;
+        }
+
+        let token_count = get_token_count(&codeblock);
+        let filename = format!(
+            "{}-{}-{}-size-{}.md",
+            contract_type.to_string(),
+            contract,
+            contract_category.to_string(),
+            token_count
+        );
         let full_path = output_dir.join(filename);
         save_file_locally(&codeblock, &full_path)?;
     }
@@ -44,7 +68,7 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
 /// * `semantics_path` - Path to the semantic analysis database
 /// * `repo` - Repository paths and metadata for naming
 pub async fn save_metadata(repo: &RepoPaths) -> anyhow::Result<()> {
-    let metadata = get_metadata_context(repo, &ContextType::Full)
+    let metadata = get_metadata_context(repo)
         .await
         .expect("cannot load metadata");
 

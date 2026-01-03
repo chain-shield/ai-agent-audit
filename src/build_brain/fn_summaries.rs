@@ -6,7 +6,10 @@
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::{build_brain::slither_ffi::run_printer, prepare_code::git_clone::RepoPaths};
+use crate::{
+    build_brain::slither_ffi::{run_printer, run_printer_monorepo},
+    prepare_code::git_clone::RepoPaths,
+};
 
 /// Comprehensive metadata for a smart contract function
 #[derive(Debug, Deserialize, Clone)]
@@ -119,8 +122,9 @@ pub fn get_contract_name(line: &str) -> String {
 }
 
 pub async fn get_function_summaries(repo: &RepoPaths) -> Result<Vec<FnSummary>> {
-    // 1. run slither
-    let raw = run_printer(repo, "function-summary").await?;
-
+    let raw = match repo.monorepo_folders {
+        Some(_) => run_printer_monorepo(repo, "function-summary").await?,
+        None => run_printer(repo, "function-summary", None).await?,
+    };
     Ok(parse_table(&raw))
 }

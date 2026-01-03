@@ -8,28 +8,53 @@ use std::env;
 /// for application settings and environment variables only for sensitive
 /// configuration like API keys and URLs.
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Deserialize, strum_macros::EnumString, strum_macros::Display,
+)]
 pub enum AuditType {
     Code4rena,
     Sherlock,
+    Cantina,
     Client,
 }
-
-// TYPE OF AUDIT
-pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
 
 // Application constants - these don't need to be configurable via environment
 /// Maximum call graph traversal depth for code slice generation
 pub const MAX_DEPTH: usize = 3;
 
 /// Maximum token budget per codeblock + context to stay within LLM context limits
-pub const TOKEN_BUDGET: usize = 120_000;
+pub const TOKEN_BUDGET: usize = 200_000;
+pub const CREATE_TESTS: bool = false;
+pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
 
+// if true set DISCOVERY_RUNS accordingly
+pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
+pub const INVARIANT_DISCOVERY_RUNS: usize = 3; // old value 5
+pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
+
+pub const OPENAI_MODEL: &str = "gpt-5.2";
+pub const SKIP_LIBRARIES: bool = true;
+pub const SKIP_INVARIANT_RUNS: bool = false;
+
+// SKIP or RUN MAIN PATTERN RUNS
+pub const SKIP_ACTOR_PATTERN_RUNS: bool = false;
+// RUNS R1 (basic) and R2 (complex) patterns
+pub const R1_RUNS: usize = 10;
+pub const R2_RUNS: usize = 10;
+
+// NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
-pub const DISCOVERY_RUNS: usize = 2;
 pub const INVARIANT_RUNS: usize = 5;
+pub const MAX_PATTERN_RUN_TOP: usize = 3; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_RARE: usize = 3; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_MOST: usize = 3; // 0 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 3; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RELEVANT_FREQUENT: usize = 20; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_LIBRARY: usize = 3;
+pub const MAX_PATTERN_NICHE: usize = 4; // 3 for large protocol, default: 4
+pub const MAX_PATTERN_GENERAL: usize = 4; // 2 for large protocol, default: 4
 
-pub const MAX_FILE_RUNS: usize = 5;
+pub const MAX_FILE_RUNS: usize = 1;
 
 pub const MAX_RAG_QUERY_CONTENT_LENGTH: usize = 8192; // 8192 token limit for embedding
 
@@ -38,7 +63,7 @@ pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
 pub const CHAINSHIELD_DB_FOLDER: &str = "/Users/apmfree/chainshield_db";
 pub const REPO_DATA_DB: &str = "repo_data.db";
-pub const SUMMARY_DB: &str = "repo_data.db";
+pub const SUMMARY_DB: &str = "summary.db";
 pub const SEMANTIC_DB: &str = "semantic.db";
 pub const CODEBLOCK_DB: &str = "codeblock.db";
 pub const FINDINGS_DB: &str = "findings.db";
@@ -127,7 +152,7 @@ impl Default for AuditConfig {
         Self {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
-            runs: DISCOVERY_RUNS,
+            runs: PATTERN_DISCOVERY_RUNS,
             qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: None,
             anthropic_api_key: None,
@@ -311,7 +336,7 @@ impl AuditConfig {
         Self {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
-            runs: DISCOVERY_RUNS,
+            runs: PATTERN_DISCOVERY_RUNS,
             qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: Some("test-key".to_string()),
             anthropic_api_key: None,
@@ -375,7 +400,7 @@ mod tests {
         let config = AuditConfig::default();
         assert_eq!(config.max_depth, MAX_DEPTH);
         assert_eq!(config.token_budget, TOKEN_BUDGET);
-        assert_eq!(config.runs, DISCOVERY_RUNS);
+        assert_eq!(config.runs, PATTERN_DISCOVERY_RUNS);
         // Config validation will fail because no API keys are set
     }
 

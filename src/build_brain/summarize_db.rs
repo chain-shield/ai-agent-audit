@@ -1,10 +1,11 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 use crate::{
-    build_brain::summarize::SrcFileSummary,
+    build_brain::summarize::{FileSummaryType, SrcFileSummary},
     config::{CHAINSHIELD_DB_FOLDER, SUMMARY_DB},
+    llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::RepoPaths,
 };
 
@@ -23,19 +24,51 @@ impl SummaryDb {
               project_id TEXT,
               filename TEXT,
               summary TEXT,
+              contract_category TEXT,
+              file_type TEXT,
               PRIMARY KEY (project_id, filename)
             );
             "#,
         )?;
+
+        // Migration: Add contract_category column if it doesn't exist (for existing databases)
+        // SQLite doesn't have "ADD COLUMN IF NOT EXISTS", so we check first
+        let column_exists: Result<i64, _> = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('summaries') WHERE name='contract_category'",
+            [],
+            |row| row.get(0),
+        );
+
+        if let Ok(0) = column_exists {
+            // Column doesn't exist, add it
+            conn.execute(
+                "ALTER TABLE summaries ADD COLUMN contract_category TEXT",
+                [],
+            )?;
+        }
+
         Ok(Self(conn))
     }
 
-    fn insert_summary(&self, filename: &str, summary: &str, repo: &RepoPaths) -> Result<()> {
+    fn insert_summary(
+        &self,
+        filename: &str,
+        summary: &str,
+        contract_category: Option<ContractCategory>,
+        file_type: Option<FileSummaryType>,
+        repo: &RepoPaths,
+    ) -> Result<()> {
         self.0.execute(
             r#"
-        INSERT INTO summaries (project_id, filename, summary) VALUES (?1, ?2, ?3)
+        INSERT INTO summaries (project_id, filename, summary, contract_category, file_type) VALUES (?1, ?2, ?3, ?4, ?5)
         "#,
-            params![&repo.project_id, filename, summary],
+            params![
+                &repo.project_id,
+                filename,
+                summary,
+                contract_category.as_ref().map(|c| c.to_string()),
+                file_type.as_ref().map(|t| t.to_string())
+            ],
         )?;
         Ok(())
     }
@@ -44,12 +77,18 @@ impl SummaryDb {
     fn get_summaries(&self, repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
         let mut query = self
             .0
-            .prepare("SELECT filename, summary FROM summaries WHERE project_id = ?1")?;
+            .prepare("SELECT filename, summary, contract_category, file_type FROM summaries WHERE project_id = ?1")?;
 
         let rows = query.query_map([&repo.project_id], |row| {
+            let file_type_str: Option<String> = row.get(3)?;
+            let file_type = file_type_str.and_then(|s| s.parse().ok());
+            let contract_category_str: Option<String> = row.get(2)?;
+            let contract_category = contract_category_str.and_then(|c| c.parse().ok());
             Ok(SrcFileSummary {
                 filename: row.get(0)?,
                 summary: row.get(1)?,
+                contract_category,
+                file_type,
             })
         })?;
 
@@ -66,13 +105,19 @@ impl SummaryDb {
     // get specific summary file
     fn get_summary_file(&self, filename: &str, repo: &RepoPaths) -> Result<Option<SrcFileSummary>> {
         let mut query = self.0.prepare(
-            "SELECT filename, summary FROM summaries WHERE project_id = ?1 AND filename = ?2",
+            "SELECT filename, summary, contract_category, file_type FROM summaries WHERE project_id = ?1 AND filename = ?2",
         )?;
 
         let result = query.query_row([&repo.project_id, filename], |row| {
+            let file_type_str: Option<String> = row.get(3)?;
+            let file_type = file_type_str.and_then(|s| s.parse().ok());
+            let contract_category_str: Option<String> = row.get(2)?;
+            let contract_category = contract_category_str.and_then(|c| c.parse().ok());
             Ok(SrcFileSummary {
                 filename: row.get(0)?,
                 summary: row.get(1)?,
+                contract_category,
+                file_type,
             })
         });
 
@@ -91,7 +136,13 @@ pub fn insert_file_summaries_to_db(summaries: &[SrcFileSummary], repo: &RepoPath
     )))?;
 
     for summary in summaries {
-        summary_db.insert_summary(&summary.filename, &summary.summary, repo)?;
+        summary_db.insert_summary(
+            &summary.filename,
+            &summary.summary,
+            summary.contract_category,
+            summary.file_type.clone(),
+            repo,
+        )?;
     }
     Ok(())
 }
@@ -102,7 +153,7 @@ pub fn insert_file_summary_to_db(filename: &str, summary: &str, repo: &RepoPaths
         CHAINSHIELD_DB_FOLDER, SUMMARY_DB
     )))?;
 
-    summary_db.insert_summary(&filename, &summary, repo)?;
+    summary_db.insert_summary(&filename, &summary, None, None, repo)?;
     Ok(())
 }
 

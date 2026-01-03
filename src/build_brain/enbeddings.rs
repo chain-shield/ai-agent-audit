@@ -7,7 +7,7 @@ use anyhow::Result;
 use log::info;
 use rig::{
     Embed,
-    client::{EmbeddingsClient, ProviderClient},
+    client::EmbeddingsClient,
     embeddings::EmbeddingsBuilder,
     providers::openai::{self, Client},
 };
@@ -57,10 +57,13 @@ fn infer_file_type(path: &Path) -> String {
         || path_str.contains("\\library\\")
         || path_str.contains("/libraries/")
         || path_str.contains("\\libraries\\")
+        || path_str.contains("/node_modules/")
+        || path_str.contains("\\node_modules\\")
         || path_str.starts_with("lib/")
         || path_str.starts_with("libs/")
         || path_str.starts_with("library/")
         || path_str.starts_with("libraries/")
+        || path_str.starts_with("node_modules/")
     {
         return "library".to_string();
     }

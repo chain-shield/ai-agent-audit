@@ -1,4 +1,7 @@
-use crate::llm_review::enums::{AIAgent, AgentMetadata};
+use crate::{
+    llm_review::agent::agent_enums::{AIAgent, AgentMetadata},
+    utils::bpe::get_bpe,
+};
 /// Cost tracking and calculation for LLM inference across multiple providers.
 ///
 /// This module provides real-time cost tracking for AI agent operations,
@@ -73,17 +76,22 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // OpenAI models
             "gpt-4o" => 2.50,
             "gpt-5" => 1.25,
+            "gpt-5-mini" => 0.25,
+            "gpt-5.1" => 1.25,
+            "gpt-5.2" => 1.75,
             "o3" => 2.00,
 
             // Anthropic models
-            "claude-3.5-sonnet" | "claude-3-5-sonnet" => 3.00,
-            "claude-3.7-sonnet" | "claude-3-7-sonnet" => 3.00,
-            "claude-4.0-sonnet" | "claude-4-0-sonnet" => 3.00,
+            "claude-3.5-sonnet" | "claude-sonnet-3-5" => 3.00,
+            "claude-3.7-sonnet" | "claude-sonnet-3-7" => 3.00,
+            "claude-4.0-sonnet" | "claude-sonnet-4-0" => 3.00,
+            "claude-4.5-sonnet" | "claude-sonnet-4-5" => 3.00,
             "claude-4" => 3.00,
 
             // Gemini models
             "gemini-2.5-pro" | "gemini-2-5-pro" => 1.25,
             "gemini-pro" => 1.25,
+            "gemini-3-pro-preview" => 2.00,
 
             // DeepSeek models
             "deepseek-chat" => 0.07,
@@ -102,17 +110,22 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // OpenAI models
             "gpt-4o" => 10.00,
             "gpt-5" => 25.00, // set to 2.5X actual value to account for reasoning tokens
+            "gpt-5-mini" => 2.00,
+            "gpt-5.1" => 25.00,
+            "gpt-5.2" => 30.00,
             "o3" => 8.00,
 
             // Anthropic models
-            "claude-3.5-sonnet" | "claude-3-5-sonnet" => 15.00,
-            "claude-3.7-sonnet" | "claude-3-7-sonnet" => 15.00,
-            "claude-4.0-sonnet" | "claude-4-0-sonnet" => 15.00,
+            "claude-3.5-sonnet" | "claude-sonnet-3-5" => 15.00,
+            "claude-3.7-sonnet" | "claude-sonnet-3-7" => 15.00,
+            "claude-4.0-sonnet" | "claude-sonnet-4-0" => 15.00,
+            "claude-4.5-sonnet" | "claude-sonnet-4-5" => 15.00,
             "claude-4" => 15.00,
 
             // Gemini models
             "gemini-2.5-pro" | "gemini-2-5-pro" => 10.00,
             "gemini-pro" => 10.00,
+            "gemini-3-pro-preview" => 12.00,
 
             // DeepSeek models
             "deepseek-chat" => 1.10,
@@ -228,7 +241,7 @@ pub fn get_token_count(text: &str) -> usize {
 
     // NOTE testing different count
     // Use the actual BPE tokenizer for accurate token counting
-    let bpe = crate::utils::bpe::get_bpe();
+    let bpe = get_bpe();
     bpe.encode_with_special_tokens(text).len()
 }
 

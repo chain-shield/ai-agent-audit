@@ -14,9 +14,9 @@ use std::{fs::File, io::Write, path::Path};
 /// * `markdown` - The audit report content in Markdown format
 /// * `repo` - Repository paths and metadata for naming
 /// * `report_type` - Report type (Free/Paid) for filename suffix
-pub fn save_audit_report(markdown: &str, repo: &RepoPaths) -> anyhow::Result<()> {
-    let output_dir = Path::new(&repo.repo_name);
-    let filename = format!("{}-audit-report.md", repo.unique_repo_hash());
+pub fn save_audit_report(filename: &str, markdown: &str, repo: &RepoPaths) -> anyhow::Result<()> {
+    let dir = format!("{}/report", repo.repo_name);
+    let output_dir = Path::new(&dir);
     let full_path = output_dir.join(filename);
     save_file_locally(markdown, &full_path)?;
 
@@ -36,6 +36,7 @@ pub fn save_file_locally(content: &str, filename: &Path) -> anyhow::Result<()> {
     }
 
     let mut file = File::create(filename)?;
+    // log::info!("saving {}\n", filename.display());
     file.write_all(content.as_bytes())?;
 
     Ok(())
