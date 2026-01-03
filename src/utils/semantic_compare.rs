@@ -104,11 +104,7 @@ fn jaccard(tokens_a: &[String], tokens_b: &[String]) -> f64 {
     let set_b: HashSet<&str> = tokens_b.iter().map(|s| s.as_str()).collect();
     let inter = set_a.intersection(&set_b).count() as f64;
     let union = set_a.union(&set_b).count() as f64;
-    if union == 0.0 {
-        0.0
-    } else {
-        inter / union
-    }
+    if union == 0.0 { 0.0 } else { inter / union }
 }
 
 fn tf(tokens: &[String]) -> HashMap<String, f64> {

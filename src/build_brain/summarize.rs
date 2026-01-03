@@ -12,21 +12,36 @@ use rig::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
 use std::sync::Arc;
+use strum_macros::EnumString;
 use tokio::sync::Semaphore;
 
+use crate::utils::check_folder_name::is_script_file;
 use crate::{
-    build_brain::summarize_db::{
-        get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
-        insert_file_summary_to_db,
+    build_brain::{
+        slither_ffi::get_all_files_src,
+        summarize_db::{
+            get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
+            insert_file_summary_to_db,
+        },
     },
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
-    llm_review::enums::AgentMetadata,
+    llm_review::{
+        agent::agent_enums::{all_enum_variants, generate_enum_list, AgentMetadata},
+        contract::contract_category::{
+            generate_formated_list_of_contract_categories, ContractCategory,
+        },
+    },
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
-use crate::{llm_review::context_state, utils::check_folder_name::is_script_file};
+
+#[derive(Debug, Clone, PartialEq, Eq, EnumString, strum_macros::Display)]
+pub enum FileSummaryType {
+    Source,
+    DeployScript,
+    OutOfScope,
+}
 
 /// Represents a summary of a source file with metadata
 #[derive(Default, Debug, Clone)]
@@ -35,6 +50,8 @@ pub struct SrcFileSummary {
     pub filename: String,
     /// AI-generated summary of the file's purpose and functionality
     pub summary: String,
+    pub contract_category: Option<ContractCategory>,
+    pub file_type: Option<FileSummaryType>,
 }
 
 /// Structured response format for LLM file summarization
@@ -42,6 +59,7 @@ pub struct SrcFileSummary {
 pub struct FileSummary {
     /// The generated summary text
     pub summary: String,
+    pub contract_category: ContractCategory,
 }
 
 // pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 300;
@@ -51,70 +69,13 @@ pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 100;
 pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 20;
 pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
 
-// pub async fn summarize_docs(
-//     repo: &RepoPaths,
-//     current_context: &str,
-// ) -> Result<Vec<SrcFileSummary>> {
-//     let key = cache_key(&repo.root, "docs-summary");
-//     let cache = Arc::clone(&FILE_SUMMARY_CACHE);
-//     let mut summaries_cache = cache.lock().await;
-//
-//     // Return cached output if exists
-//     if let Some(cached) = summaries_cache.get(&key) {
-//         return Ok(cached.clone());
-//     }
-//
-//     let documentation = repo.extract_content_from_docs()?;
-//     let mut doc_summaries = Vec::new();
-//
-//     let mut docs_plus_context = format!("\n ## DOCUMENTATION: \n\n {}\n\n", documentation);
-//     docs_plus_context.push_str("\n ## CURRENT SECURITY AUDIT CONTEXT \n\n");
-//     docs_plus_context.push_str(&format!("\n #### The Documentation Summary should NOT contain content that is already included below.\n\n {} \n\n", current_context));
-//
-//     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
-//
-//     info!("generate summmary of all major files and docs in repo...");
-//     let preamble =
-//         "You are a senior solidity dev and expert solidity security researcher. Please provide detailed and comprehensive summary of below DOCUMENTATION. Should be up to 4000 words, but no longer.  Should cover **all relevant details** that a security researcher should know about this protocol to do a proper smart contract audit. ALSO, exclude any information from the summary that is already included in below CURRENT SECURITY AUDIT CONTEXT, because both DOCUMENTATION and CURRENT SECURITY AUDIT CONTEXT will be provide as context for an llm to do a security scan of protocol code.  So its important there is NO duplicate information between DOCUMENTATION and CURRENT SECURITY AUDIT CONTEXT ";
-//     let ai_summary_agent = openai_client
-//         .extractor::<FileSummary>(O3)
-//         .preamble(preamble)
-//         .build();
-//
-//     info!("summarizing documentation");
-//
-//     let metadata = AgentMetadata {
-//         model: O3.to_string(),
-//         ..Default::default()
-//     };
-//     let doc_summary =
-//         match extractor_with_retry(&ai_summary_agent, &docs_plus_context, &metadata).await {
-//             Ok(res) => {
-//                 add_to_inference_cost_by_type(&res.summary, &metadata, TokenType::Output).await;
-//                 SrcFileSummary {
-//                     filename: "readme.md".to_string(),
-//                     summary: res.summary,
-//                 }
-//             }
-//             Err(e) => {
-//                 log::error!("❌ summarizing readme.md failed: {e}");
-//                 SrcFileSummary {
-//                     filename: "readme.md".to_string(),
-//                     summary: String::new(),
-//                 }
-//             }
-//         };
-//
-//     log::info!("readme.md summary => {:#?}", doc_summary);
-//     doc_summaries.push(doc_summary);
-//
-//     summaries_cache.insert(key, doc_summaries.clone());
-//     Ok(doc_summaries)
-// }
+pub async fn summarize_src_files(repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
+    summarize_src_files_with_model(repo, "gpt-5").await
+}
 
-pub async fn summarize_src_files(
+pub async fn summarize_src_files_with_model(
     repo: &RepoPaths,
-    semantics_path: &Path,
+    model: &str,
 ) -> Result<Vec<SrcFileSummary>> {
     // pull summaries from db if avaliable
     let summaries = get_summaries_from_db(repo)?;
@@ -126,35 +87,121 @@ pub async fn summarize_src_files(
 
     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
-    let mut context =
-        context_state::generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
+    let mut context = String::new();
+    let src_file_list = get_all_files_src(repo)?;
+
+    // prompt_context.push_str("\n## Slither Contract Summary\n");
+    // prompt_context.push_str(&contract_summary);
+    context.push_str("\n## Main List of Files in Project\n\n");
+    context.push_str(&src_file_list);
+    context.push_str("\n\n");
 
     // add docs to context
     let documentation = repo.extract_content_from_docs()?;
     context.push_str("\n ## DOCUMENTATION: \n\n ");
     context.push_str(&documentation);
 
-    // info!("slither metadata => {:#?}", context);
+    let contract_category_enum_list =
+        generate_enum_list(all_enum_variants::<ContractCategory>().as_slice());
+
+    let contract_category_descriptions = generate_formated_list_of_contract_categories(
+        all_enum_variants::<ContractCategory>().as_slice(),
+    );
+
     info!("generate summmary of all major files and docs in repo...");
-    let preamble = format!("You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Start with a {MAX_WORDS_CONTRACT_SUMMARY} word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional {MAX_CHARS_STORAGE_DESC} max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add {MAX_WORDS_FUNCTION_SUMMARY} word max natspec for EACH function. Respond only with valid JSON matching the schema!");
+    let preamble_source_summary = format!(
+        r#"You are a senior solidity dev. 
+
+        ## Tasks
+
+
+        1. Please summarize below source code. Format in markdown for easy reading. Start with a {MAX_WORDS_CONTRACT_SUMMARY} word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional {MAX_CHARS_STORAGE_DESC} max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add {MAX_WORDS_FUNCTION_SUMMARY} word max natspec for EACH function. Respond only with valid JSON matching the schema!
+
+        2. Determine which Category the contract falls into from the list below:
+        {contract_category_descriptions}
+
+        ## DELIVERABLES
+        1. summary of code
+        2. Contract Category, pick one: {contract_category_enum_list}
+
+        "#
+    );
+    let preamble_deploy_script_summary = format!(
+        r#"
+You are a senior Web3 deploy engineer. Summarize the deployment script (TS/JS/Hardhat/Ignition/Foundry). Use markdown. Start with a 100-word summary: purpose, target networks/env, trust model (who holds keys/roles), major steps.
+Then sections:
+1) Inputs/Config: env vars, CLI args, constants/defaults, network logic, preconditions (≤20 chars each).
+2) Dependencies: external libs/tools (ethers/hardhat/ignition/viem), prior contracts/artifacts.
+3) Contracts Deployed/Interacted: for each—name, method (new/deploy/module/proxy type), constructor/init args (symbolic), post-deploy actions, outputs.
+4) Steps (ordered): each step’s anchor (function/task); 20-word max note of effects; key params.
+5) Permissions/Trust: ownership transfers, roles, approvals; who controls what after.
+6) Post-Deploy Outputs: verification, artifacts, addresses/registries, exports.
+7) Safety/Idempotency: skip-if-deployed, waits/confirmations, gas/network settings, failure handling.
+8) Script Functions/Tasks: each full interface (name(params): returns; visibility/exported; async); 20-word (max) purpose/effects.
+Respond only with valid JSON matching the schema!
+"#
+    );
+
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>("gpt-5")
-        .preamble(&preamble)
+        .extractor::<FileSummary>(model)
+        .preamble(&preamble_source_summary)
         .context(&context)
         .build();
 
+    let ai_deploy_summary_agent = openai_client
+        .extractor::<FileSummary>(model)
+        .preamble(&preamble_deploy_script_summary)
+        .context(&context)
+        .build();
     // ---------------------------------------------
     // 1.  PREP – collect the  files we want to summarize first
     // ---------------------------------------------
     let mut work_items = Vec::new();
 
-    let protocol_root = repo.get_protocol_root();
+    let monorepo_folders = repo.extract_monorepo_folders()?;
+    let mut current_file_summary_type = FileSummaryType::OutOfScope;
+
     // Walk through the repository and collect relevant files
     for file in &repo.sol_files {
-        let is_file_we_want_summary_of = file.extension().map_or(false, |ext| ext == "sol")
-            && (file.starts_with(&repo.source_code_folder) || is_script_file(file, &protocol_root));
+        // if protocol in monorepo make sure file to summarize is in the monorepo
+        if !monorepo_folders.is_empty() {
+            let is_in_monorepo = monorepo_folders.iter().any(|dir| file.starts_with(dir));
 
-        if !is_file_we_want_summary_of {
+            if !is_in_monorepo {
+                continue;
+            }
+        }
+
+        // check if lib folder or test files
+        if file.to_string_lossy().contains(".t.sol") {
+            continue;
+        }
+
+        // check if file is in scope for summary (source or script) for foundry projects
+        if file.extension().map_or(false, |ext| ext == "sol")
+            && !file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with(".t.sol"))
+        {
+            if is_script_file(file) {
+                current_file_summary_type = FileSummaryType::DeployScript;
+            } else if repo.source_code_folders.iter().any(|f| file.starts_with(f)) {
+                current_file_summary_type = FileSummaryType::Source;
+            } else {
+                current_file_summary_type = FileSummaryType::OutOfScope;
+            }
+        }
+
+        // check file type for hardhat
+        if current_file_summary_type == FileSummaryType::OutOfScope
+            && file.extension().map_or(false, |ext| ext == "ts")
+            && is_script_file(file)
+        {
+            current_file_summary_type = FileSummaryType::DeployScript;
+        }
+
+        if current_file_summary_type == FileSummaryType::OutOfScope {
             continue;
         }
 
@@ -174,17 +221,40 @@ pub async fn summarize_src_files(
         }
 
         // push full path & content into the work queue
-        work_items.push((file.to_owned(), content));
+        work_items.push((file.to_owned(), content, current_file_summary_type.clone()));
     }
+
+    // let mut files_to_summarize = String::new();
+    //
+    // for (file, _, file_type) in work_items {
+    //     files_to_summarize.push_str(&format!(
+    //         "file: {}, type: {}\n",
+    //         file.display(),
+    //         file_type.to_string()
+    //     ));
+    // }
+    // info!("{}", files_to_summarize);
 
     let max_parallel = 50;
     let sem = Arc::new(Semaphore::new(max_parallel));
     let agent = Arc::new(ai_summary_agent); // the OpenAI client
+    let deploy_agent = Arc::new(ai_deploy_summary_agent); // the OpenAI client
     let mut handles = Vec::new();
 
-    for (file, content) in work_items {
+    for (file, content, file_type) in work_items {
         let sem = sem.clone();
-        let agent = agent.clone();
+
+        // NOTE: skipping deploy script summaries
+        if file_type != FileSummaryType::Source {
+            continue;
+        }
+
+        let agent = if file_type == FileSummaryType::Source {
+            agent.clone()
+        } else {
+            deploy_agent.clone()
+        };
+
         let repo_root = repo.root.clone();
 
         let handle = tokio::spawn(async move {
@@ -210,6 +280,8 @@ pub async fn summarize_src_files(
                     Some(SrcFileSummary {
                         filename,
                         summary: res.summary,
+                        contract_category: Some(res.contract_category),
+                        file_type: Some(file_type),
                     })
                 }
                 Err(e) => {
@@ -234,12 +306,16 @@ pub async fn summarize_src_files(
 
     for summary in &summaries {
         info!("filename: {}", summary.filename);
+        info!(
+            "contract category: {}",
+            summary.contract_category.unwrap_or_default().to_string()
+        );
         info!("summary size: {}", summary.summary.len())
     }
 
     Ok(summaries)
 }
-
+//
 pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Result<String> {
     // pull protocol-summary from db, if avaliable
     let protocol_summary = get_file_summary_from_db("protocol-summary", repo)?;
@@ -255,7 +331,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
     log::info!("generate context for code review");
-    let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, please create a max 4000 word detailed summary of this protocol explaining what it is, and how it works.  Summary should be tailored for getting a crypto security researcher up to speed on the code so they can do a proper security. Format in markdown for easy reading. Respond only with valid JSON matching the schema!";
+    let preamble = "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, please create a max 4000 word detailed summary of this protocol explaining what it is, and how it works. Format in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)

@@ -4,7 +4,7 @@
 /// smart contract semantic data including functions, call relationships, and
 /// inheritance hierarchies extracted from Slither analysis.
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 /// Represents a smart contract function with complete metadata
@@ -65,16 +65,6 @@ impl GraphDb {
 
             CREATE UNIQUE INDEX IF NOT EXISTS ux_edges_triplet
               ON edges(project_id, caller, callee);
-
-            /* NEW ↓ */
-            CREATE TABLE IF NOT EXISTS inheritance(
-            project_id TEXT,
-            child TEXT,
-            parent TEXT
-            );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_inheritance_triplet
-              ON inheritance(project_id, child, parent);
             "#,
         )?;
         Ok(Self(conn))
@@ -115,18 +105,6 @@ impl GraphDb {
         ON CONFLICT(project_id, caller, callee) DO NOTHING
         "#,
             params![project_id, caller, callee],
-        )?;
-        Ok(())
-    }
-
-    pub fn insert_inheritance(&self, project_id: &str, child: &str, parent: &str) -> Result<()> {
-        self.0.execute(
-            r#"
-        INSERT INTO inheritance (project_id, child, parent)
-        VALUES (?1, ?2, ?3)
-        ON CONFLICT(project_id, child, parent) DO NOTHING
-        "#,
-            params![project_id, child, parent],
         )?;
         Ok(())
     }

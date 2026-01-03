@@ -5,28 +5,18 @@ use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_fn_name::get_function_name_from_interface;
 
+use super::callgraph;
 use super::fn_summaries::get_function_summaries;
 use super::graph_db::GraphDb;
 /// Smart contract data enrichment using Slither static analysis.
 ///
 /// This module builds semantic databases containing call graphs, inheritance hierarchies,
 /// and function metadata extracted from Solidity contracts using Slither analysis.
-use super::slither_ffi::{self, SlithIRFn, StorageVar};
-use super::{callgraph, inheritance};
 use log::info;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-/// Contains the enriched data extracted from Solidity contracts.
-/// This includes the intermediate representation (IR) of functions and storage variable information.
-pub struct Enriched {
-    /// Vector of SlithIR function representations
-    pub ir: Vec<SlithIRFn>,
-    /// Vector of storage variable information
-    pub storage: Vec<StorageVar>,
-}
 
 /// Builds a semantic database containing call graphs and inheritance data.
 ///
@@ -39,6 +29,7 @@ pub struct Enriched {
 /// # Returns
 /// * `PathBuf` - Path to the created semantic database
 pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathBuf> {
+    // Patch foundry.toml to remove custom solc paths before running Slither
     // Create database file in cache directory
     let db_path = Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, SEMANTIC_DB)).to_path_buf();
     let cache_dir = db_path.parent().ok_or_else(|| {
@@ -55,6 +46,19 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             e,
         )
     })?;
+
+    // Delete the semantic database from previous run to ensure fresh data
+    if db_path.exists() {
+        info!("Deleting old semantic database from previous run");
+        std::fs::remove_file(&db_path).map_err(|e| {
+            AuditError::file_system(
+                db_path.to_string_lossy().to_string(),
+                "Failed to delete old semantic database",
+                e,
+            )
+        })?;
+    }
+
     let db = Arc::new(Mutex::new(GraphDb::create(&db_path)?));
     let repo = Arc::new(repo);
 
@@ -65,19 +69,12 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         let result: Result<()> = async move {
             // Extract call graph data from Slither
             info!("extracting DOT blobs");
-            let json = slither_ffi::run_printer_json(&repo_func, "call-graph").await?;
-            let blobs = callgraph::extract_dot_blobs(&json)?;
+            let (funcs_id, edges) = callgraph::get_dot_funcs_and_dot_edges(&repo_func).await?;
             let mut rows = Vec::new();
             let function_to_ir_map = get_code_ir_map(&repo_func).await?;
-            let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs, &repo_func)?;
             let func_index: HashMap<(String, String), DotFunc> = funcs_id
                 .into_iter()
-                .map(|node| {
-                    // if node.contract == "GovernedBase" || node.contract == "AssetManagerInit" {
-                    //     info!("node: {:#?} \n", node);
-                    // }
-                    ((node.contract.clone(), node.name.clone()), node)
-                })
+                .map(|node| ((node.contract.clone(), node.name.clone()), node))
                 .collect();
 
             // Get function summaries for metadata
@@ -139,37 +136,8 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         Ok::<_, AuditError>(())
     });
 
-    // Process inheritance data in parallel task
-    let db_inheritance = Arc::clone(&db);
-    let repo_inheritance = Arc::clone(&repo);
-    let handle_inheritance = tokio::spawn(async move {
-        let result: Result<()> = async move {
-            // Extract inheritance hierarchy from Slither
-            info!("generating inheritance json");
-            let inheritance_json =
-                slither_ffi::run_printer_json(&repo_inheritance, "inheritance").await?;
-            let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
-            info!("{} inheritance edges", inheritance_edges.len());
-
-            // Insert inheritance relationships into database
-            for (child, parent) in inheritance_edges {
-                let db_guard = db_inheritance.lock().await;
-                db_guard.insert_inheritance(&repo_inheritance.project_id, &child, &parent)?;
-            }
-            info!("done generating inheritance edges");
-
-            Ok(())
-        }
-        .await;
-
-        if let Err(e) = result {
-            log::error!("Error processing inheritance data: {:#}", e);
-        }
-        Ok::<_, AuditError>(())
-    });
-
-    // Wait for both parallel tasks to complete
+    // Wait for call graph processing to complete
     info!("waiting for meta data analysis to complete...");
-    let (_func_result, _inheritance_result) = tokio::try_join!(handle, handle_inheritance)?;
+    let _func_result = handle.await?;
     Ok(db_path)
 }

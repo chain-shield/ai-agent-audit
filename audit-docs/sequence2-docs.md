@@ -1,0 +1,251 @@
+# How Trails Works
+
+> Core architecture and design of the Trails transaction rails protocol
+
+Trails offers developers a solution to enable 1-click crypto experiences via any wallet, token and chain. Trails aims to make "Ethereum work as one" by solving the widespread chain and liquidity fragmentation problems by providing a multi-chain transaction orchestration layer on top of wallets that unifies all chains and automates token routing, all with a single end-user confirmation (1-click).
+
+## Overview
+
+Trails automatically determines the optimal path for cross-chain transaction execution, whether it's a simple single-chain transaction or a complex multi-step orchestration involving swaps, bridges, and executions across different blockchains.
+
+Trails is built on the [Sequence](https://docs.sequence.xyz) v3 stack combining the powers of account abstraction, real-time indexing, and gasless transaction execution into an intent-powered chain abstraction solution. Trails is designed to work with any wallet, including a simple EOA wallet, a powerful smart wallet or an in-app embedded wallet (ie. MetaMask, Wallet Connect, Privy, Coinbase Smart Wallet, etc). For more details under-the-hood, please see the [protocol architecture](/architecture/protocol) section.
+
+The protocol is designed to be extensible, with plans to support non-EVM chains in the future.
+
+## Step-by-Step Flow
+
+<Steps>
+  <Step title="Define Intent">
+    **Create a payment transaction for any chain in any token**
+
+    Users begin by defining their payment intent - whether it's a mint, deposit, swap, or any other transaction type. This intent can be created for any supported blockchain using any supported token.
+  </Step>
+
+  <Step title="Trails Inspects">
+    **Determines if orchestration is needed**
+
+    Trails's intelligent orchestration engine analyzes the defined intent to determine the optimal execution path:
+
+    * **Pass Through**: If the transaction can succeed without orchestration (same chain, sufficient balance, etc.), it passes through directly
+    * **Continue Orchestrating**: If cross-chain operations or token swaps are needed, the system continues to the orchestration process
+
+    <Note>
+      This inspection happens in milliseconds and considers factors like:
+
+      * Available token balances
+      * Gas requirements
+      * Chain compatibility
+      * Protocol availability
+    </Note>
+  </Step>
+
+  <Step title="Select Route">
+    **Trails suggests optimal routing options**
+
+    When orchestration is required, Trails analyzes available routes across chains and presents the optimal options:
+
+    * **Automated Suggestions**: The system suggests the most efficient token and chain combinations
+    * **User Customization**: Users can review and customize the suggested route
+    * **Cost Analysis**: Each route option includes gas costs, fees, and estimated execution time
+
+    <Tip>
+      Users maintain full control over the routing decision while benefiting from Trails's optimization algorithms.
+    </Tip>
+  </Step>
+
+  <Step title="Orchestrate Payment">
+    **Intelligently combine operations for the selected route**
+
+    Once the route is confirmed, Trails orchestrates the necessary operations:
+
+    * **Swap Operations**: Convert tokens to the required format
+    * **Bridge Transactions**: Move assets between chains when needed
+    * **Execution Preparation**: Set up the final transaction parameters
+  </Step>
+
+  <Step title="Execute Transaction">
+    **User confirms and completes the end-to-end flow**
+
+    The final step puts control back in the user's hands:
+
+    * **Wallet Confirmation**: User reviews and confirms the transaction through their connected wallet
+    * **End-to-End Execution**: Trails executes the complete orchestrated flow
+    * **Transaction Completion**: The system handles all intermediate steps and delivers the final result
+
+    <Info>
+      Users only need to sign once, but Trails may execute multiple transactions behind the scenes to complete the orchestrated payment.
+    </Info>
+  </Step>
+</Steps>
+
+## Key Benefits
+
+<CardGroup cols={2}>
+  <Card title="Simplified UX" icon="hand-sparkles">
+    Users interact with a simple interface while Trails handles complex cross-chain orchestration
+  </Card>
+
+  <Card title="Optimal Routing" icon="route">
+    Intelligent algorithms find the most efficient paths across chains and protocols
+  </Card>
+
+  <Card title="Cost Effective" icon="dollar-sign">
+    Minimizes fees and gas costs through smart routing and batching
+  </Card>
+
+  <Card title="Secure" icon="shield-check">
+    Non-custodial architecture ensures users maintain control of their assets
+  </Card>
+</CardGroup>
+
+## Technical Architecture
+
+The Trails protocol leverages several key components:
+
+* **Intent Recognition**: Parses and understands user payment intentions
+* **Route Optimization**: Calculates optimal paths across supported chains
+* **Protocol Integration**: Interfaces with DEXs, bridges, and other protocols
+* **Transaction Orchestration**: Coordinates complex multi-step operations
+* **Execution Engine**: Handles the actual transaction execution and monitoring
+
+## Integration with External Protocols & Liquidity Networks
+
+* **Trails as Orchestrator (Glue Layer)**: Trails does not custody funds or act as a bridge/DEX itself. It orchestrates flows across existing liquidity networks and chains, acting as the glue that connects them so they work seamlessly as one.
+* **Relayers & Cross-Chain Routers**: Trails composes best-in-class relayers and routers (e.g., Relay, LiFi, custom routers) to execute cross-chain legs when required.
+* **Liquidity Providers (LPs) & DEXs**: Trails taps into AMMs, RFQ makers, and LPs to source liquidity and pricing, selecting the optimal venue per step of the route, providing the best price and gas efficiency possible for the end-user.
+* **Pluggable Architecture**: New protocols, bridges, and networks can be added without changing integrator code. Trails evaluates options at runtime and selects the safest, most efficient path, giving the developer full control over the flow.
+
+<Note>
+  Trails is responsible for orchestrating the flow, not holding user assets. It coordinates protocols so users can transact with a single click (one transaction on the original chain), while assets move through underlying networks.
+</Note>
+
+## Security & Validation
+
+* **Built on Sequence v3**: Trails is built on top of Sequence's audited v3 wallet contracts, leveraging mature account abstraction and battle-tested controls.
+* **Intent-Scoped Authorization**: Intent addresses are only used to trustlessly authorize the specific transaction calldata the user has explicitly permitted—nothing more.
+* **User “sudo” Control**: The user always retains control over their account and funds. In emergencies, they can take direct action at any time.
+* **Validation & Refunds**: Calls are simulated and expected to succeed. If a step cannot complete, Trails handles refunds and unwind flows automatically where applicable.
+* **Non-Custodial by Design**: Trails never takes custody; execution happens via the user's wallet permissions, preserving full control and auditability.
+
+# Protocol Architecture
+
+> Core architecture and design of the Trails protocol
+
+## Trails end-to-end Flow
+
+Trails enables seamless cross-chain transactions through a coordinated system of intent contracts, relayers, and solvers. Below is the complete flow from user initiation to transaction completion.
+
+<a href="https://pub-dc89be64e317442b832bec22d3d12052.r2.dev/trails-flow.svg" target="_blank">(click here to view diagram in full screen)</a>
+
+![Trails end-to-end flow](https://pub-dc89be64e317442b832bec22d3d12052.r2.dev/trails-flow.svg)
+
+Additionally, you can think of Trails as a pluggable transaction adapter that can execute any arbitrary transactions across multiple chains. See below.
+
+![Trails adapter](https://pub-dc89be64e317442b832bec22d3d12052.r2.dev/trails-adapter.svg)
+
+## Under the Hood
+
+Under the hood, Trails intents are counterfactual instantiations of [Sequence v3 account abstraction](https://github.com/0xsequence/wallet-contracts-v3) contracts. The Sequence v3 account abstraction contracts introduce a very flexible and novel execution model powered by merkle trees. The contract execution configuration is represented as a merkle tree that includes signers, a digest, a module, or a combination of all. The execution of the intent is triggered by a single transaction to the intent address, where the Trails relayers observe intent address and post merkle proofs onchain of the encoded sub-transactions on origin and destination chains. Please review the "Protocol Flow Overview" section above for more details.
+
+TLDR: Trails successfully layers account abstraction transaction capabilities to primitive EOA wallets (even EOA wallets without ERC7702). This is the magic of the Trails design in how it can construct a single transaction with a single end-user confirmation that spans multiple chains and transactions. Trails also works with smart wallets directly, or ERC7702 wallets with some simplifications. The architectural goal of Trails is to always be able to construct a direct cross-chain/cross-token route for even the most common denominator of wallets, such as an EOA without ERC7702.
+
+Trails is architected as a trustless system that works on top of existing bridging / filler / solver infrastructure. For bridging / filling, Trails currently has integrated CCTPv2, Relay and Lifi.
+
+## Key Components
+
+### 🏗️ Architecture Layers
+
+1. **User Interaction Layer**: Handles user requests and wallet interactions
+2. **SDK Layer**: Manages balance queries, token selection, and orchestration
+3. **Solver Layer**: Provides optimal routing solutions for cross-chain transfers
+4. **Chain Layer**: Coordinates relayer operations across multiple blockchains
+5. **Execution Layer**: Executes intent contracts and completes transactions
+
+### 🔄 Protocol Flow
+
+The protocol follows a systematic approach:
+
+1. **Initiation**: User initiates a cross-chain transaction through their app
+2. **Discovery**: SDK queries available token balances across all supported chains
+3. **Selection**: User selects preferred payment token from any available chain
+4. **Solution**: Sequence API provides optimal bridge/swapsolution
+5. **Execution**: Coordinated execution across origin and destination chains
+6. **Completion**: Intent contracts fulfill the transaction requirements
+
+### 🎯 Intent-Based Architecture
+
+The protocol leverages intent contracts that:
+
+* Define transaction requirements without specifying execution paths
+* Enable flexible solver competition for optimal routes
+* Provide atomicity guarantees across chain boundaries
+* Support complex multi-hop operations seamlessly
+
+### 🌉 Cross-Chain Coordination
+
+Relayers on each chain work in concert to:
+
+* Monitor intent contract states
+* Execute transactions with cryptographic proofs
+* Ensure atomic completion or rollback
+* Maintain consistency across chain boundaries
+
+### 📨 Role of the Relayer (How is this trustless?)
+
+* Relayers cannot alter the transaction calldata or intent contents in any way; they can only submit the pre-committed, verifiable calls that match the intent's merkle commitments.
+* Their responsibility is limited to subsidizing gas and successfully landing the transaction on the underlying chain on the user's behalf.
+* Any deviation from the committed parameters is rejected on-chain by the intent contracts, ensuring the relayer cannot manipulate execution.
+
+# Pricing
+
+> Core architecture and design of the Trails transaction rails protocol
+
+## Fee Model
+
+The protocol is free to integrate for any app. The fee for Trails is paid by the end-user which includes:
+
+* Gas fees on the origin and destination chains
+* Included fees for liquidity providers or bridges
+* Trails protocol fee which scales significantly down with the amount of volume (in USD) transacted
+
+# Pay Gas with Any Token
+
+> Users can pay gas in any permit-compatible, non-native token
+
+## Pay Gas with non-native tokens
+
+Trails is able to support paying gas in any permit-compatible (EIP-2612) token which includes popular options and many stablecoins such as USDC and USDT.
+
+This prevents such scenarios when bridging to a new chain and not having any gas tokens to actually interact with apps. Additionally, Trails is able to bring more utility for your token seamlessly by enabling it as a end to end payment & gas option.
+
+During the Trails flow, a user will be by default prompted with the native gas token, however can select other options. This will initially require an approval for the token, then every subsequent transaction will be a single confirmation.
+
+# Trails Contracts
+
+> Trails protocol smart contracts and security audits
+
+## Overview
+
+Trails is built on a robust set of smart contracts deployed across multiple chains. All contracts are deployed via ERC-2470 Singleton Factory for deterministic addresses, ensuring consistency across the ecosystem.
+
+## Contracts Repository
+
+The complete source code for all Trails smart contracts is available on GitHub:
+
+### Key Contracts
+
+The Trails protocol consists of several core smart contracts:
+
+* **TrailsRouter** - Main routing contract for intent execution and token operations
+* **TrailsIntentEntrypoint** - Entry point for intent deposits with permit support
+* **TrailsRouterShim** - Execution wrapper with sentinel tracking for success/failure states
+
+All contracts leverage Sequence v3 account abstraction for flexible, secure cross-chain operations.
+
+## Security Audits
+
+Security is a top priority for Trails. All smart contracts have undergone comprehensive third-party security audits:
+
+
+For a technical overview, see the [Protocol Architecture](/architecture/protocol) documentation.
+

@@ -1,0 +1,292 @@
+# syntax=docker/dockerfile:1.7
+FROM --platform=linux/amd64 rust:1-bookworm
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Some parallelism/QoL defaults (tune as you wish)
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true \
+  CMAKE_BUILD_PARALLEL_LEVEL=8 \
+  MAKEFLAGS="-j8" \
+  PATH="/root/.cargo/bin:${PATH}"
+
+# Base deps + additional build tools
+RUN apt-get update && apt-get install -y \
+  git curl unzip xz-utils ca-certificates \
+  build-essential pkg-config \
+  python3 python3-pip python3-venv \
+  nodejs npm \
+  clang clang-tools lldb lld llvm opt \
+  ninja-build bear \
+  jq ripgrep fd-find file \
+  # Additional tools for comprehensive analysis
+  cppcheck \
+  valgrind \
+  gdb \
+  strace \
+  && rm -rf /var/lib/apt/lists/*
+
+# ---- Install latest CMake (3.27+) ----
+ENV CMAKE_VERSION=3.28.1
+RUN curl -fL --retry 5 --retry-all-errors \
+  "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
+  -o /tmp/cmake.tar.gz \
+  && tar -C /opt -xzf /tmp/cmake.tar.gz \
+  && rm /tmp/cmake.tar.gz \
+  && ln -sf /opt/cmake-${CMAKE_VERSION}-linux-x86_64/bin/* /usr/local/bin/ \
+  && cmake --version
+
+# ---- Enhanced Rust toolchains ----
+# stable ships with the base image; add nightly + components
+RUN set -eux; \
+  rustup toolchain install nightly; \
+  rustup component add rustfmt clippy rust-src --toolchain stable; \
+  rustup component add rustfmt clippy rust-src miri llvm-tools-preview --toolchain nightly
+
+
+# ---- Fast installer for cargo binaries (prebuilt where possible) ----
+RUN set -eux; \
+  ARCH="$(uname -m)"; \
+  case "$ARCH" in \
+  x86_64)  BINF="cargo-binstall-x86_64-unknown-linux-gnu.tgz"  ;; \
+  aarch64) BINF="cargo-binstall-aarch64-unknown-linux-gnu.tgz" ;; \
+  *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fL --retry 5 --retry-all-errors -o /tmp/cargo-binstall.tgz \
+  "https://github.com/cargo-bins/cargo-binstall/releases/latest/download/${BINF}"; \
+  tar -C /usr/local/bin -xzf /tmp/cargo-binstall.tgz cargo-binstall; \
+  rm /tmp/cargo-binstall.tgz; \
+  # verify via cargo subcommand invocation
+  cargo binstall --help >/dev/null
+
+# Helpful cargo tools (prefer binstall; fall back to cargo install for any misses)
+RUN set -eux; \
+  (cargo binstall -y \
+  ripgrep_all \
+  cargo-call-stack \
+  cargo-llvm-lines \
+  cargo-audit \
+  cargo-deny \
+  cargo-outdated \
+  cargo-tree \
+  cargo-expand \
+  cargo-bloat \
+  ) || true
+
+# Fallback compile for anything not provided by binstall (with BuildKit caches if enabled)
+RUN --mount=type=cache,target=/root/.cargo/registry \
+  --mount=type=cache,target=/root/.cargo/git \
+  cargo install --locked \
+  ripgrep_all cargo-call-stack cargo-llvm-lines \
+  cargo-audit cargo-deny cargo-outdated cargo-tree cargo-expand cargo-bloat
+
+# cargo-asm needs nightly + llvm-tools-preview; almost always source-build:
+RUN --mount=type=cache,target=/root/.cargo/registry \
+  --mount=type=cache,target=/root/.cargo/git \
+  cargo +nightly install --locked cargo-asm
+
+# ---- Robust rust-analyzer install ----
+RUN set -eux; \
+  if rustup component add rust-analyzer --toolchain stable; then \
+  RA_PATH="$(rustc --print sysroot)/libexec/rust-analyzer" || true; \
+  if [ -x "$RA_PATH" ]; then install -m 0755 "$RA_PATH" /usr/local/bin/rust-analyzer; fi; \
+  fi; \
+  if ! command -v rust-analyzer >/dev/null 2>&1; then \
+  ARCH="$(uname -m)"; \
+  case "$ARCH" in \
+  x86_64)  RA_FILE="rust-analyzer-x86_64-unknown-linux-gnu.gz" ;; \
+  aarch64) RA_FILE="rust-analyzer-aarch64-unknown-linux-gnu.gz" ;; \
+  *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  RA_URL="https://github.com/rust-lang/rust-analyzer/releases/latest/download/${RA_FILE}"; \
+  if curl -fL --retry 5 --retry-all-errors -o /tmp/ra.gz "$RA_URL"; then \
+  test -s /tmp/ra.gz; gunzip -f /tmp/ra.gz; install -m 0755 /tmp/ra /usr/local/bin/rust-analyzer; \
+  fi; \
+  fi; \
+  if ! command -v rust-analyzer >/dev/null 2>&1; then \
+  git clone --depth 1 https://github.com/rust-lang/rust-analyzer /tmp/ra-src; \
+  cd /tmp/ra-src; cargo xtask install --server; \
+  install -m 0755 ~/.cargo/bin/rust-analyzer /usr/local/bin/rust-analyzer; \
+  fi; \
+  rust-analyzer --version || true
+
+# ---- EVMC (faster: Ninja, fewer targets) ----
+RUN git clone --depth 1 --branch v12.0.0 https://github.com/ethereum/evmc.git /opt/evmc && \
+  cmake -S /opt/evmc -B /opt/evmc/build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DEVMC_TESTING=OFF \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DEVMC_INSTALL=ON && \
+  ninja -C /opt/evmc/build -j"$(nproc)" install && \
+  ldconfig
+
+# ---- Additional C++ libraries ----
+RUN apt-get update && apt-get install -y \
+  libboost-all-dev \
+  libssl-dev \
+  libgmp-dev \
+  libsecp256k1-dev \
+  libjemalloc-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+# ---- Solana + Anchor ----
+ENV SOLANA_VERSION=1.18.17
+RUN set -eux; \
+  apt-get update && apt-get install -y --no-install-recommends bzip2 && rm -rf /var/lib/apt/lists/*; \
+  ARCH="$(uname -m)"; \
+  case "$ARCH" in \
+  x86_64)  TRIPLE="x86_64-unknown-linux-gnu" ;; \
+  aarch64) TRIPLE="aarch64-unknown-linux-gnu" ;; \
+  *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  FILE="solana-release-${TRIPLE}.tar.bz2"; \
+  URL="https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/${FILE}"; \
+  curl -fL --retry 5 --retry-all-errors -o /tmp/solana.tar.bz2 "$URL"; \
+  test -s /tmp/solana.tar.bz2; \
+  mkdir -p /opt/solana; \
+  tar -C /opt/solana --strip-components=1 -xjf /tmp/solana.tar.bz2; \
+  rm -f /tmp/solana.tar.bz2; \
+  ln -sf /opt/solana/bin/* /usr/local/bin/; \
+  solana --version
+
+RUN npm install -g @coral-xyz/anchor-cli && anchor --version
+
+# ---- Enhanced Go toolchain ----
+ENV GO_VERSION=1.22.5
+RUN curl -fL --retry 5 --retry-all-errors "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz \
+  && tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz \
+  && /usr/local/go/bin/go version
+
+ENV PATH=/usr/local/go/bin:$PATH GOPATH=/opt/go
+RUN go install golang.org/x/tools/gopls@latest \
+  && go install honnef.co/go/tools/cmd/staticcheck@latest \
+  && go install github.com/ofabry/go-callvis@latest \
+  && go install golang.org/x/tools/cmd/guru@latest
+
+# ---- CodeQL (optional) ----
+RUN curl -fL --retry 5 --retry-all-errors \
+  https://github.com/github/codeql-cli-binaries/releases/latest/download/codeql-linux64.zip \
+  -o /tmp/codeql.zip \
+  && unzip /tmp/codeql.zip -d /opt && rm /tmp/codeql.zip
+
+ENV CODEQL=/opt/codeql/codeql
+ENV PATH=$CODEQL:$PATH
+
+# ---- Semgrep (multi-language) ----
+# Use pipx to avoid PEP 668 "externally-managed-environment" errors
+RUN set -eux; \
+  apt-get update && apt-get install -y --no-install-recommends pipx python3-venv && rm -rf /var/lib/apt/lists/*; \
+  pipx install semgrep; \
+  # expose pipx-installed binaries to PATH in non-login shells
+  ln -sf /root/.local/bin/semgrep /usr/local/bin/semgrep; \
+  semgrep --version
+
+# ---- Extra Python linters/tools (use pipx to avoid PEP-668) ----
+RUN set -eux; \
+  apt-get update && apt-get install -y --no-install-recommends pipx python3-venv && rm -rf /var/lib/apt/lists/*; \
+  pipx install bandit; \
+  pipx install safety; \
+  pipx install mypy; \
+  pipx install flake8; \
+  pipx install black; \
+  pipx install isort; \
+  # ensure pipx shims are on PATH for non-login shells
+  ln -sf /root/.local/bin/bandit /usr/local/bin/bandit; \
+  ln -sf /root/.local/bin/safety /usr/local/bin/safety; \
+  ln -sf /root/.local/bin/mypy /usr/local/bin/mypy; \
+  ln -sf /root/.local/bin/flake8 /usr/local/bin/flake8; \
+  ln -sf /root/.local/bin/black /usr/local/bin/black; \
+  ln -sf /root/.local/bin/isort /usr/local/bin/isort; \
+  bandit --version && safety --version && mypy --version && flake8 --version && black --version && isort --version
+
+# ---- LLVM tools for advanced analysis ----
+RUN apt-get update && apt-get install -y \
+  llvm-14-tools \
+  clang-format-14 \
+  clang-tidy-14 \
+  && rm -rf /var/lib/apt/lists/* \
+  && ln -sf /usr/bin/clang-format-14 /usr/local/bin/clang-format \
+  && ln -sf /usr/bin/clang-tidy-14 /usr/local/bin/clang-tidy
+
+# ---- tree-sitter CLI ----
+RUN npm install -g tree-sitter-cli
+
+# ---- Bear (compile_commands.json) ----
+RUN apt-get update && apt-get install -y bear && rm -rf /var/lib/apt/lists/*
+
+# ---- Analysis script ----
+RUN mkdir -p /opt/analysis-scripts
+COPY <<'EOF' /opt/analysis-scripts/comprehensive_analysis.sh
+#!/bin/bash
+set -e
+
+WORKSPACE=${1:-/workspace}
+OUTPUT_DIR="$WORKSPACE/analysis_output"
+
+echo "=== Comprehensive Monad Protocol Analysis ==="
+echo "Workspace: $WORKSPACE"
+echo "Output: $OUTPUT_DIR"
+
+mkdir -p "$OUTPUT_DIR"/{ast,callgraph,rust_analysis,cpp_analysis,security}
+
+# 1. Rust Analysis
+echo "1. Analyzing Rust components..."
+cd "$WORKSPACE/bft" || exit 1
+
+git submodule update --init --recursive 2>/dev/null || true
+
+cargo tree --depth 2 > "$OUTPUT_DIR/rust_analysis/dependency_tree.txt" 2>/dev/null || echo "Cargo tree failed"
+cargo audit > "$OUTPUT_DIR/security/rust_audit.txt" 2>/dev/null || echo "Cargo audit not available"
+
+# 2. C++ Analysis
+echo "2. Setting up C++ build environment..."
+cd "$WORKSPACE/monad" || exit 1
+git submodule update --init --recursive 2>/dev/null || true
+
+mkdir -p build
+cd build
+
+bear -- cmake .. \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_PREFIX_PATH="/usr/local;/opt/evmc" \
+  2>&1 | tee "$OUTPUT_DIR/cpp_analysis/cmake_config.log" || echo "CMake configuration failed"
+
+if [ -f compile_commands.json ]; then
+  echo "3. Generating AST with compilation database..."
+  find ../category -name "*.cpp" | head -10 | while read -r file; do
+    filename=$(basename "$file" .cpp)
+    echo "Analyzing $file..."
+    clang -Xclang -ast-dump -fsyntax-only "$file" \
+      > "$OUTPUT_DIR/ast/${filename}_ast.txt" 2>&1 || echo "AST failed for $file"
+  done
+fi
+
+# 4. Security Analysis
+echo "4. Running security analysis..."
+cd "$WORKSPACE"
+
+semgrep --config=auto --json --output="$OUTPUT_DIR/security/semgrep_results.json" . 2>/dev/null || echo "Semgrep analysis failed"
+cppcheck --enable=all --xml --xml-version=2 monad/ 2> "$OUTPUT_DIR/security/cppcheck_results.xml" || echo "Cppcheck failed"
+
+echo "Analysis complete! Results in $OUTPUT_DIR"
+EOF
+RUN chmod +x /opt/analysis-scripts/comprehensive_analysis.sh
+
+# ---- Env & shell niceties ----
+ENV ANALYSIS_SCRIPTS=/opt/analysis-scripts
+ENV PATH=$ANALYSIS_SCRIPTS:$PATH
+WORKDIR /workspace
+RUN echo 'alias analyze="comprehensive_analysis.sh"' >> /root/.bashrc \
+  && echo 'alias ll="ls -la"' >> /root/.bashrc \
+  && echo 'alias grep="grep --color=auto"' >> /root/.bashrc
+
+# ---- Final verification ----
+RUN echo "=== Tool Verification ===" \
+  && cmake --version \
+  && clang --version \
+  && cargo --version \
+  && semgrep --version \
+  && cppcheck --version \
+  && echo "=== Container Ready ==="
+

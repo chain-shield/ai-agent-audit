@@ -14,14 +14,14 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::build_brain::inheritance;
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
 use crate::cost::cost_data::get_token_count;
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::utils::check_folder_name::contains_build_config;
 
 use super::callgraph;
-use super::parsers::{parse_slither, parse_slithir_ir_code, parse_storage};
+use super::parsers::{parse_slither, parse_slithir_ir_code};
 
 /// Global cache for Slither printer outputs to avoid redundant analysis.
 /// Key format: "{repo_root}:{printer_name}"
@@ -54,7 +54,7 @@ pub struct ContractSummary {
 ///
 /// This struct contains information about a storage variable, including
 /// its name, type, and the contract it belongs to.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageVar {
     /// Name of the contract containing this storage variable
     pub contract: String,
@@ -149,9 +149,12 @@ enum ProjectType {
     Generic,
 }
 
+#[allow(dead_code)]
 fn detect_project_type(repo: &RepoPaths) -> ProjectType {
-    let repo_path = repo.root.join(&repo.repo_name);
+    detect_project_type_at_path(&repo.root.join(&repo.repo_name))
+}
 
+fn detect_project_type_at_path(repo_path: &Path) -> ProjectType {
     // Check for various configuration files
     let has_foundry =
         repo_path.join("foundry.toml").exists() || repo_path.join("forge.toml").exists();
@@ -213,9 +216,20 @@ fn detect_project_type(repo: &RepoPaths) -> ProjectType {
 pub fn build_slither_args(
     repo: &RepoPaths,
     printer: Option<&str>,
+    subfolder: Option<PathBuf>,
     json_output: bool,
+    use_ignore_compile: bool,
 ) -> Vec<String> {
-    let project_type = detect_project_type(repo);
+    // Determine the actual target directory for Slither analysis
+    let target_path = if let Some(ref folder) = subfolder {
+        folder.clone()
+    } else {
+        repo.root.join(&repo.repo_name)
+    };
+
+    // Detect project type based on the actual target path (which may include subfolder)
+    let project_type = detect_project_type_at_path(&target_path);
+
     let mut args = vec![
         "run".to_string(),
         "--rm".to_string(),
@@ -223,28 +237,41 @@ pub fn build_slither_args(
         format!("{}:/workspace", repo.root.display()),
         "-w".to_string(),
         "/workspace".to_string(),
-        "ghcr.io/trailofbits/eth-security-toolbox:nightly".to_string(),
-        "slither".to_string(),
     ];
+
+    // Note: We don't set FOUNDRY_PROFILE for Slither because:
+    // 1. Custom build profiles may reference solc versions not available in Docker
+    // 2. Slither will use foundry.toml's default profile or auto-detect settings
+    // 3. For static analysis, exact compiler version match is less critical than for builds
+
+    args.extend([
+        "trailofbits/eth-security-toolbox:nightly".to_string(),
+        "slither".to_string(),
+    ]);
 
     // Add project-specific arguments (collect flags first; add target last)
     match project_type {
-        ProjectType::Foundry => {
-            args.extend([
-                "--foundry-ignore-compile".to_string(),
-                "--foundry-out-directory".to_string(),
-                "out".to_string(),
-            ]);
-        }
-        ProjectType::FoundryYarn => {
-            // Let Slither compile from source (no ignore flags)
+        ProjectType::Foundry | ProjectType::FoundryYarn => {
+            // Try to use existing build artifacts if requested and available
+            // This is faster but may fail with newer Foundry versions
+            if use_ignore_compile && target_path.join("out").exists() {
+                args.extend([
+                    "--foundry-ignore-compile".to_string(),
+                    "--foundry-out-directory".to_string(),
+                    "out".to_string(),
+                ]);
+                log::debug!(
+                    "Foundry project detected. Attempting to use existing build artifacts from out/"
+                );
+            } else {
+                log::debug!("Foundry project detected. Slither will handle compilation.");
+            }
         }
         ProjectType::Hardhat => {
             // Hardhat projects typically compile to artifacts
-            let repo_path = repo.root.join(&repo.repo_name);
-            let artifacts_dir = if repo_path.join("artifacts").exists() {
+            let artifacts_dir = if target_path.join("artifacts").exists() {
                 "artifacts"
-            } else if repo_path
+            } else if target_path
                 .join("packages")
                 .join("hardhat")
                 .join("artifacts")
@@ -265,7 +292,7 @@ pub fn build_slither_args(
         }
         ProjectType::Truffle => {
             // Truffle projects typically compile to build/contracts
-            if repo.root.join(&repo.repo_name).join("build").exists() {
+            if target_path.join("build").exists() {
                 args.extend([
                     "--truffle-ignore-compile".to_string(),
                     "--truffle-build-directory".to_string(),
@@ -274,28 +301,11 @@ pub fn build_slither_args(
             }
         }
         ProjectType::Generic => {
-            // For generic projects, try to detect common build directories
-            let repo_path = repo.root.join(&repo.repo_name);
-            if repo_path.join("out").exists() {
-                args.extend([
-                    "--foundry-ignore-compile".to_string(),
-                    "--foundry-out-directory".to_string(),
-                    "out".to_string(),
-                ]);
-            } else if repo_path.join("artifacts").exists() {
-                args.extend([
-                    "--hardhat-ignore-compile".to_string(),
-                    "--hardhat-artifacts-directory".to_string(),
-                    "artifacts".to_string(),
-                ]);
-            } else if repo_path.join("build").exists() {
-                args.extend([
-                    "--truffle-ignore-compile".to_string(),
-                    "--truffle-build-directory".to_string(),
-                    "build".to_string(),
-                ]);
-            }
-            // If no build directory found, let Slither try to compile
+            // For generic projects, let Slither auto-detect and compile
+            // This is more reliable than trying to use pre-built artifacts
+            log::debug!(
+                "Generic project detected. Slither will auto-detect project type and compile."
+            );
         }
     }
 
@@ -319,15 +329,22 @@ pub fn build_slither_args(
     }
 
     // Add the target (project directory) last; Slither CLI prefers positional at the end
-    args.push(repo.repo_name.clone());
+    let target_dir = if let Some(folder) = subfolder {
+        // folder is an absolute path, we need to make it relative to repo.root
+        let relative_folder = folder.strip_prefix(&repo.root).unwrap_or(&folder);
+        relative_folder.to_string_lossy().to_string()
+    } else {
+        repo.repo_name.clone()
+    };
+    args.push(target_dir);
 
-    log::info!("Detected project type: {:?}", project_type);
+    // log::info!("Detected project type: {:?}", project_type);
 
     args
 }
 
 pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
-    let key = cache_key(&repo.root, "detector");
+    let key = cache_key(&repo.root, "detector", None);
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
     let mut printer_cache = cache.lock().await;
 
@@ -337,7 +354,7 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
     }
 
     log::info!("Running Slither detector");
-    let mut args = build_slither_args(repo, None, false);
+    let mut args = build_slither_args(repo, None, None, false, false);
     // Add detector-specific arguments
     args.push("--exclude-dependencies".to_string());
 
@@ -369,18 +386,25 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @param printer - Name of the Slither printer to run (e.g., "slithir-ssa", "variable-order")
 /// @return Result containing the printer's output as a string
-pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
-    let key = cache_key(&repo.root, printer);
+pub async fn run_printer(
+    repo: &RepoPaths,
+    printer: &str,
+    subfolder: Option<PathBuf>,
+) -> Result<String> {
+    let key = cache_key(&repo.root, printer, subfolder.clone());
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
-    let mut printer_cache = cache.lock().await;
 
-    // Return cached output if exists
-    if let Some(cached) = printer_cache.get(&key) {
-        return Ok(cached.clone());
-    }
+    // Check cache
+    {
+        let printer_cache = cache.lock().await;
+        if let Some(cached) = printer_cache.get(&key) {
+            return Ok(cached.clone());
+        }
+    } // Lock is dropped here
 
     log::info!("Running Slither printer: {}", printer);
-    let args = build_slither_args(repo, Some(printer), false);
+
+    let args = build_slither_args(repo, Some(printer), subfolder, false, false);
     let output = Command::new("docker")
         .args(&args)
         .stdout(Stdio::piped()) // Capture printer text from stdout
@@ -422,13 +446,56 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
         get_token_count(&text)
     );
     // Save to cache and return
+    let mut printer_cache = cache.lock().await;
     printer_cache.insert(key, text.clone());
     Ok(text)
 }
+pub async fn run_printer_monorepo(repo: &RepoPaths, printer: &str) -> Result<String> {
+    let mut total_output = String::new();
+    let folders = repo.extract_monorepo_folders()?;
 
-// use for inheritance and call-graph
-pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String> {
-    let key = cache_key(&repo.root, printer);
+    for folder in folders {
+        if contains_build_config(&folder) {
+            let output = run_printer(repo, printer, Some(folder)).await?;
+            total_output.push_str(&format!("\n{}\n", output));
+        }
+    }
+    Ok(total_output)
+}
+
+/// Custom Slither runner for inheritance analysis with standard library filtering.
+///
+/// This function runs Slither's inheritance printer with explicit path filtering to:
+/// 1. Include all project code (including lib folders like euler-price-oracle)
+/// 2. Exclude only standard libraries and testing frameworks
+/// 3. Override any slither.config.json exclusions
+///
+/// Excluded libraries:
+/// - forge-std: Foundry standard library
+/// - openzeppelin-contracts: OpenZeppelin contracts
+/// - solady: Solady library
+/// - ds-test: DappTools testing framework
+/// - erc4626-tests: ERC4626 testing suite
+/// - halmos-cheatcodes: Halmos symbolic testing cheatcodes
+/// - solmate: Solmate library (includes testing utilities)
+/// - prb-test: PRBTest testing framework
+/// - node_modules: npm dependencies
+///
+/// DEPRECATED: This Slither-based inheritance extraction is no longer used.
+/// Use the custom Solidity parsing in `src/enumerator/utils.rs` instead.
+///
+/// This ensures we capture inheritance relationships for all project contracts,
+/// including those in lib/ folders that are part of the project scope.
+#[deprecated(note = "Use custom Solidity parsing via contracts_in_source_folder() instead")]
+pub async fn run_printer_json_inheritance(
+    repo: &RepoPaths,
+    subfolder: Option<PathBuf>,
+) -> Result<String> {
+    let printer = "inheritance";
+    let key = format!(
+        "{}_filtered",
+        cache_key(&repo.root, printer, subfolder.clone())
+    );
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
     let mut printer_cache = cache.lock().await;
 
@@ -437,17 +504,64 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
         return Ok(cached.clone());
     }
 
-    log::info!("Running Slither printer: {}", printer);
-    let args = build_slither_args(repo, Some(printer), true);
+    log::info!("Running Slither inheritance printer with standard library filtering");
+
+    // Build base args without the target directory
+    let mut args = build_slither_args(repo, Some(printer), subfolder.clone(), true, false);
+
+    // Remove the last argument (target directory) temporarily
+    let target_dir = args
+        .pop()
+        .expect("build_slither_args should always include target");
+
+    // Add filter-paths to exclude standard libraries and testing frameworks
+    // but include project lib folders. This overrides any slither.config.json exclusions
+    args.push("--filter-paths".to_string());
+    args.push(
+        "lib/forge-std|\
+         lib/openzeppelin-contracts|\
+         lib/solady|\
+         lib/ds-test|\
+         lib/erc4626-tests|\
+         lib/halmos-cheatcodes|\
+         lib/solmate|\
+         lib/prb-test|\
+         node_modules"
+            .to_string(),
+    );
+
+    // Add the target directory back at the end
+    args.push(target_dir);
+
+    // Log the full docker command for debugging
+    // log::info!("Docker command: docker {}", args.join(" "));
+
     let out = Command::new("docker").args(&args).output()?;
 
-    anyhow::ensure!(out.status.success(), format!("slither {} failed", printer));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        log::error!(
+            "Slither {} failed with exit code: {:?}",
+            printer,
+            out.status.code()
+        );
+        log::error!("Stdout: {}", stdout);
+        log::error!("Stderr: {}", stderr);
+        anyhow::bail!(
+            "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
+            printer,
+            out.status.code(),
+            stdout,
+            stderr
+        );
+    }
 
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
 
     // Save to cache and return
     info!(
-        "{} print complete with token count:  {}",
+        "{} print complete with token count: {}",
         printer,
         get_token_count(&text)
     );
@@ -455,30 +569,148 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
 
     Ok(text)
 }
-/// Runs both Slither printers and returns the parsed IR and storage information.
+
+// use for call-graph (inheritance now uses run_printer_json_inheritance)
+pub async fn run_printer_json(
+    repo: &RepoPaths,
+    printer: &str,
+    subfolder: Option<PathBuf>,
+) -> Result<String> {
+    let key = cache_key(&repo.root, printer, subfolder.clone());
+    let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
+
+    // Check cache
+    {
+        let printer_cache = cache.lock().await;
+        if let Some(cached) = printer_cache.get(&key) {
+            return Ok(cached.clone());
+        }
+    } // Lock is dropped here
+
+    // log::info!("Running Slither printer: {}", printer);
+
+    // Try with --foundry-ignore-compile first (faster if artifacts are compatible)
+    let args = build_slither_args(repo, Some(printer), subfolder.clone(), true, true);
+
+    // Log the full docker command for debugging
+    // log::info!("Docker command: docker {}", args.join(" "));
+
+    let out = Command::new("docker").args(&args).output()?;
+
+    let text = if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+
+        // Debug: log what we captured
+        log::debug!(
+            "Slither {} failed. Stderr length: {}, Stdout length: {}",
+            printer,
+            stderr.len(),
+            stdout.len()
+        );
+        log::debug!(
+            "Stderr preview: {}",
+            &stderr.chars().take(500).collect::<String>()
+        );
+        log::debug!(
+            "Stdout preview: {}",
+            &stdout.chars().take(500).collect::<String>()
+        );
+
+        // Check if failure is due to incompatible build artifacts
+        // Empty output with exit code 1 often indicates compilation failure with --foundry-ignore-compile
+        let is_artifact_error = stderr.contains("KeyError: 'output'")
+            || stderr.contains("hardhat_like_parsing")
+            || stdout.contains("KeyError: 'output'")
+            || stdout.contains("hardhat_like_parsing")
+            || (stderr.is_empty() && stdout.is_empty()); // Empty output suggests early compilation failure
+
+        if is_artifact_error {
+            log::warn!(
+                "Slither {} failed with artifact parsing error. Retrying without --foundry-ignore-compile...",
+                printer
+            );
+
+            // Retry without --foundry-ignore-compile
+            let args_no_ignore =
+                build_slither_args(repo, Some(printer), subfolder.clone(), true, false);
+            let out_retry = Command::new("docker").args(&args_no_ignore).output()?;
+
+            if !out_retry.status.success() {
+                let stderr_retry = String::from_utf8_lossy(&out_retry.stderr);
+                let stdout_retry = String::from_utf8_lossy(&out_retry.stdout);
+                log::error!(
+                    "Slither {} failed even after retry with exit code: {:?}",
+                    printer,
+                    out_retry.status.code()
+                );
+                log::error!("Stdout: {}", stdout_retry);
+                log::error!("Stderr: {}", stderr_retry);
+                anyhow::bail!(
+                    "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
+                    printer,
+                    out_retry.status.code(),
+                    stdout_retry,
+                    stderr_retry
+                );
+            }
+
+            String::from_utf8_lossy(&out_retry.stdout).into_owned()
+        } else {
+            // Different error, fail immediately
+            log::error!(
+                "Slither {} failed with exit code: {:?}",
+                printer,
+                out.status.code()
+            );
+            log::error!("Stdout: {}", stdout);
+            log::error!("Stderr: {}", stderr);
+            anyhow::bail!(
+                "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
+                printer,
+                out.status.code(),
+                stdout,
+                stderr
+            );
+        }
+    } else {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    // Save to cache and return
+    info!(
+        "{} print complete with token count:  {}",
+        printer,
+        get_token_count(&text)
+    );
+    let mut printer_cache = cache.lock().await;
+    printer_cache.insert(key, text.clone());
+
+    Ok(text)
+}
+/// Runs Slither printers and returns the parsed IR information.
 ///
-/// This function is the main public interface for extracting SlithIR and storage
-/// information from Solidity contracts. It runs both the slithir-ssa and variable-order
-/// printers and parses their output.
+/// This function is the main public interface for extracting SlithIR
+/// information from Solidity contracts. It runs the slithir-ssa printer
+/// and parses its output.
 ///
 /// @param repo_root - Path to the repository root containing Solidity contracts
-/// @return Result containing a tuple of SlithIRFn and StorageVar vectors
+/// @return Result containing a tuple of SlithIRFn vectors and Slither detector results
 pub async fn get_slither_ir_and_storage(
     repo: &RepoPaths,
 ) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>, Vec<String>)> {
     // Run the slithir-ssa printer to get IR information
-    let ir_raw = run_printer(repo, "slithir-ssa").await?;
-
-    // Run the variable-order printer to get storage information
-    let storage_raw = run_printer(repo, "variable-order").await?;
-    // info!("storage raw => {}", storage_raw);
+    let ir_raw = match repo.monorepo_folders {
+        Some(_) => run_printer_monorepo(repo, "slithir-ssa").await?,
+        None => run_printer(repo, "slithir-ssa", None).await?,
+    };
 
     let slither_scan_results = run_slither_detector(repo).await?;
 
-    // Parse both outputs and return the results
+    // Parse IR output and return empty storage vars (no longer used)
     Ok((
         parse_slithir_ir_code(&ir_raw),
-        parse_storage(&storage_raw),
+        Vec::new(), // Storage vars no longer extracted - dead code path
         parse_slither(&slither_scan_results),
     ))
 }
@@ -495,21 +727,22 @@ pub async fn get_slither_ir_and_storage(
 pub async fn save_code_metadata_and_analysis_to_txt_files(
     repo: &RepoPaths,
     dir: &Path,
-    semantics_path: &Path,
 ) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
     let (_, _, slither_scan_vec) = get_slither_ir_and_storage(repo).await?;
     // info!("storage vec => {:?}", storage_vec);
 
+    // Use monorepo-aware functions for call graph and inheritance
     let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo).await?;
-    let inheritance_json = run_printer_json(repo, "inheritance").await?;
-    let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
-    let contract_summary = run_printer(repo, "contract-summary").await?;
+    // let inheritance_edges = callgraph::generate_inheritance_edges(repo).await?;
+    let contract_summary = match repo.monorepo_folders {
+        Some(_) => run_printer_monorepo(repo, "contract-summary").await?,
+        None => run_printer(repo, "contract-summary", None).await?,
+    };
     let contract_summary_vec = parse_slithir_contract_summary(&contract_summary);
     let src_file_list = get_all_files_src(repo)?;
-    // TODO - undo comment out
-    let summaries = summarize_src_files(repo, &semantics_path).await?;
+    let summaries = summarize_src_files(repo).await?;
 
     // 2 . serialise each artefact → one text file
     let mut out_paths = Vec::new();
@@ -520,7 +753,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     fs::write(&file_list, src_file_list)?;
     out_paths.push(file_list);
 
-    info!("convert file summaries to txt files");
+    // info!("convert file summaries to txt files");
     for sum in &summaries {
         let meta = format!("{}::file_summary", sum.filename);
         // info!("contract meta => {}", meta);
@@ -561,16 +794,16 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
         out_paths.push(p);
     }
 
-    info!("convert call graph edges to txt files");
-    for edge in &inheritance_edges {
-        let meta = format!("child::{}::parent::{}", edge.0, edge.1);
-        // info!("edges meta => {}", meta);
-        let body = format!("{} {}", edge.0, edge.1);
-        let p = dir.join(meta.replace("::", "_") + ".txt");
-        fs::write(&p, body)?;
-        out_paths.push(p);
-    }
-
+    // info!("convert call graph edges to txt files");
+    // for edge in &inheritance_edges {
+    //     let meta = format!("child::{}::parent::{}", edge.0, edge.1);
+    //     // info!("edges meta => {}", meta);
+    //     let body = format!("{} {}", edge.0, edge.1);
+    //     let p = dir.join(meta.replace("::", "_") + ".txt");
+    //     fs::write(&p, body)?;
+    //     out_paths.push(p);
+    // }
+    //
     info!("convert slither scan results to txt files");
     for (i, issue) in slither_scan_vec.iter().enumerate() {
         let meta = format!("{} slither code issue", i);
@@ -587,6 +820,9 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     Ok(out_paths)
 }
 
-pub fn cache_key(repo_root: &Path, printer: &str) -> String {
-    format!("{}::{}", repo_root.display(), printer)
+pub fn cache_key(repo_root: &Path, printer: &str, subfolder: Option<PathBuf>) -> String {
+    match subfolder {
+        Some(folder) => format!("{}-{}::{}", repo_root.display(), folder.display(), printer),
+        None => format!("{}::{}", repo_root.display(), printer),
+    }
 }

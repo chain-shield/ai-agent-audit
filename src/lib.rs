@@ -22,8 +22,8 @@ pub mod build_brain {
     pub mod fn_summaries;
     /// Graph database operations for semantic data
     pub mod graph_db;
-    /// Contract inheritance analysis
-    pub mod inheritance;
+    /// Inheritance relationship mapping with (contract, file) tuples
+    pub mod inheritance_map;
     /// Code parsing utilities
     pub mod parsers;
     /// Slither static analyzer interface
@@ -48,8 +48,10 @@ pub mod prepare_code {
 pub mod reporting {
     /// Audit report generation with findings
     pub mod audit;
+    pub mod competition_reports;
     /// Contract data export utilities
     pub mod contract_data;
+    pub mod patterns;
     /// File saving and formatting
     pub mod save_file;
 }
@@ -60,38 +62,58 @@ pub mod enumerator {
     pub mod codeblock_cache;
     /// Database for code block storage
     pub mod codeblock_db;
-    /// Code block generation logic
-    pub mod codeblock_maker;
-    /// Core code slicing functionality
+    /// Code block generation and slicing logic
     pub mod codeblocks;
+    /// Core code slicing functionality
+    pub mod extract_ir;
+    /// Interface implementation detection
+    pub mod interface_implementations;
     pub mod libraries;
+    pub mod parse_solidity;
     /// Enumeration utilities
     pub mod utils;
 }
 
 /// AI-powered security analysis and LLM integration
 pub mod llm_review {
-    /// AI agent factory for centralized agent creation
-    pub mod agent_factory;
-    /// Analysis results database
-    pub mod analysis_db;
-    /// Main security review orchestration
-    pub mod code_review;
-    pub mod code_review_v2;
-    /// Global context management
-    pub mod context_state;
-    pub mod contract_file_map;
-    /// AI agent and vulnerability type enums
-    pub mod enums;
-    /// LLM configuration and models
-    pub mod findings;
-    pub mod invariants;
-    pub mod issues;
-    pub mod pattern_category;
-    pub mod patterns;
-    pub mod semaphore;
+    pub mod findings {
+        pub mod finding_enums;
+        /// LLM configuration and models
+        pub mod findings;
+    }
+    pub mod contract {
+
+        pub mod contract_category;
+        pub mod contract_file_map;
+    }
+    pub mod agent {
+
+        /// AI agent and vulnerability type enums
+        pub mod agent_enums;
+        /// AI agent factory for centralized agent creation
+        pub mod agent_factory;
+    }
+    pub mod analysis {
+
+        /// Analysis results database
+        pub mod analysis_db;
+        pub mod code_review_v2;
+        /// Global context management
+        pub mod context_state;
+        pub mod pre_audit_analysis;
+        pub mod semaphore;
+    }
+    pub mod threat_models {
+        pub mod actors;
+        pub mod invariants;
+        pub mod issues;
+        pub mod pattern_category;
+        pub mod patterns;
+    }
     /// Security audit phases
     pub mod dynamic_prompts {
+        pub mod actors;
+        pub mod findings;
         pub mod findings_template;
         pub mod inv_findings;
         pub mod invariants;
@@ -99,21 +121,23 @@ pub mod llm_review {
         pub mod patterns;
     }
     pub mod phases {
-        /// Phase 2: Parallel vulnerability detection across multiple AI agents
-        pub mod generate_findings;
-        /// Phase 1: AI-driven file selection and context prefetching
-        pub mod prefetch_context;
-        /// Phase 5: Quality assurance and final finding refinement
-        pub mod quality_check;
-        /// Phase 3a: Check finding are in scope, if scope is provided
-        pub mod scope_findings;
+        pub mod add_poc_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
-        pub mod verify_findings;
+        pub mod verify_rounds;
+        // Phase 7: Create professaionl competition-grade report
+        pub mod create_report;
+        pub mod rounds {
+            pub mod all_rounds;
+            pub mod utils;
+            pub mod validate_round;
+        }
     }
     pub mod pattern_phases {
+        pub mod generate_actors;
+        pub mod generate_direct_findings;
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
         pub mod generate_patterns;
-        pub mod pattern_to_findings;
+        pub mod multipattern_to_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_patterns;
     }
@@ -124,32 +148,18 @@ pub mod llm_review {
         pub mod prompt_context;
         /// AI agent builders and utilities
         pub mod review_utils;
+        pub mod save_run_poc;
     }
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
+        pub mod create_report_prompt;
         /// Deduplication prompts
         pub mod dedup;
-        pub mod extractor_prompt;
-        pub mod planner_prompt;
-        pub mod post_file_select_prompt;
-        /// Post-analysis prompts
-        pub mod post_prompt;
-        /// Quality check prompts
-        pub mod post_qualify;
-        /// Verification prompts
-        pub mod post_verify;
-        pub mod pre_file_select_prompt;
-        /// Pre-analysis prompts
-        pub mod pre_prompt;
-        /// Pre-qualification prompts
-        pub mod pre_qualify;
-        /// Pre-verification prompts
-        pub mod pre_verify;
-        /// Quality assessment prompts
-        pub mod qualify_prompt;
+        pub mod make_poc_prompt;
+        pub mod post_poc;
+        pub mod pre_poc;
+        pub mod report_templates;
         pub mod severity_rubics;
-        /// Verification prompts
-        pub mod verify_prompt;
     }
 }
 
@@ -165,89 +175,6 @@ pub mod cost {
     pub mod cost_data;
 }
 
-/// AI agent implementations with vector search
-pub mod ai_bot {
-    pub mod file_picker;
-    pub mod file_retrival;
-    /// Context retrieval for AI analysis
-    pub mod retrieve_slice;
-}
-
-/// Master security analysis prompts
-pub mod master_prompts {
-    /// Security analysis prompt variants
-    pub mod code4rena;
-    /// Base master security prompt
-    pub mod master_prompt;
-    pub mod prompt_2x_a;
-    pub mod prompt_2x_aa;
-    pub mod prompt_2x_b;
-    pub mod prompt_2x_bb;
-    pub mod prompt_3x_a;
-    pub mod prompt_3x_b;
-    pub mod prompt_3x_c;
-}
-
-/// Vulnerability-specific detection prompts (19 categories)
-pub mod prompts {
-    /// Access control vulnerabilities
-    pub mod access_control;
-    /// Array bounds checking issues
-    pub mod array_limits;
-    /// Confidential data exposure
-    pub mod confidential_data;
-    /// Default visibility issues
-    pub mod default_visibility;
-    /// Denial of service vulnerabilities
-    pub mod dos;
-    /// Inheritance-related issues
-    pub mod inheritance;
-    /// Integer overflow/underflow
-    pub mod integer_overflow;
-    /// MEV and front-running vulnerabilities
-    pub mod mev;
-    /// Oracle manipulation attacks
-    pub mod oracle;
-    /// Pragma-related issues
-    pub mod pragma;
-    /// Weak randomness vulnerabilities
-    pub mod randomness;
-    /// Reentrancy vulnerabilities
-    pub mod reentrancy;
-    /// Replay attack vulnerabilities
-    pub mod replay_attack;
-    /// Self-destruct related issues
-    pub mod self_destruct;
-    /// Short address attack vulnerabilities
-    pub mod short_address_attack;
-    /// Storage variable issues
-    pub mod storage_variables;
-    /// tx.origin usage vulnerabilities
-    pub mod tx_origin;
-    /// Unchecked return value issues
-    pub mod unchecked_return_value;
-    /// Unexpected ETH handling
-    pub mod unexpected_eth;
-    /// Zero-code contract issues
-    pub mod zero_code;
-}
-
-/// Protocol invariant analysis prompts
-pub mod invariant_prompts {
-    /// Arithmetic invariants
-    pub mod arithmetic;
-    /// Balance invariants
-    pub mod balance;
-    /// Permission invariants
-    pub mod permission;
-    /// Referential integrity invariants
-    pub mod referential;
-    /// State machine invariants
-    pub mod state_machine;
-    /// Temporal invariants
-    pub mod temporal;
-}
-
 #[cfg(test)]
 pub mod test_support {
     pub mod solidity_mocks;
@@ -261,10 +188,13 @@ pub mod utils {
     pub mod contract_name_check;
     /// Docker volume cleanup utilities
     pub mod delete_docker_volumes;
+    pub mod deserialize_bool;
+    pub mod display_file;
     pub mod env_security;
     /// LLM extraction with retry logic
     pub mod extract_retry;
     pub mod file_security;
+    pub mod finding_status_string;
     /// Function labeling utilities
     pub mod fn_labels;
     /// Function name extraction
@@ -272,6 +202,9 @@ pub mod utils {
     /// Logging utilities
     pub mod logging;
     pub mod parse_library_file;
+    pub mod read_file;
+    /// Solidity import remapping utilities
+    pub mod remapping;
     /// Text sanitization utilities
     pub mod sanitize;
     pub mod semantic_compare;

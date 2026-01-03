@@ -4,22 +4,37 @@ use ai_agent_audit::{
     cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
-    enumerator::codeblock_maker,
+    enumerator::{self, codeblocks},
     error::Result,
     llm_review::{
-        agent_factory::init_llm_clients,
-        code_review_v2,
-        context_state::{self},
+        agent::agent_factory::init_llm_clients,
+        analysis::{code_review_v2, context_state},
     },
     prepare_code::{self},
     reporting::{
         audit::{self},
-        contract_data, save_file,
+        competition_reports, contract_data, save_file,
     },
 };
-use clap::Parser;
 use dotenvy::dotenv;
-use log::info;
+use enumerator::interface_implementations;
+use log::{info, warn};
+use std::path::Path;
+
+/// Check if Slither analysis succeeded by querying the semantic database.
+///
+/// Returns `true` if Slither successfully populated function data, `false` otherwise.
+fn check_slither_succeeded(semantics_db: &Path, project_id: &str) -> Result<bool> {
+    use rusqlite::Connection;
+    let conn = Connection::open(semantics_db)?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM functions WHERE project_id = ?1",
+        [project_id],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
 /// The main entry point for the AI Agent Audit tool.
 ///
 /// This application performs comprehensive smart contract security audits by:
@@ -46,20 +61,25 @@ async fn main() -> Result<()> {
 
     // parse command line args
     // Cli struct contains all info we need to execute audit
-    let cli = parse::Cli::parse();
+    let cli = parse::Cli::parse_args()?;
 
     // Clone repository in Docker container and build with Foundry/Hardhat
     let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
-    info!("repo source folder => {:?}", &repo.source_code_folder);
-    info!("repo tests => {:?}", &repo.test_files);
+    info!("github url => {:?}", &repo.github_url);
+    info!("repo source folder => {:?}", &repo.source_code_folders);
     info!("repo scoped_files => {:?}", &repo.scoped_files);
-    info!("repo auidt scope => {:?}", &repo.audit_scope);
-    info!("repo scripts => {:?}", &repo.script_files);
-    info!("repo config files => {:?}", &repo.config_files);
+    info!("repo audit scope => {:?}", &repo.audit_scope);
+    info!("repo test files count => {:?}", &repo.test_files.len());
+    info!("repo scripts count => {:?}", &repo.script_files.len());
+    info!("repo scripts files => {:#?}", &repo.script_files);
+    info!("repo lib config files  => {:#?}", &repo.lib_config_files);
+    info!("repo config files => {:#?}", &repo.config_files);
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
+    info!("test folder => {:?}", &repo.poc.test_folder);
+    info!("test folder exist? => {:?}", &repo.poc.test_folder.exists());
 
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
@@ -70,14 +90,30 @@ async fn main() -> Result<()> {
 
     // Generate and cache protocol metadata context for AI analysis
     info!("generating metadata context...");
-    context_state::generate_and_save_metadata_context(&repo, &semantics_db).await?;
+    context_state::generate_and_save_metadata_context(&repo).await?;
+
+    // ────────────────────────────────
+    // 2.5. Build Inheritance Map (Custom Solidity Parsing)
+    // ────────────────────────────────
+    // Parse all Solidity files to build inheritance map (child → parents)
+    // This populates the INHERITANCE_MAP which is needed for interface implementation detection
+    info!("building inheritance map from Solidity source...");
+    let _ = enumerator::utils::contracts_in_source_folder(&repo).await?;
+    info!("inheritance map built successfully");
+
+    // Build interface implementation index (requires inheritance map to be populated)
+    info!("building interface implementation index...");
+    let _ = interface_implementations::build_and_get_interface_implementation_index(&repo).await?;
+
+    // save metadata
+    contract_data::save_metadata(&repo).await?;
 
     // ────────────────────────────────
     // 3. Code Slice Generation
     // ────────────────────────────────
     info!("generating codeblock for each contract in repo");
     // Create contextual code slices using call graph traversal
-    let codeblocks_db = codeblock_maker::generate_and_save_codeblocks_for_each_contract(
+    let codeblocks_db = codeblocks::generate_and_save_codeblocks_for_each_contract(
         &repo,
         &semantics_db,
         audit_config().max_depth,
@@ -86,22 +122,29 @@ async fn main() -> Result<()> {
     .await?;
     info!("Slices at {}", codeblocks_db.display());
 
+    // Save codeblocks locally (always runs regardless of Slither status)
+    contract_data::save_codeblocks_locally(&codeblocks_db, &repo).await?;
+
     // ────────────────────────────────
     // 4. Vector Database Population
     // ────────────────────────────────
-    // Create embeddings and store in Qdrant for semantic search
-    vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
-        .await?;
+    // Check if Slither succeeded by checking if semantic DB has function data
+    let slither_succeeded = check_slither_succeeded(&semantics_db, &repo.project_id)?;
 
-    // save contract IR and metadata
-    contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
-    contract_data::save_metadata(&repo).await?;
-    return Ok(());
+    if slither_succeeded {
+        // Create embeddings and store in Qdrant for semantic search
+        // This also saves contract IR and metadata via save_code_metadata_and_analysis_to_txt_files
+        vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo).await?;
+    } else {
+        warn!("⚠️  Slither analysis failed. Skipping vector database generation and IR metadata.");
+        warn!("The audit will continue using import-only traversal for code discovery.");
+    }
+
     // ────────────────────────────────
     // 5. AI Security Analysis
     // ────────────────────────────────
     // Run multi-LLM security analysis across vulnerability categories
-    let security_issues =
+    let security_findings =
         code_review_v2::review_codebase_for_security_issues_v2(&codeblocks_db, &repo).await?;
 
     // ────────────────────────────────
@@ -109,13 +152,14 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     // Generate comprehensive audit report (paid version)
     let audit_report =
-        audit::generated_audit_report(&security_issues, &repo, audit::ReportType::Pattern).await?;
+        audit::generated_audit_report(&security_findings, &repo, audit::ReportType::Status).await?;
 
     // ────────────────────────────────
-    // 7. File Export & Cleanup
+    // 7. File Export
     // ────────────────────────────────
     // Save all reports and analysis data to markdown files
-    save_file::save_audit_report(&audit_report, &repo)?;
+    save_file::save_audit_report("audit-report.md", &audit_report, &repo)?;
+    competition_reports::generate_and_save_pro_reports(&security_findings, &repo)?;
 
     // Display total inference cost across all LLM providers
     let total_cost = get_total_inference_cost().await;

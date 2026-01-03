@@ -1,9 +1,36 @@
 use core::fmt;
+use std::fs;
 
-use crate::config::audit_config;
+use crate::config::{AuditType, audit_config};
 use clap::{Parser, ValueEnum};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, ValueEnum)]
+/// Default audit type for serde deserialization
+fn default_audit_type() -> AuditType {
+    AuditType::Code4rena
+}
+
+/// Default code folders for serde deserialization
+fn default_code_folders() -> Vec<String> {
+    vec!["src".to_string()]
+}
+
+/// Default builder type for serde deserialization
+fn default_builder() -> BuilderType {
+    BuilderType::Auto
+}
+
+/// Default via_ir flag for serde deserialization
+fn default_via_ir() -> bool {
+    false
+}
+
+/// Default force_rebuild flag for serde deserialization
+fn default_force_rebuild() -> bool {
+    false
+}
+
+#[derive(Debug, Clone, ValueEnum, Deserialize, strum_macros::EnumString)]
 #[clap(rename_all = "kebab-case")]
 pub enum BuilderType {
     Foundry,
@@ -13,20 +40,25 @@ pub enum BuilderType {
     Auto,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug, Deserialize)]
 #[command(author, version, about)]
 pub struct Cli {
-    /// git repo for security audit
+    /// Path to config file (optional)
+    #[arg(long)]
+    config: Option<String>,
+
+    /// git repo for security audit (optional if provided in config file)
     #[arg(value_parser = validate_repo_url)]
-    pub repo: String,
+    pub repo: Option<String>,
 
     /// Optional subfolder pointing to project root (if not root folder of git clone)
     #[arg(long)]
     pub subfolder: Option<String>,
 
     /// Optional folders pointing to where main source is located (if not src/), defaults to src
-    #[arg(long, default_value = "src")]
-    pub code_folder: String,
+    #[arg(long, default_value = "src", value_delimiter = ',')]
+    #[serde(default = "default_code_folders")]
+    pub code_folders: Vec<String>,
 
     /// Optional audit scope doc (markdown file please), should be in current directory
     #[arg(long)]
@@ -35,6 +67,11 @@ pub struct Cli {
     /// Optional doc folders, specify where to find documention if not in src/*.md
     #[arg(long)]
     pub doc_folder: Option<String>,
+
+    /// Optional add if monorepo, text file that contains all folder of monorepo packages (list of
+    /// files)
+    #[arg(long)]
+    pub monorepo_folders: Option<String>,
 
     /// Optional custom doc to replace docs (md file) in /src folder, *should be md filename in current directory*
     #[arg(long)]
@@ -49,12 +86,31 @@ pub struct Cli {
     #[arg(long)]
     pub scoped_files: Option<String>,
 
+    /// Optional instructions for writing PoC plus command to run PoC
+    #[arg(long)]
+    pub poc_instructions: Option<String>,
+
+    /// Optional provide poc template (and inherited contracts)  for creating PoC tests
+    #[arg(long)]
+    pub poc_template: Option<String>,
+
+    /// Optional provide test folder where poc template should be saved (relative path)
+    #[arg(long)]
+    pub test_folder: Option<String>,
+
+    /// Audit type (Code4rena, Sherlock, Cantina, Client)
+    #[arg(long, default_value_t = AuditType::Code4rena)]
+    #[serde(default = "default_audit_type")]
+    pub audit_type: AuditType,
+
     /// Builder type (foundry, hardhat, custom, auto)
     #[arg(long, default_value_t = BuilderType::Auto)]
+    #[serde(default = "default_builder")]
     pub builder: BuilderType,
 
     /// if want to use --via-ir flag with foundry
     #[arg(long, help = "Use forge --via-ir")]
+    #[serde(default = "default_via_ir")]
     pub via_ir: bool,
 
     /// Force re-clone and rebuild even if a cached workspace exists
@@ -62,6 +118,7 @@ pub struct Cli {
         long,
         help = "Force re-clone and rebuild even if a cached workspace exists"
     )]
+    #[serde(default = "default_force_rebuild")]
     pub force_rebuild: bool,
 
     /// Custom build command for `custom` builder
@@ -85,6 +142,84 @@ fn validate_repo_url(s: &str) -> std::result::Result<String, String> {
 }
 
 impl Cli {
+    pub fn parse_args() -> anyhow::Result<Self> {
+        let cli = Cli::parse();
+
+        // Load yaml if present (--config config.yaml)
+        let mut config_cli = cli.clone();
+
+        if let Some(config_yaml) = &cli.config {
+            let yaml_str = fs::read_to_string(config_yaml)?;
+            let config_values: Cli = serde_yaml::from_str(&yaml_str)?;
+
+            // Merge: CLI args override YAML values (except repo which comes from YAML if not provided)
+            if cli.repo.is_none() && config_values.repo.is_some() {
+                // Use repo from YAML
+                config_cli.repo = config_values.repo.clone();
+            }
+
+            // Override other fields from YAML if they were specified
+            if config_values.subfolder.is_some() {
+                config_cli.subfolder = config_values.subfolder;
+            }
+            if !config_values.code_folders.is_empty() && config_values.code_folders != vec!["src"] {
+                config_cli.code_folders = config_values.code_folders;
+            }
+            if config_values.audit_scope.is_some() {
+                config_cli.audit_scope = config_values.audit_scope;
+            }
+            if config_values.doc_folder.is_some() {
+                config_cli.doc_folder = config_values.doc_folder;
+            }
+            if config_values.monorepo_folders.is_some() {
+                config_cli.monorepo_folders = config_values.monorepo_folders;
+            }
+            if config_values.custom_doc.is_some() {
+                config_cli.custom_doc = config_values.custom_doc;
+            }
+            if config_values.exclude_folders.is_some() {
+                config_cli.exclude_folders = config_values.exclude_folders;
+            }
+            if config_values.scoped_files.is_some() {
+                config_cli.scoped_files = config_values.scoped_files;
+            }
+            if config_values.poc_instructions.is_some() {
+                config_cli.poc_instructions = config_values.poc_instructions;
+            }
+            if config_values.poc_template.is_some() {
+                config_cli.poc_template = config_values.poc_template;
+            }
+            if config_values.test_folder.is_some() {
+                config_cli.test_folder = config_values.test_folder;
+            }
+            if config_values.build_cmd.is_some() {
+                config_cli.build_cmd = config_values.build_cmd;
+            }
+
+            // Always use YAML values for these fields if present
+            config_cli.audit_type = config_values.audit_type;
+            config_cli.builder = config_values.builder;
+            config_cli.via_ir = config_values.via_ir;
+            config_cli.force_rebuild = config_values.force_rebuild;
+        }
+
+        // Validate that repo is provided either via CLI or YAML
+        if config_cli.repo.is_none() {
+            anyhow::bail!(
+                "Repository URL must be provided either via CLI argument or in config file"
+            );
+        }
+
+        Ok(config_cli)
+    }
+
+    /// Get the repository URL (guaranteed to be Some after parse_args validation)
+    pub fn get_repo(&self) -> &str {
+        self.repo
+            .as_ref()
+            .expect("repo should be validated in parse_args")
+    }
+
     pub fn generate_build_command(&self) -> String {
         let base_forge = "forge install && forge build --build-info --skip test --skip script";
 

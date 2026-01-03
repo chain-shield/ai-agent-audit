@@ -1,0 +1,56 @@
+# AI Agent Audit Configuration for IndexFun Order Book Contest
+# Git repository URL
+repo: "https://github.com/code-423n4/2025-11-ekubo.git"
+
+# Project is in a subfolder
+# subfolder: "orderbook-solidity"
+
+# Custom documentation file (should be in current directory)
+custom_doc: "audit-docs/ekubo-docs.md"
+
+# Scoped files list (should be in current directory)
+scoped_files: "audit-docs/ekubo-scope.txt"
+
+# Audit scope documentation (should be in current directory)
+audit_scope: "audit-docs/ekubo-scope.md"
+
+# Source code folders (required field with default)
+# code_folders:
+#   - "contracts"
+
+# Audit Type (Code4rena, Sherlock, etc)
+audit_type: "Code4rena" 
+
+# Builder configuration (use PascalCase for enum values)
+builder: "Custom"
+build_cmd: "mkdir -p ~/.svm/0.8.31 && \
+  curl -L -o ~/.svm/0.8.31/solc-0.8.31 \
+    https://github.com/argotorg/solidity/releases/download/v0.8.31-pre.1/solc-static-linux && \
+  chmod +x ~/.svm/0.8.31/solc-0.8.31 && \
+  FOUNDRY_PROFILE=ci forge build --build-info"
+
+# Boolean flags (required fields with defaults)
+# via_ir: false
+# force_rebuild: false
+
+# Optional: Source code folders (defaults to "src")
+# code_folders:
+#   - "src"
+#   - "contracts"
+
+# Optional: Exclude folders from analysis
+# exclude_folders:
+#   - "test"
+#   - "script"
+
+# Optional: PoC configuration
+poc_instructions: "audit-docs/covenant-test.md"
+poc_template: "audit-docs/covenant-poc-template.t.sol"
+test_folder: "test"
+
+# Optional: Foundry via-ir flag
+# via_ir: false
+
+# Optional: Force rebuild even if cached
+# force_rebuild: false
+
