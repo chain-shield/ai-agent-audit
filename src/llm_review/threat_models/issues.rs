@@ -18,6 +18,7 @@ use crate::{
         findings::findings::{Finding, Findings},
         phases::{rounds::all_rounds::AllRoundLegitAnalysis, verify_rounds::FindingAnalysis},
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
+        threat_models::actors::Actors,
         utils::prompt_context::{self, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
@@ -38,7 +39,13 @@ use crate::llm_review::threat_models::{
 
 pub enum IssuePrompt {
     Invariant(Vec<InvariantType>),
-    Combined((Vec<PatternCategory>, Option<String>, Option<String>)),
+    Combined(
+        (
+            Vec<PatternCategory>,
+            Option<Actors>,
+            Option<ContractInvariants>,
+        ),
+    ),
 }
 
 #[async_trait]

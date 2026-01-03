@@ -19,7 +19,7 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 
 pub async fn generate_actors(codeblock: &str, repo: &RepoPaths) -> Result<Actors> {
-    let actor_discovery_agent = generate_openai_agent(repo)?;
+    let actor_discovery_agent = generate_openai_agent(repo, "high")?;
 
     // Phase 1: Generate actors and their capabilities
     log::info!("PRE AUDIT PHASE: GENERATE ACTORS");
@@ -35,8 +35,8 @@ pub async fn generate_actors(codeblock: &str, repo: &RepoPaths) -> Result<Actors
 pub async fn generate_invariants(codeblock: &str, repo: &RepoPaths) -> Result<ContractInvariants> {
     let invariant_prompt = IssuePrompt::Invariant(InvariantType::iter().collect());
 
-    let invariant_discovery_agent = generate_gemini_agent(repo)?;
-    let invariant_verify_agent = generate_openai_agent(repo)?;
+    let invariant_discovery_agent = generate_openai_agent(repo, "medium")?;
+    let invariant_verify_agent = generate_openai_agent(repo, "high")?;
 
     // Phase 1: Generate actors and their capabilities
     log::info!("PRE AUDIT PHASE: DISCOVER INVARIANTS");
@@ -89,13 +89,13 @@ pub async fn generate_invariants(codeblock: &str, repo: &RepoPaths) -> Result<Co
     Ok(verified_invariants)
 }
 
-pub fn generate_openai_agent(repo: &RepoPaths) -> Result<Arc<AIAgent>> {
+pub fn generate_openai_agent(repo: &RepoPaths, reasoning_effort: &str) -> Result<Arc<AIAgent>> {
     // custom agent for digging up list of actors
     let config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5.2")
         .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
         .with_file_retrieval(false)
-        .with_openai_reasoning_effort("high");
+        .with_openai_reasoning_effort(reasoning_effort);
 
     let agent = Arc::new(AgentFactory::create_openai_agent(&config)?);
 
