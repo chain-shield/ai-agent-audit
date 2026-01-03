@@ -5,6 +5,7 @@ use crate::llm_review::{
         INVARIANT_LIBRARY,
     },
 };
+use rand::seq::SliceRandom;
 
 pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
     let invariant_categories = generate_formated_list_from_invariant_data(inv);
@@ -296,10 +297,15 @@ pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantTy
     top_invariant_list
 }
 
-pub fn generate_full_list_of_invariant_findings(invariants: &ContractInvariants) -> String {
+pub fn generate_full_list_of_invariant_findings(co_invariants: &ContractInvariants) -> String {
     let mut invariant_findings = String::new();
 
-    for invariant in &invariants.invariants {
+    // Randomize the order of invariant
+    let mut invariants = co_invariants.invariants.clone();
+    let mut rng = rand::rng();
+    invariants.shuffle(&mut rng);
+
+    for invariant in &invariants {
         let finding = generate_formatted_invariant_finding(invariant);
         invariant_findings.push_str(&finding);
     }
