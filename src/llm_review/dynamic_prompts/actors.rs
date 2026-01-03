@@ -2,6 +2,7 @@ use crate::llm_review::{
     agent::agent_enums::{all_enum_variants, generate_enum_list},
     threat_models::actors::{Actor, RoleType},
 };
+use rand::seq::SliceRandom;
 
 pub fn generate_actors_prompt() -> String {
     let role_types = generate_enum_list(&all_enum_variants::<RoleType>());
@@ -226,8 +227,13 @@ pub fn get_verify_actor_abuse_json() -> String {
     )
 }
 
-pub fn generate_formated_list_from_actor_data(actors: &[Actor]) -> String {
+pub fn generate_formated_list_from_actor_data(actors_slice: &[Actor]) -> String {
     let mut actor_list = String::new();
+
+    let mut actors = actors_slice.to_vec();
+    // Randomize the order of patterns
+    let mut rng = rand::rng();
+    actors.shuffle(&mut rng);
 
     for actor in actors {
         actor_list.push_str("\n\n");

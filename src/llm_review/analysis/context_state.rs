@@ -17,7 +17,7 @@ use crate::{
     cost::cost_data::get_token_count,
     llm_review::{
         analysis::pre_audit_analysis,
-        dynamic_prompts::{actors, invariants},
+        threat_models::{actors::Actors, invariants::ContractInvariants},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -50,17 +50,17 @@ use crate::{
 pub struct MultiModalContext {
     /// Formatted list of actors and their capabilities relevant to the contract.
     ///
-    /// This string contains a human-readable description of potential bad actors
+    /// This  contains a human-readable description of potential bad actors
     /// (e.g., malicious users, MEV bots, compromised admins) and their capabilities
     /// within the protocol context.
-    pub actors: String,
+    pub actors: Actors,
 
     /// Formatted list of verified invariants for the contract.
     ///
-    /// This string contains verified protocol invariants with their predicates,
+    /// This  contains verified protocol invariants with their predicates,
     /// pre/post states, and relevant code locations. These invariants are used
     /// to guide vulnerability detection and verification.
-    pub invariants: String,
+    pub invariants: ContractInvariants,
 }
 
 /// Global metadata context shared across all AI agents
@@ -251,24 +251,18 @@ pub async fn generate_multi_modal_context(
     // Release lock before expensive operation
     drop(multimodal_cache);
 
-    let actors_capabilities = if !SKIP_ACTOR_PATTERN_RUNS {
-        let actors = pre_audit_analysis::generate_actors(codeblock, repo).await?;
-        actors::generate_formated_list_from_actor_data(&actors.actors)
+    let actors = if !SKIP_ACTOR_PATTERN_RUNS {
+        pre_audit_analysis::generate_actors(codeblock, repo).await?
     } else {
-        String::new()
+        Actors::default()
+    };
+    let invariants = if !SKIP_INVARIANT_RUNS {
+        pre_audit_analysis::generate_invariants(codeblock, repo).await?
+    } else {
+        ContractInvariants::default()
     };
 
-    let invariant_list = if !SKIP_INVARIANT_RUNS {
-        let invariants = pre_audit_analysis::generate_invariants(codeblock, repo).await?;
-        invariants::generate_full_list_of_invariant_findings(&invariants)
-    } else {
-        String::new()
-    };
-
-    let multimodal_context = MultiModalContext {
-        actors: actors_capabilities,
-        invariants: invariant_list,
-    };
+    let multimodal_context = MultiModalContext { actors, invariants };
 
     // CACHE RESULT
     let mut multimodal_cache = multimodal.lock().await;
