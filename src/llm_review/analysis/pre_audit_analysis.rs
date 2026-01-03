@@ -35,8 +35,8 @@ pub async fn generate_actors(codeblock: &str, repo: &RepoPaths) -> Result<Actors
 pub async fn generate_invariants(codeblock: &str, repo: &RepoPaths) -> Result<ContractInvariants> {
     let invariant_prompt = IssuePrompt::Invariant(InvariantType::iter().collect());
 
-    let invariant_discovery_agent = generate_openai_agent(repo)?;
-    let invariant_verify_agent = generate_gemini_agent(repo)?;
+    let invariant_discovery_agent = generate_gemini_agent(repo)?;
+    let invariant_verify_agent = generate_openai_agent(repo)?;
 
     // Phase 1: Generate actors and their capabilities
     log::info!("PRE AUDIT PHASE: DISCOVER INVARIANTS");
