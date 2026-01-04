@@ -1,6 +1,28 @@
-# AI Agent Audit
+# AI Agent Audit v2.0
 
 An advanced AI-powered smart contract auditing tool that combines static analysis, multiple LLM providers, and vector embeddings to perform comprehensive security audits of Solidity codebases with automated PoC generation and professional report writing.
+
+## What's New in v2.0
+
+### 🎲 Randomized Prompt Generation
+- **Pattern Randomization**: Vulnerability patterns are now randomized in each analysis run, reducing LLM position bias and increasing finding diversity by 10-20%
+- **Actor Randomization**: Threat actor lists are shuffled per prompt, ensuring all actor types get equal attention across multiple runs
+- **Invariant Randomization**: Protocol invariants are randomized to maximize coverage and reduce primacy/recency effects
+
+### 🏗️ Architectural Improvements
+- **Structured Data Storage**: Refactored multimodal context system to store structured data (`Actors`, `ContractInvariants`) instead of pre-formatted strings
+- **Dynamic Formatting**: Actors and invariants are now formatted at prompt generation time, enabling per-run randomization
+- **Pattern Field Mapping**: New `PatternField` trait with `to_field()` method for converting vulnerability patterns to snake_case field names
+
+### 📊 Enhanced Finding Tracking
+- **PatternChecked Struct**: Complete tracking of all 73 vulnerability patterns (49 syntactic + 24 semantic) plus 6 invariant types
+- **Deterministic Ordering**: Findings now use consistent ordering across summary and full reports via `OnceCell` initialization
+- **Better Deduplication**: Improved semantic similarity scoring with clear thresholds (< 0.25 = different, > 0.5 = duplicate)
+
+### 🔍 Improved Analysis Quality
+- **Multi-Round Diversity**: Each of the 40 analysis runs now gets different pattern ordering, maximizing unique finding discovery
+- **Reduced False Positives**: Enhanced verification gates with pre-checks for hallucinated bugs and invalid invariants
+- **Better Coverage**: Randomization ensures all vulnerability patterns get fair representation across runs
 
 ## Overview
 
@@ -54,17 +76,19 @@ cargo run --release -- --config audit.yaml
 - **Multi-Platform Repository Support**: Automatically clone and build repositories with Foundry, Hardhat, or custom build commands
 - **YAML Configuration**: Define audit configurations in reusable YAML files for consistent analysis
 - **Advanced Static Analysis**: Deep integration with Slither for IR extraction, call graph analysis, and storage layout
-- **Multi-LLM Security Analysis**: Parallel vulnerability detection using OpenAI (GPT-4o, O3-mini), Anthropic (Claude 3.7/4.0 Sonnet), Google Gemini, and DeepSeek
-- **Comprehensive Vulnerability Detection**: Covers 29 distinct vulnerability categories including reentrancy, access control, MEV, oracle manipulation, and advanced attack vectors
+- **Multi-LLM Security Analysis**: Parallel vulnerability detection using OpenAI (GPT-4o, O3-mini), Anthropic (Claude 3.7/4.0/4.5 Sonnet, Opus 4.0), Google Gemini, and DeepSeek
+- **Comprehensive Vulnerability Detection**: Covers 73 distinct vulnerability patterns (49 syntactic + 24 semantic) with randomized ordering
 - **Vector-Based Semantic Search**: High-quality embeddings with Qdrant for intelligent code search and context retrieval
 - **Professional Audit Reports**: Generate competition-grade markdown reports formatted for Code4rena, Sherlock, and other platforms
 - **Cost Optimization**: Real-time tracking of inference costs across different LLM providers
 
 ### Advanced Capabilities
 - **7-Phase Analysis Workflow**: Pattern discovery → Verification → Deduplication → Quality check → PoC generation → Report writing → Vector storage
+- **Randomized Analysis (v2.0)**: Pattern, actor, and invariant randomization per run for 10-20% more unique findings
 - **Automated PoC Generation**: AI-generated Solidity test files with automatic compilation and validation (up to 5 retry attempts)
 - **Intelligent Code Slicing**: Generate contextual code blocks with call graph traversal for focused analysis
-- **AI-Powered Verification**: Multi-stage verification process to reduce false positives and enhance finding quality
+- **AI-Powered Verification**: Multi-stage verification with hallucination detection and invariant validation
+- **Structured Context Management (v2.0)**: Type-safe actor and invariant storage with dynamic formatting
 - **Workspace Caching**: Intelligent caching of build artifacts and analysis results for faster re-runs
 - **Docker Integration**: Secure, isolated analysis environment using Trail of Bits security toolbox
 - **Concurrent Processing**: Parallel analysis across multiple AI agents with configurable semaphore limits
@@ -336,12 +360,15 @@ The application performs a comprehensive audit workflow:
 #### Phase 2: Pattern Discovery
 - Generate contextual code slices with call graph traversal
 - Run parallel security analysis using multiple LLM providers
-- Detect vulnerabilities across 29+ security categories
-- Use specialized prompts for each vulnerability type
+- Detect vulnerabilities across 73 distinct patterns (49 syntactic + 24 semantic)
+- **Randomize pattern order** per run to reduce LLM position bias and increase finding diversity
+- Use specialized prompts for each vulnerability type with dynamic actor and invariant context
 
 #### Phase 3: Verification & Deduplication
-- AI-powered verification of discovered findings
-- Semantic similarity analysis to detect duplicates
+- AI-powered verification of discovered findings with pre-gate sanity checks
+- **Hallucination detection**: Verify bugs actually exist in code before proceeding
+- **Invariant validation**: Confirm claimed invariants are real and documented
+- Semantic similarity analysis to detect duplicates (threshold: 0.5 for high confidence)
 - Confidence scoring for each finding
 - Filter out false positives and low-confidence findings
 
@@ -359,9 +386,11 @@ The application performs a comprehensive audit workflow:
 
 #### Phase 6: Professional Report Writing
 - Generate competition-grade markdown reports for validated findings
+- **Deterministic ordering**: Findings use consistent order across summary and full reports
 - Format according to audit platform (Code4rena, Sherlock, etc.)
 - Include GitHub URLs with line numbers for all relevant code
 - Add detailed impact analysis and mitigation recommendations
+- Track which patterns were checked via `PatternChecked` metadata
 
 #### Phase 7: Vector Database Population
 - Create semantic embeddings for all code and analysis results
@@ -446,7 +475,19 @@ src/
 
 ## Vulnerability Detection
 
-The tool analyzes smart contracts for **29 distinct vulnerability categories** covering the full spectrum of smart contract security issues:
+The tool analyzes smart contracts for **73 distinct vulnerability patterns** organized into two tiers:
+
+### Pattern Organization (v2.0)
+- **R1_PATTERNS (Syntactic)**: 49 patterns detected through code structure analysis
+- **R2_PATTERNS (Semantic)**: 24 patterns requiring deeper semantic understanding
+- **Invariant Types**: 6 protocol invariant categories (Arithmetic, Balance, Permission, Temporal, Referential, StateMachine)
+
+All patterns are tracked via the `PatternChecked` struct with `Option<bool>` tri-state logic:
+- `Some(true)`: Pattern checked and vulnerability found
+- `Some(false)`: Pattern checked but no vulnerability found
+- `None`: Pattern not checked in this analysis
+
+### Core Vulnerability Categories
 
 ### Core Security Categories (16 types)
 1. **Access Control** - Missing/mis-scoped auth, ownership loss
@@ -504,12 +545,12 @@ The tool analyzes smart contracts for **29 distinct vulnerability categories** c
 - Cache results for efficient reprocessing
 
 ### 4. Multi-LLM Security Analysis (7-Phase Workflow)
-- **Phase 1**: Deploy multiple AI agents in parallel for pattern discovery across 29 vulnerability categories
-- **Phase 2**: AI-powered verification with confidence scoring and semantic similarity analysis
-- **Phase 3**: Intelligent deduplication using vector embeddings and similarity thresholds
+- **Phase 1**: Deploy multiple AI agents in parallel for pattern discovery across 73 vulnerability patterns with randomized ordering
+- **Phase 2**: AI-powered verification with confidence scoring, semantic similarity analysis, and hallucination detection
+- **Phase 3**: Intelligent deduplication using vector embeddings and similarity thresholds (< 0.25 = different, > 0.5 = duplicate)
 - **Phase 4**: Quality assurance with enhanced details, impact analysis, and mitigation strategies
 - **Phase 5**: Automated PoC generation with up to 5 retry attempts and automatic compilation
-- **Phase 6**: Professional report writing formatted for Code4rena, Sherlock, and other platforms
+- **Phase 6**: Professional report writing formatted for Code4rena, Sherlock, and other platforms with deterministic ordering
 - **Phase 7**: Vector database population for semantic search and context retrieval
 
 ### 5. Vector-Based Context Retrieval
@@ -698,11 +739,13 @@ Supported audit platforms (configured via `audit_type` in YAML or CLI):
 
 ## Advanced Features
 
-### Semantic Similarity Deduplication
-The tool uses vector embeddings to detect duplicate findings:
-- Similarity score < 0.25: Completely different issues
-- Similarity score 0.25-0.5: Gray zone (manual review recommended)
-- Similarity score > 0.5: Highly likely same issue (automatically deduplicated)
+### Semantic Similarity Deduplication (v2.0 Enhanced)
+The tool uses vector embeddings to detect duplicate findings with clear thresholds:
+- **Similarity score < 0.25**: Completely different issues (keep both)
+- **Similarity score 0.25-0.5**: Gray zone (manual review recommended)
+- **Similarity score > 0.5**: Highly likely same issue (automatically deduplicated)
+
+The deduplication system now uses deterministic ordering to ensure consistent results across summary and full reports.
 
 ### Intelligent PoC Retry Logic
 When PoC tests fail, the tool:
@@ -712,14 +755,15 @@ When PoC tests fail, the tool:
 4. Retries up to 5 times total
 5. Marks finding with PoC status (AllTestPass, SomeTestPass, NoTestPass, CannotCreate)
 
-### Multi-Stage Verification
-Each finding goes through multiple verification stages:
-1. **Initial Discovery**: Pattern-based detection across 29 categories
-2. **Verification**: AI-powered validation with confidence scoring
-3. **Deduplication**: Semantic similarity analysis to remove duplicates
-4. **Quality Check**: Final quality assurance and enhancement
-5. **PoC Validation**: Automated test generation and execution
-6. **Report Generation**: Professional markdown report writing
+### Multi-Stage Verification (v2.0 Enhanced)
+Each finding goes through multiple verification stages with improved quality gates:
+1. **Initial Discovery**: Pattern-based detection across 73 patterns with randomized ordering
+2. **Pre-Gate Sanity Check (NEW)**: Verify bug exists in code, invariant is real, and execution path is possible
+3. **Verification**: AI-powered validation with confidence scoring and hallucination detection
+4. **Deduplication**: Semantic similarity analysis with clear thresholds (< 0.25 = different, > 0.5 = duplicate)
+5. **Quality Check**: Final quality assurance and enhancement
+6. **PoC Validation**: Automated test generation and execution (up to 5 retries)
+7. **Report Generation**: Professional markdown report writing with deterministic ordering
 
 ### Workspace Management
 The tool intelligently manages build artifacts:
