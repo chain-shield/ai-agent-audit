@@ -527,6 +527,162 @@ impl EnumData for VulnerabilityPattern {
     }
 }
 
+impl VulnerabilityPattern {
+    pub fn to_pretty_str(&self) -> String {
+        match self {
+            // Access, Auth & Governance
+            VulnerabilityPattern::AccessControlOrAuthByPass => "Access Control or Auth Bypass",
+            VulnerabilityPattern::GovernanceDelegationFlaw => "Governance Delegation Flaw",
+            VulnerabilityPattern::DoubleExecutionOrReplay => "Double Execution or Replay",
+            VulnerabilityPattern::PermitOrSignatureReplay => "Permit or Signature Replay",
+            VulnerabilityPattern::EIP1271ByPass => "EIP-1271 Bypass",
+            VulnerabilityPattern::ConfigFootgun => "Config Footgun",
+
+            // Call Order, Reentrancy, External calls
+            VulnerabilityPattern::CEIViolation => "CEI Violation",
+            VulnerabilityPattern::Reentrancy => "Reentrancy",
+            VulnerabilityPattern::ReadOnlyReentrancy => "Read-Only Reentrancy",
+            VulnerabilityPattern::ExternalCallAfterStateChange => {
+                "External Call After State Change"
+            }
+
+            // Economic, Market, & Oracle
+            VulnerabilityPattern::SlippageMissingOrInsufficient => {
+                "Slippage Missing or Insufficient"
+            }
+            VulnerabilityPattern::OracleUsingDEXorTWAP => "Oracle Using DEX or TWAP",
+            VulnerabilityPattern::FlashLoanEconomicManipulation => {
+                "Flash Loan Economic Manipulation"
+            }
+            VulnerabilityPattern::FeeOnTransferAssumption => "Fee-on-Transfer Assumption",
+            VulnerabilityPattern::ReserveOrPriceDesync => "Reserve or Price Desync",
+
+            // Accounting & Invariants
+            VulnerabilityPattern::AccountingInvariantViolation => "Accounting Invariant Violation",
+            VulnerabilityPattern::UnsafeRecipient => "Unsafe Recipient",
+            VulnerabilityPattern::PrecisionDriftAccumulation => "Precision Drift Accumulation",
+            VulnerabilityPattern::PricePrecisionOrRoundingError => {
+                "Price Precision or Rounding Error"
+            }
+
+            // Token Standard & Allowance
+            VulnerabilityPattern::StandardViolation => "Standard Violation",
+            VulnerabilityPattern::AllowanceRace => "Allowance Race",
+            VulnerabilityPattern::PermitMisuse => "Permit Misuse",
+
+            // Upgradeability, Proxies, & Init
+            VulnerabilityPattern::UpgradeAuthBypass => "Upgrade Auth Bypass",
+            VulnerabilityPattern::InitOrderOrUnintialized => "Init Order or Uninitialized",
+            VulnerabilityPattern::StorageCollisionOrSelectorClash => {
+                "Storage Collision or Selector Clash"
+            }
+            VulnerabilityPattern::SelfdestructOrMetamorphicFootguns => {
+                "Selfdestruct or Metamorphic Footguns"
+            }
+
+            // Lifecycle & State Machines
+            VulnerabilityPattern::MaturityorGatingByPass => "Maturity or Gating Bypass",
+            VulnerabilityPattern::EpochOrIndexMonotonicity => "Epoch or Index Monotonicity",
+
+            // DoS, Gas, and Complexity
+            VulnerabilityPattern::UnboundedLoops => "Unbounded Loops",
+            VulnerabilityPattern::GriefableCallbacks => "Griefable Callbacks",
+            VulnerabilityPattern::StateGrowthOrStorageBloat => "State Growth or Storage Bloat",
+
+            // Randomness, Time, & Chain Assumptions
+            VulnerabilityPattern::TimestampOrBlockManipulation => "Timestamp or Block Manipulation",
+            VulnerabilityPattern::BlockVarsAsPrimaryRandomnessSource => {
+                "Block Vars as Primary Randomness Source"
+            }
+            VulnerabilityPattern::InsecureOnChainPrngWithoutCommitReveal => {
+                "Insecure On-Chain PRNG Without Commit-Reveal"
+            }
+            VulnerabilityPattern::BlockhashOrPRNGWeakness => "Blockhash or PRNG Weakness",
+            VulnerabilityPattern::ChainIdorDomainDrift => "Chain ID or Domain Drift",
+
+            // Cross-Chain & Bridging
+            VulnerabilityPattern::CrossChainMessageSpoofing => "Cross-Chain Message Spoofing",
+            VulnerabilityPattern::FinalityOrReplayAcrossDomains => {
+                "Finality or Replay Across Domains"
+            }
+
+            // EVM/Assembly & Low-Level
+            VulnerabilityPattern::UncheckedLowLevelCallResults => {
+                "Unchecked Low-Level Call Results"
+            }
+            VulnerabilityPattern::UnsafeAssembyTypeCasts => "Unsafe Assembly Type Casts",
+            VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath => {
+                "Divide by Zero or Overflow in Custom Math"
+            }
+
+            // ETH/WETH & Payment Flows
+            VulnerabilityPattern::EthVsWethConfusion => "ETH vs WETH Confusion",
+            VulnerabilityPattern::PullorPushPaymentbugs => "Pull or Push Payment Bugs",
+
+            // Token Standard Extensions
+            VulnerabilityPattern::NonStandardERC20Behavior => "Non-Standard ERC20 Behavior",
+            VulnerabilityPattern::ERC20DecimalsMismatch => "ERC20 Decimals Mismatch",
+            VulnerabilityPattern::ERC777HookReentrancy => "ERC777 Hook Reentrancy",
+            VulnerabilityPattern::StaleOracleAcceptance => "Stale Oracle Acceptance",
+            VulnerabilityPattern::SandwichableOracle => "Sandwichable Oracle",
+            VulnerabilityPattern::PermitFrontRun => "Permit Front-Run",
+            VulnerabilityPattern::UnprotectedPauseOrStop => "Unprotected Pause or Stop",
+            VulnerabilityPattern::UntrustedDelegateCall => "Untrusted Delegate Call",
+            VulnerabilityPattern::ReplayAcrossForksOrL2s => "Replay Across Forks or L2s",
+            VulnerabilityPattern::ERC4626SharePriceMismatch => "ERC4626 Share Price Mismatch",
+            VulnerabilityPattern::FeeAccountingDrift => "Fee Accounting Drift",
+
+            // NEW (10/20/2025)
+            VulnerabilityPattern::BeaconOrFactoryAuthorityDrift => {
+                "Beacon or Factory Authority Drift"
+            }
+            VulnerabilityPattern::TimelockEdgeCase => "Timelock Edge Case",
+            VulnerabilityPattern::MulticallCrossPathReentrancy => "Multicall Cross-Path Reentrancy",
+            VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity => {
+                "TWAP Window Pinning or Low Liquidity"
+            }
+            VulnerabilityPattern::ForcedAssetVsStrictEquality => "Forced Asset vs Strict Equality",
+
+            // NEW (12/16/2025) - Missing Megapot patterns
+            VulnerabilityPattern::ArbitraryExternalCall => "Arbitrary External Call",
+            VulnerabilityPattern::GlobalParamMidFlowManipulation => {
+                "Global Param Mid-Flow Manipulation"
+            }
+            VulnerabilityPattern::GovernanceFrontrunDoS => "Governance Front-Run DoS",
+            VulnerabilityPattern::ExternalProtocolKeyCollision => "External Protocol Key Collision",
+            VulnerabilityPattern::EmergencyModeStateStuck => "Emergency Mode State Stuck",
+
+            // Game theory & incentive misalignment
+            VulnerabilityPattern::UnincentivizedMaintenanceOrKeeperlessProgress => {
+                "Unincentivized Maintenance or Keeperless Progress"
+            }
+            VulnerabilityPattern::FirstOrLastMoverAdvantage => "First or Last Mover Advantage",
+            VulnerabilityPattern::CheapGriefingOrDosProfit => "Cheap Griefing or DoS Profit",
+            VulnerabilityPattern::QueueOrderDependentMevExtraction => {
+                "Queue Order Dependent MEV Extraction"
+            }
+            VulnerabilityPattern::FixedPotRewardRaceOrGasAuction => {
+                "Fixed Pot Reward Race or Gas Auction"
+            }
+            VulnerabilityPattern::RewardCheckpointFreeRiderOrLateJoiner => {
+                "Reward Checkpoint Free-Rider or Late Joiner"
+            }
+            VulnerabilityPattern::GovernanceCaptureOrTreasuryExtraction => {
+                "Governance Capture or Treasury Extraction"
+            }
+            VulnerabilityPattern::CrossRoleCollusionWithoutSlashing => {
+                "Cross-Role Collusion Without Slashing"
+            }
+
+            // Fallback catch-all
+            VulnerabilityPattern::IncentiveMisalignmentOrGameTheory => {
+                "Incentive Misalignment or Game Theory"
+            }
+        }
+        .to_string()
+    }
+}
+
 impl Serialize for VulnerabilityPatternSpec {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

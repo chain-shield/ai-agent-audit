@@ -9,19 +9,17 @@ use crate::{
         agent::agent_enums::AIAgent,
         analysis::context_state::{generate_audit_scope, get_metadata_context},
         dynamic_prompts::{
-            self,
             invariants::{generate_invariant_prompt, get_invariant_json},
+            prompt_index,
         },
-        threat_models::{
-            issues::{IssuePrompt, IssueStructTrait},
-            pattern_category::get_category_library_spec,
-        },
+        threat_models::issues::{IssuePrompt, IssueStructTrait},
     },
     prepare_code::git_clone::RepoPaths,
+    reporting::save_file,
 };
 use log::info;
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
 /// Executes the findings generation phase
@@ -54,18 +52,50 @@ where
         .expect("could not extract context");
 
     let audit_scope = generate_audit_scope(repo).await?;
+    let section_7_header = prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", 7);
+    let section_8_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 8);
+    let section_9_header = prompt_index::generated_section_header(
+        "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
+        9,
+    );
 
     let combined_context = if audit_scope.is_empty() {
-        context
+        format!(
+            r#"
+
+{section_8_header}
+
+{context}
+"#
+        )
     } else {
-        format!("{context}\n\n## AUDIT SCOPE AND KEY INVARIANTS\n\n{audit_scope}")
+        format!(
+            r#"
+
+{section_8_header}
+
+{context}
+
+{section_9_header}
+
+{audit_scope}
+"#
+        )
     };
 
     let codeblock = Arc::new(code.to_string());
 
     let added_content_from_brain = Arc::new(combined_context);
-    let code_plus_context =
-        generate_content_plus_context_block(&codeblock, &added_content_from_brain);
+    let code_plus_context = format!(
+        r#"
+
+{section_7_header}
+
+{codeblock}
+
+{added_content_from_brain}
+"#
+    );
 
     // Simple local closure to DRY out spawn logic without extra generics
     let mut spawn_run = |prompt: Arc<String>, run_index: usize| {
@@ -82,26 +112,8 @@ where
     };
 
     match issue_prompt {
-        IssuePrompt::Combined((pattern_category, _, _)) => {
-            for (i, category) in pattern_category.into_iter().enumerate() {
-                let category_spec =
-                    get_category_library_spec(&category).expect("could not extract category spec");
-
-                // construct promopt
-                let instruction_prompt =
-                    dynamic_prompts::patterns::generate_pattern_category_prompt(&category);
-                let json_requirement_prompt =
-                    dynamic_prompts::patterns::get_pattern_json_requirement(&category_spec.issues);
-                let prompt = Arc::new(format!(
-                    "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
-                ));
-
-                // info!("pattern prompt => {}", prompt);
-
-                for run in 0..category_spec.runs {
-                    spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
-                }
-            }
+        IssuePrompt::Combined((_, _, _)) => {
+            log::warn!("Scanning vulnerability patterns has been depreciated!")
         }
         IssuePrompt::Invariant(invariants) => {
             let inv_prompt = Arc::new(generate_invariant_prompt(&invariants));
@@ -109,6 +121,8 @@ where
             let prompt = Arc::new(format!(
                 "{inv_prompt}{code_plus_context}{json_requirement_prompt}"
             ));
+
+            save_file::save_file_locally(&prompt, &PathBuf::from("find_invariant_prompt.md"))?;
             // info!("invariant prompt => {}", prompt);
             for run in 0..INVARIANT_RUNS {
                 spawn_run(Arc::clone(&prompt), run + 1);
@@ -171,15 +185,19 @@ where
 /// Combines the contract code with additional context information
 /// in a structured format for optimal LLM processing.
 pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
-    let mut code_plus_context = String::new();
+    let section_8_header = prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", 8);
+    let section_9_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 9);
 
-    code_plus_context.push_str("\n\nSOLIDITY CONTRACT + STORAGE TO CODE REVIEW\n\n");
-    code_plus_context.push_str(codeblock);
+    format!(
+        r#"
 
-    code_plus_context
-        .push_str("\n\n ## ADDITIONAL CONTEXT TO ASSIST WITH SECURITY REVIEW OF ABOVE CODE \n\n");
-    code_plus_context.push_str(&added_context);
-    code_plus_context.push_str("\n\n");
+{section_8_header}
 
-    code_plus_context
+{codeblock}
+
+{section_9_header}
+
+{added_context}
+"#
+    )
 }

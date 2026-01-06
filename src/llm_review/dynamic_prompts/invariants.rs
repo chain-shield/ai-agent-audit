@@ -1,5 +1,6 @@
 use crate::llm_review::{
     agent::agent_enums::{all_enum_variants, generate_enum_list},
+    dynamic_prompts::prompt_index,
     threat_models::invariants::{
         ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
         INVARIANT_LIBRARY,
@@ -9,16 +10,25 @@ use rand::seq::SliceRandom;
 
 pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
     let invariant_categories = generate_formated_list_from_invariant_data(inv);
+    let toc = prompt_index::generate_invariant_discovery_toc();
+    let section_1_header = prompt_index::generated_section_header("CORE INSTRUCTIONS", 1);
+    let section_1_1_header = prompt_index::generated_sub_header("YOUR GOALS", 1, 1);
+    let section_1_2_header = prompt_index::generated_sub_header("SOURCES OF TRUTH", 1, 2);
+    let section_1_3_header =
+        prompt_index::generated_sub_header("INVARIANT TYPES TO FOCUS ON", 1, 3);
+    let section_1_4_header = prompt_index::generated_sub_header("HOW TO THINK", 1, 4);
 
     format!(
         r#"
+{toc}
+
+{section_1_header}
+
 You are a senior smart-contract security auditor. In this phase, your job is to **propose and evaluate high-value, machine-checkable invariants** for the target contract and its role in the wider protocol.
 
 You are not writing tests; you are designing the properties those tests would enforce, and checking whether the current implementation appears to uphold them.
 
----
-
-## Your goals
+{section_1_1_header}
 
 1. Propose **3–7 strong invariants** that:
    - Capture critical safety, correctness, accounting, or authorization properties of the system.
@@ -30,9 +40,7 @@ You are not writing tests; you are designing the properties those tests would en
 
 You may include both "obviously critical" invariants and simpler ones, as long as they are precise, checkable, and relevant to security or correctness. The goal is to surface as many meaningful High and Medium risk issues as possible.
 
----
-
-## Sources of truth
+{section_1_2_header}
 
 Use all of the following information in your reasoning:
 
@@ -42,9 +50,7 @@ Use all of the following information in your reasoning:
 
 Treat documentation and scope text as the intended specification, and the code as the implementation that may or may not satisfy it.
 
----
-
-## Invariant types to focus on
+{section_1_3_header}
 
 You must base your invariants on the following invariant types and their descriptions, signals, and examples:
 
@@ -52,9 +58,7 @@ You must base your invariants on the following invariant types and their descrip
 
 You are not required to use every type, but you should prefer types that clearly match the contract's role (e.g. Balance, Permission, Temporal, StateMachine, Referential, Arithmetic, etc.).
 
----
-
-## How to think
+{section_1_4_header}
 
 When designing each invariant:
 
@@ -100,27 +104,39 @@ When designing each invariant:
 
 pub fn generate_all_invariants_verify_prompt(invs: &ContractInvariants) -> String {
     let verify_json = get_pre_all_invariants_verify_json();
-    let inv_findings_report = generate_full_list_of_invariant_findings(invs);
+    let section_2_header = prompt_index::generated_section_header("CORE INSTRUCTIONS", 2);
+    let section_3_header = prompt_index::generated_section_header("INVARIANTS TO VERIFY", 3);
+    let inv_findings_report = {
+        let mut invariant_findings = String::new();
+        for invariant in &invs.invariants {
+            let finding = generate_formatted_invariant_finding(invariant);
+            invariant_findings.push_str(&finding);
+        }
+        invariant_findings
+    };
 
     format!(
         r#"
-        {json} 
+{json}
 
-        ## Your task: decide if EACH reported Invariant is valid and should be respected, and if so, does it hold in the code or is it violated? 
+{section_2_header}
 
-        You should return `"true"` for `is_invariant_valid` if invariant is valid and description, predicate, and status all check out.
-        Otherwise return `"false"`.
+Your task: decide if EACH reported Invariant is valid and should be respected, and if so, does it hold in the code or is it violated?
 
-        Please continue until you have carefully evaluated ALL invariants.
+You should return `"true"` for `is_invariant_valid` if invariant is valid and description, predicate, and status all check out.
+Otherwise return `"false"`.
 
-        Based on your assessment please provided the following for EACH invariant:
+Please continue until you have carefully evaluated ALL invariants.
 
-        *invariant id*: insert invariant id (from 'id' field)
-        *is invariant valid*: true | false
-        *is invariant violated*: true | false (OMIT if invariant is invalid) 
+Based on your assessment please provided the following for EACH invariant:
 
-        ## INVARIANTS TO VERIFY
-        {report} 
+*invariant id*: insert invariant id (from 'id' field)
+*is invariant valid*: true | false
+*is invariant violated*: true | false (OMIT if invariant is invalid)
+
+{section_3_header}
+
+{report}
 
         "#,
         json = verify_json,
@@ -158,11 +174,19 @@ pub fn generate_invariant_verify_prompt(inv: &InvariantFinding) -> String {
 pub fn get_invariant_json(inv: &[InvariantType]) -> String {
     let status_enum_list = generate_enum_list(all_enum_variants::<InvariantStatus>().as_slice());
     let invariant_type_list = generate_enum_list(inv);
+    let section_1_header = prompt_index::generated_section_header("OUTPUT FORMAT REQUIREMENTS", 1);
+    let section_1_1_header = prompt_index::generated_sub_header("JSON OUTPUT REQUIREMENT", 1, 1);
 
     format!(
         r#"
 
-        ## OUTPUT REQUIREMENTS
+{section_1_header}
+
+Before instructions are provided on the task please note required output format:
+
+{section_1_1_header}
+
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
         
         - STRICT JSON ONLY (no markdown, no comments):
 
@@ -218,8 +242,6 @@ pub fn get_post_all_invariants_verify_json() -> String {
 }
 
 pub fn get_pre_all_invariants_verify_json() -> String {
-    let json = get_all_invariants_verify_json();
-
     format!(
         r#"
 
@@ -227,9 +249,10 @@ pub fn get_pre_all_invariants_verify_json() -> String {
 
         ## JSON Output Requirement
 
-        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+        - **Output must be strictly valid JSON** 
+        - No markdown, no code fences
+        - Must validate against schema below in SECTION 11.1
 
-        {json}
     "#
     )
 }
@@ -263,11 +286,14 @@ pub fn get_invariant_verify_json() -> String {
 }
 
 pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantType]) -> String {
-    let top_invariant_spec: Vec<InvariantSpec> = INVARIANT_LIBRARY
+    let mut top_invariant_spec: Vec<InvariantSpec> = INVARIANT_LIBRARY
         .iter()
         .filter(|inv| patterns_to_use.contains(&inv.key))
         .map(|inv| inv.to_owned())
         .collect();
+
+    let mut rng = rand::rng();
+    top_invariant_spec.shuffle(&mut rng);
 
     let mut top_invariant_list = String::new();
 
@@ -297,21 +323,52 @@ pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantTy
     top_invariant_list
 }
 
-pub fn generate_full_list_of_invariant_findings(co_invariants: &ContractInvariants) -> String {
-    let mut invariant_findings = String::new();
+pub fn generate_full_list_of_invariant_findings(
+    co_invariants: &ContractInvariants,
+    section_num: u8,
+) -> (String, String) {
+    let invariant_title = "Contract Invariants to Consider";
+    let mut invariant_findings = format!(
+        r#"
+
+{}
+
+**NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your analysis.
+Also, this is NOT a complete list of invariants, other may exist in codebase.
+
+                "#,
+        prompt_index::generated_section_header(&invariant_title.to_uppercase(), 7)
+    );
+
+    let mut invariant_index =
+        prompt_index::generated_table_of_context_header(invariant_title, section_num);
 
     // Randomize the order of invariant
     let mut invariants = co_invariants.invariants.clone();
     let mut rng = rand::rng();
     invariants.shuffle(&mut rng);
 
-    for invariant in &invariants {
+    for (section, invariant) in invariants.iter().enumerate() {
+        // update table of contents with new entry
+        invariant_index.push_str(&format!(
+            "-{}.{} {}\n",
+            section_num,
+            section + 1,
+            invariant.predicate
+        ));
+
+        // add new invariant to list
+        invariant_findings.push_str(&prompt_index::generated_sub_header(
+            &invariant.predicate,
+            7,
+            section + 1,
+        ));
         let finding = generate_formatted_invariant_finding(invariant);
         invariant_findings.push_str(&finding);
     }
     invariant_findings.push_str("\n\n");
 
-    invariant_findings
+    (invariant_findings, invariant_index)
 }
 
 pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
@@ -345,6 +402,7 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
 
     invariant_finding.push_str("\n ### Post-State\n");
     invariant_finding.push_str(&invariant.post_state.clone().unwrap_or_default());
+    invariant_finding.push_str("\n");
 
     invariant_finding
 }

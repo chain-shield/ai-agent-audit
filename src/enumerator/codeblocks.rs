@@ -23,6 +23,7 @@ use crate::llm_review::contract::contract_category::ContractCategory;
 use crate::llm_review::contract::contract_file_map::{
     get_file_from_contract, get_file_from_lib_contract,
 };
+use crate::llm_review::dynamic_prompts::prompt_index;
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::display_file::display_file;
@@ -371,11 +372,31 @@ pub async fn generate_codeblock_from_codebase(
         // track files as they are added to codeblock, to prevent dups
         let mut unique_files = HashSet::new();
 
+        // Track file paths for CODE INDEX
+        let mut main_contract_files: Vec<String> = Vec::new();
+        let mut supporting_contract_files: Vec<String> = Vec::new();
+        let mut source_files_list: Vec<String> = Vec::new();
+        let mut interface_files_list: Vec<String> = Vec::new();
+        let mut impl_files_list: Vec<String> = Vec::new();
+        let mut lib_files_list: Vec<String> = Vec::new();
+        let mut script_files_list: Vec<String> = Vec::new();
+
         // Add main contract code (CRITICAL - always include)
         let (main_contract_code, contract_file) =
             get_contract_file_content(&main_contract, None, repo).await?;
+        let section_8_2_header = prompt_index::generated_sub_header("MAIN TARGET CONTRACT", 8, 2);
         let main_section = format!(
-            "\n ------------ ## *MAIN TARGET CONTRACT* TO REVIEW\n\n{} ------------",
+            r#"
+
+{}
+
+<file path="{}">
+```solidity
+{}
+```
+</file>"#,
+            section_8_2_header,
+            display_file(&contract_file, repo),
             main_contract_code
         );
         let main_tokens = get_token_count(&main_section);
@@ -386,6 +407,7 @@ pub async fn generate_codeblock_from_codebase(
         );
         markdown_codeblock_for_llm.push_str(&main_section);
         current_token_count += main_tokens;
+        main_contract_files.push(display_file(&contract_file, repo));
         unique_files.insert(contract_file);
 
         if current_token_count > token_budget {
@@ -394,13 +416,21 @@ pub async fn generate_codeblock_from_codebase(
                 current_token_count, token_budget
             );
         }
-        markdown_codeblock_for_llm
-            .push_str("\n ------------ END OF MAIN TARGET CONTRACT ------------ \n");
 
         // Add parent and called contracts (prioritized by importance)
-        let supporting_header = "\n ------------ ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES ------------ \n";
-        markdown_codeblock_for_llm.push_str(supporting_header);
-        current_token_count += get_token_count(supporting_header);
+        let supporting_header = prompt_index::generated_sub_header(
+            "SUPPORTING CONTRACTS, LIBRARIES & INTERFACES",
+            8,
+            3,
+        );
+        markdown_codeblock_for_llm.push_str(&format!(
+            r#"
+
+{}
+        "#,
+            supporting_header
+        ));
+        current_token_count += get_token_count(&supporting_header);
 
         // Prioritize contracts by importance:
         // 1. HIGH: Called contracts (user flow, attack surface)
@@ -457,7 +487,11 @@ pub async fn generate_codeblock_from_codebase(
                 continue;
             }
 
-            let contract_section = format!("{}\n", contract_code);
+            let contract_section = format!(
+                "<file path=\"{}\">\n```solidity\n{}\n```\n</file>\n",
+                display_file(&contract_file, repo),
+                contract_code
+            );
             let section_tokens = get_token_count(&contract_section);
 
             // Enforce minimum section size to avoid 1-token noise
@@ -486,6 +520,7 @@ pub async fn generate_codeblock_from_codebase(
                 markdown_codeblock_for_llm.push_str(&contract_section);
                 current_token_count = new_total;
                 contracts_added += 1;
+                supporting_contract_files.push(display_file(&contract_file, repo));
                 unique_files.insert(contract_file); // ✅ Insert only after successfully adding
             }
         }
@@ -526,7 +561,11 @@ pub async fn generate_codeblock_from_codebase(
                 }
             };
 
-            let source_section = format!("{}\n", source_content);
+            let source_section = format!(
+                "<file path=\"{}\">\n```solidity\n{}\n```\n</file>\n",
+                display_file(source_file, repo),
+                source_content
+            );
             let source_tokens = get_token_count(&source_section);
 
             let new_total = current_token_count + source_tokens;
@@ -550,6 +589,7 @@ pub async fn generate_codeblock_from_codebase(
                 );
                 markdown_codeblock_for_llm.push_str(&source_section);
                 current_token_count = new_total;
+                source_files_list.push(display_file(source_file, repo));
                 unique_files.insert(source_file.clone());
                 source_files_added += 1;
             }
@@ -567,9 +607,14 @@ pub async fn generate_codeblock_from_codebase(
         );
 
         let supporting_lib_header =
-            "\n## ------------ SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS ------------ \n";
-        markdown_codeblock_for_llm.push_str(supporting_lib_header);
-        current_token_count += get_token_count(supporting_lib_header);
+            prompt_index::generated_sub_header("INTERFACES AND ROOT IMPLEMENTATIONS", 8, 4);
+        markdown_codeblock_for_llm.push_str(&format!(
+            r#"
+{}
+            "#,
+            supporting_lib_header
+        ));
+        current_token_count += get_token_count(&supporting_lib_header);
 
         // adding interfaces
         for (interface_name, interface_file) in &main_interfaces {
@@ -605,7 +650,11 @@ pub async fn generate_codeblock_from_codebase(
                 }
             };
 
-            let interface_section = format!("{}\n", interface_content);
+            let interface_section = format!(
+                "<file path=\"{}\">\n```solidity\n{}\n```\n</file>\n",
+                display_file(&interface_file, repo),
+                interface_content
+            );
             let interface_tokens = get_token_count(&interface_section);
 
             let new_total = current_token_count + interface_tokens;
@@ -629,6 +678,7 @@ pub async fn generate_codeblock_from_codebase(
                 );
                 markdown_codeblock_for_llm.push_str(&interface_section);
                 current_token_count = new_total;
+                interface_files_list.push(display_file(&interface_file, repo));
                 unique_files.insert(interface_file.clone());
             }
         }
@@ -663,7 +713,11 @@ pub async fn generate_codeblock_from_codebase(
                 }
             };
 
-            let impl_section = format!("{}\n", impl_content);
+            let impl_section = format!(
+                "<file path=\"{}\">\n```solidity\n{}\n```\n</file>\n",
+                display_file(impl_file, repo),
+                impl_content
+            );
             let impl_tokens = get_token_count(&impl_section);
 
             let new_total = current_token_count + impl_tokens;
@@ -689,6 +743,7 @@ pub async fn generate_codeblock_from_codebase(
                 );
                 markdown_codeblock_for_llm.push_str(&impl_section);
                 current_token_count = new_total;
+                impl_files_list.push(display_file(impl_file, repo));
                 unique_files.insert(impl_file.clone());
                 impl_added += 1;
             }
@@ -703,10 +758,14 @@ pub async fn generate_codeblock_from_codebase(
             impl_skipped_budget
         );
 
-        let supporting_lib_header =
-            "\n## ------------ SUPPORTING CONTEXT: EXTERNAL LIBRARIES ------------ \n";
-        markdown_codeblock_for_llm.push_str(supporting_lib_header);
-        current_token_count += get_token_count(supporting_lib_header);
+        let supporting_lib_header = prompt_index::generated_sub_header("EXTERNAL LIBRARIES", 8, 5);
+        markdown_codeblock_for_llm.push_str(&format!(
+            r#"
+{}
+            "#,
+            supporting_lib_header
+        ));
+        current_token_count += get_token_count(&supporting_lib_header);
 
         // add external libary filse
         for lib_file in &main_lib_files {
@@ -730,7 +789,11 @@ pub async fn generate_codeblock_from_codebase(
                 }
             };
 
-            let lib_section = format!("{}\n", lib_content);
+            let lib_section = format!(
+                "<file path=\"{}\">\n```solidity\n{}\n```\n</file>\n",
+                display_file(&lib_file, repo),
+                lib_content
+            );
             let lib_tokens = get_token_count(&lib_section);
 
             let new_total = current_token_count + lib_tokens;
@@ -753,15 +816,18 @@ pub async fn generate_codeblock_from_codebase(
                 );
                 markdown_codeblock_for_llm.push_str(&lib_section);
                 current_token_count = new_total;
+                lib_files_list.push(display_file(&lib_file, repo));
                 unique_files.insert(lib_file.clone());
             }
         }
 
-        markdown_codeblock_for_llm.push_str(
-            "\n ------------ END OF SUPPORTING CONTRACTS AND INTERFACES ------------ \n\n",
-        );
-        markdown_codeblock_for_llm
-            .push_str("\n ------------ ## DEPLOYMENT SCRIPTS ------------ \n\n");
+        let section_8_6_header = prompt_index::generated_sub_header("DEPLOYMENT SCRIPTS", 8, 6);
+        markdown_codeblock_for_llm.push_str(&format!(
+            r#"
+{}
+            "#,
+            section_8_6_header
+        ));
 
         // Add relevant deploy scripts
         let contract_scripts = detect_scripts_connected_to_contract(&main_contract, repo).await?;
@@ -779,7 +845,11 @@ pub async fn generate_codeblock_from_codebase(
                 }
             };
 
-            let script_section = format!("{}\n", script_content);
+            let script_section = format!(
+                "<file path=\"{}\">\n```solidity\n{}\n```\n</file>\n",
+                display_file(&script, repo),
+                script_content
+            );
             let script_tokens = get_token_count(&script_section);
 
             let new_total = current_token_count + script_tokens;
@@ -802,8 +872,26 @@ pub async fn generate_codeblock_from_codebase(
                 );
                 markdown_codeblock_for_llm.push_str(&script_section);
                 current_token_count = new_total;
+                script_files_list.push(display_file(&script, repo));
             }
         }
+
+        // ── 4. Generate CODE INDEX (Section 8.1) ────────────────────────────
+        let code_index = generate_code_index(
+            &main_contract_files,
+            &supporting_contract_files,
+            &source_files_list,
+            &interface_files_list,
+            &impl_files_list,
+            &lib_files_list,
+            &script_files_list,
+        );
+
+        // Prepend CODE INDEX to the beginning of the markdown
+        let mut final_markdown = String::new();
+        final_markdown.push_str(&code_index);
+        final_markdown.push_str(&markdown_codeblock_for_llm);
+        markdown_codeblock_for_llm = final_markdown;
 
         // Final token count verification
         let final_token_count = get_token_count(&markdown_codeblock_for_llm);
@@ -1171,4 +1259,89 @@ async fn generate_contracts_via_import_traversal(
 
     // Token count is 0 (placeholder) - will be calculated during assembly phase
     Ok((contracts, contracts_with_depth, 0))
+}
+
+/// Generates a CODE INDEX table of contents for all files included in the codeblock.
+///
+/// This function creates a structured index showing which files are included in each section,
+/// making it easier for LLMs to navigate the codeblock and understand the structure.
+///
+/// # Arguments
+/// * `main_contract_files` - Files in Section 8.2 (Main Target Contract)
+/// * `supporting_contract_files` - Files in Section 8.3 (Supporting Contracts)
+/// * `source_files_list` - Files in Section 8.3 (Source Files)
+/// * `interface_files_list` - Files in Section 8.4 (Interfaces)
+/// * `impl_files_list` - Files in Section 8.4 (Interface Implementations)
+/// * `lib_files_list` - Files in Section 8.5 (External Libraries)
+/// * `script_files_list` - Files in Section 8.6 (Deployment Scripts)
+///
+/// # Returns
+/// * `String` - Formatted CODE INDEX markdown
+fn generate_code_index(
+    main_contract_files: &[String],
+    supporting_contract_files: &[String],
+    source_files_list: &[String],
+    interface_files_list: &[String],
+    impl_files_list: &[String],
+    lib_files_list: &[String],
+    script_files_list: &[String],
+) -> String {
+    let section_8_1_header =
+        prompt_index::generated_sub_header("CODE INDEX (read this first)", 8, 1);
+
+    let mut index = format!(
+        r#"
+
+{}
+
+### CODE INDEX (read this first)
+
+"#,
+        section_8_1_header
+    );
+
+    // Section 8.2: Main Target Contract
+    if !main_contract_files.is_empty() {
+        index.push_str("- `Section 8.2: Main Target Contract:` ");
+        index.push_str(&main_contract_files.join(", "));
+        index.push_str("\n\n");
+    }
+
+    // Section 8.3: Supporting Contracts, Libraries & Interfaces
+    let mut section_8_3_files = Vec::new();
+    section_8_3_files.extend(supporting_contract_files.iter().cloned());
+    section_8_3_files.extend(source_files_list.iter().cloned());
+
+    if !section_8_3_files.is_empty() {
+        index.push_str("- `Section 8.3: Supporting Contracts, Libraries & Interfaces:` ");
+        index.push_str(&section_8_3_files.join(", "));
+        index.push_str("\n\n");
+    }
+
+    // Section 8.4: Interfaces and Root Implementations
+    let mut section_8_4_files = Vec::new();
+    section_8_4_files.extend(interface_files_list.iter().cloned());
+    section_8_4_files.extend(impl_files_list.iter().cloned());
+
+    if !section_8_4_files.is_empty() {
+        index.push_str("- `Section 8.4: Interfaces and Root Implementations:` ");
+        index.push_str(&section_8_4_files.join(", "));
+        index.push_str("\n\n");
+    }
+
+    // Section 8.5: External Libraries
+    if !lib_files_list.is_empty() {
+        index.push_str("- `Section 8.5: External Libraries:` ");
+        index.push_str(&lib_files_list.join(", "));
+        index.push_str("\n\n");
+    }
+
+    // Section 8.6: Deployment Scripts
+    if !script_files_list.is_empty() {
+        index.push_str("- `Section 8.6: Deployment Scripts:` ");
+        index.push_str(&script_files_list.join(", "));
+        index.push_str("\n\n");
+    }
+
+    index
 }

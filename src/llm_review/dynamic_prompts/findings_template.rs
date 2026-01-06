@@ -3,107 +3,16 @@ use std::collections::HashSet;
 use crate::{
     config::AuditType,
     llm_review::{
-        agent::agent_enums::{
-            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
-        },
+        agent::agent_enums::{all_enum_variants, generate_enum_list, EnumData},
+        dynamic_prompts::prompt_index,
         findings::{
             finding_enums::{Severity, VulnerabilityType},
             findings::PrivilegeLevel,
-        },
-        prompt_support::severity_rubics::{
-            CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
         },
     },
     prepare_code::git_clone::RepoPaths,
 };
 use strum::IntoEnumIterator;
-
-pub fn generate_findings_prompt_for_multiple_patterns<T>(
-    issue_type: &str,
-    full_spec_of_issues: &str,
-    enum_issues: &[T],
-    repo: &RepoPaths,
-) -> String
-where
-    T: EnumData + std::fmt::Display + Default,
-{
-    let exploit_enums: Vec<VulnerabilityType> = enum_issues
-        .iter()
-        .flat_map(|e| e.to_types())
-        .copied()
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    let exploit_bullets = generate_enum_bulleted_list(&exploit_enums); // "- Oracle\n- Reentrancy\n..."
-    let severity_rubic = match repo.audit_type {
-        AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
-        AuditType::Cantina => CANTINA_SEVERITY_RUBRIC,
-        _ => CODE4RENA_SEVERITY_RUBRIC,
-    };
-
-    let json = get_pre_json_requirement_for_multipattern(enum_issues, issue_type, repo);
-
-    format!(
-        r#"
-
-        {json}
-
-        ===================== # INSTRUCTIONS =====================
-
-        Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
-
-        ## **Persist until all patterns are considered**
-        - Do **not** stop at the first interesting exploit.
-        - Your goal is **maximum coverage** – find every valid finding.
-        - Systematically go through **every** candidate block in "{title_all_caps} TO ANALYZE" and decide:
-            - "Real in-scope vulnerability keep as a finding"
-
-        ------------ ## Rules ------------
-
-        - Only report exploits **directly tied** to the provided {pattern_type} (patterns or invariants), **not** unrelated issues.
-        - Only analyze code **actually present** in the codebase. 
-        - Prefer exploits accessible to **unprivileged EOAs**; if an exploit requires a trusted role, make that clear via the `"privilege"` field (as specified in the JSON instructions).
-        - Focus on **present-state** bugs in the current code. Ignore one-time deployment/upgrade windows unless the same condition can be recreated or abused permissionlessly later.
-        - A valid finding must be:
-        - In-scope,
-        - Backed by a credible exploit path,
-        - And clearly severity according to the rubric.
-        - If nothing meets these criteria, return `{{"findings":[]}}`.
-
-        ------------ ## Severity rubric ------------
-
-        {rubric}
-
-
-        ------------ ## Exploit guidelines ------------
-
-        - Severity priority: **Theft > DoS > accounting mismatch**.
-        - Bigger **blast radius** and simpler execution are more valuable.
-        - Assert conditions using `assertGt` / `assertEq`, not just logs.
-        - For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
-
-        ---
-
-        ------------ ## {issue_type} Overview ------------ 
-
-        ### Common Exploits
-
-        {exploit_bullets}
-
-        ---
-
-        ------------ ## {title_all_caps} TO ANALYZE ------------ 
-
-        {full_spec}
-
-        "#,
-        pattern_type = issue_type,
-        rubric = severity_rubic,
-        exploit_bullets = exploit_bullets,
-        full_spec = full_spec_of_issues,
-        title_all_caps = issue_type.to_uppercase()
-    )
-}
 
 pub fn get_post_json_requirement_for_multipattern<T>(
     patterns: &[T],
@@ -122,51 +31,58 @@ where
         .into_iter()
         .collect();
     let issue_list = generate_enum_list(&vulnerabities);
+    let section_11_header = prompt_index::generated_section_header("OUTPUT REQUIREMENTS", 11);
+    let section_11_main_header = prompt_index::generated_sub_header("JSON OUTPUT FORMAT", 11, 0);
 
     format!(
         r#"
 
-        ## OUTPUT REQUIREMENTS 
+{section_11_header}
 
-        *Please respond with ONLY valid JSON in the following exact format:*
+{section_11_main_header}
 
-        {json}
+*Please respond with ONLY valid JSON in the following exact format:*
 
-        - *privilege* -> least privilege to trigger vulnerability
-        - for "exploit_type" please select from one of the listed types: {issue_list}
-        - If no vulnerabilities are found, return: 
+{json}
 
-        {{
-        "findings": []
-        }}
+- *privilege* -> least privilege to trigger vulnerability
+- for "exploit_type" please select from one of the listed types: {issue_list}
+- If no vulnerabilities are found, return: 
 
-        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
-        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
-        they match up correctly.
-       "#
+{{
+"findings": []
+}}
+
+**Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
+**Please double-check opening and closing brackets: `}}` and `]`, make sure 
+they match up correctly.
+"#
     )
 }
 
-pub fn get_pre_json_requirement_for_multipattern<T>(
-    patterns: &[T],
-    pattern_type: &str,
-    repo: &RepoPaths,
-) -> String
+pub fn get_pre_json_requirement_for_multipattern() -> String
 where
-    T: std::fmt::Display + EnumData,
 {
-    let json = get_json_requirement(patterns, pattern_type, repo);
+    let section_1_header = prompt_index::generated_section_header("OUTPUT FORMAT REQUIREMENTS", 1);
+    let section_1_1_header = prompt_index::generated_sub_header("JSON OUTPUT REQUIREMENT", 1, 1);
 
     format!(
         r#"
 
-        Before instructions are provided on the task please note required output format:
+{section_1_header}
 
-        ## JSON Output Requirement
+Before instructions are provided on the task please note required output format:
 
-        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+{section_1_1_header}
 
-        {json}
+- **Output must be strictly valid JSON**.
+- No markdown, no code fences.
+- Must validate against schema below in SECTION 11.1; use only allowed enums.
+- If no vulnerabilities are found, return: 
+
+{{
+"findings": []
+}}
 
        "#
     )

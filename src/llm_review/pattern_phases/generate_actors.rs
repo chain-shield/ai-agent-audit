@@ -3,7 +3,7 @@ use crate::{
     llm_review::{
         agent::agent_enums::AIAgent,
         analysis::context_state::{generate_audit_scope, get_metadata_context},
-        dynamic_prompts,
+        dynamic_prompts::{self, prompt_index},
         threat_models::actors::Actors,
     },
     prepare_code::git_clone::RepoPaths,
@@ -19,16 +19,47 @@ pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> 
         .expect("could not extract context");
 
     let audit_scope = generate_audit_scope(repo).await?;
+    let section_8_header = prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", 8);
+    let section_9_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 9);
+    let section_10_header = prompt_index::generated_section_header(
+        "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
+        10,
+    );
 
     let combined_context = if audit_scope.is_empty() {
-        context
+        format!(
+            r#"
+
+{section_9_header}
+
+{context}
+"#
+        )
     } else {
-        format!("{context}\n\n## AUDIT SCOPE AND KEY INVARIANTS\n\n{audit_scope}")
+        format!(
+            r#"
+
+{section_9_header}
+
+{context}
+
+{section_10_header}
+
+{audit_scope}
+"#
+        )
     };
 
     // Build code + context block
     let code_plus_context = format!(
-        "\n\n# SOLIDITY CONTRACT + STORAGE TO CODE REVIEW\n\n{code}\n\n ## ADDITIONAL CONTEXT TO ASSIST WITH SECURITY REVIEW OF ABOVE CODE \n\n{combined_context}\n\n"
+        r#"
+
+{section_8_header}
+
+{code}
+
+{combined_context}
+"#
     );
 
     // Construct prompt

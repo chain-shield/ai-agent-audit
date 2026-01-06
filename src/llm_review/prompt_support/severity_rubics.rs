@@ -1,6 +1,5 @@
 pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 
------------- ## Severity Classifications ------------
 *NOTE*: use below criteria to determine if finding is valid or not and what severity level is
 
 ### Estimating Risk

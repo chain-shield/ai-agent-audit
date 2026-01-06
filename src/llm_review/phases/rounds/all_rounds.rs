@@ -1,5 +1,5 @@
 use crate::llm_review::agent::agent_enums::{all_enum_variants, generate_enum_list};
-use crate::llm_review::phases::rounds::utils::generate_pre_round_verify_json_requirement;
+use crate::llm_review::dynamic_prompts::prompt_index;
 use crate::llm_review::phases::verify_rounds::{FindingAnalysis, FindingStatus};
 use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
 use log::info;
@@ -159,18 +159,34 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
     }
 
     fn generate_verify_prompt() -> String {
-        let verify_json = AllRoundLegitAnalysis::generate_verify_json();
-        let pre_verify_json = generate_pre_round_verify_json_requirement(&verify_json);
         let likelihood_list = generate_enum_list(all_enum_variants::<Likelihood>().as_slice());
+        let toc = prompt_index::generate_verification_round_toc();
         let impact_list = generate_enum_list(all_enum_variants::<Impact>().as_slice());
+        let section_1_header = prompt_index::generated_section_header("CORE INSTRUCTIONS", 1);
+        let section_1_1 =
+            prompt_index::generated_sub_header("VERIFY SECURITY FINDING EXISTS", 1, 1);
+        let section_1_2 = prompt_index::generated_sub_header("EXISTING SAFEGUARDS CHECK", 1, 2);
+        let section_1_3 = prompt_index::generated_sub_header("SCOPE CHECK", 1, 3);
+        let section_1_4 = prompt_index::generated_sub_header("BY DESIGN CHECK", 1, 4);
+        let section_1_5 = prompt_index::generated_sub_header("EXPLOITABILITY CHECK", 1, 5);
+        let section_1_6 = prompt_index::generated_sub_header("IMPACT CLASSIFICATION CHECK", 1, 6);
+        let section_1_7 = prompt_index::generated_sub_header("LIKELIHOOD ASSESSMENT CHECK", 1, 7);
+        let section_1_8 = prompt_index::generated_sub_header("USER ERROR CHECK", 1, 8);
+        let section_1_9 =
+            prompt_index::generated_sub_header("GOVERNANCE/CENTRALIZATION RISK CHECK", 1, 9);
+        let section_1_10 = prompt_index::generated_sub_header("SPECULATION CHECK", 1, 10);
+        let section_1_11 =
+            prompt_index::generated_sub_header("NON-STANDARD ERC20 TOKEN CHECK", 1, 11);
 
         format!(
             r#"
-        {pre_verify_json}
+{toc}
 
-        Your task: to run the following 11 checks on EACH listed security finding: 
+{section_1_header}
 
-        ## VERIFY SECURITY FINDING EXISTS
+Your task: to run the following 11 checks on EACH listed security finding:
+
+{section_1_1}
 
         **Step 1: Trace the Code Path**
         - Locate exact function/contract, verify vulnerable code path exists (not hallucinated)
@@ -185,11 +201,13 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
         **Bug does not exist if:** Invariant not documented, not enforced elsewhere, assumed but not required
 
         **Step 3: Reproduce the Issue**
-        - Can you trace exact steps to trigger the bug? 
+        - Can you trace exact steps to trigger the bug?
 
         **Bug does not exist if:** Cannot trace execution path, preconditions impossible
 
-        ## EXISTING SAFEGUARDS CHECK: Does code already have safeguards that mitigate/eliminate this security finding?**
+{section_1_2}
+
+Does code already have safeguards that mitigate/eliminate this security finding?
 
         **Common safeguards**
         -  Reentrancy → has `nonReentrant`, CEI pattern, or guard
@@ -202,39 +220,49 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
 
        **How to Check:** Search codebase for modifiers/guards, verify vulnerable function uses them, test if bypassable
 
-        ## SCOPE CHECK: Is Security Finding in Scope?
+{section_1_3}
 
-        **The SCOPE FOR SECURITY AUDIT section below has a number of publicly known issues and findings that are OUT OF SCOPE. Please carefully review.**
+Is Security Finding in Scope?
 
-        ## "BY DESIGN" CHECK
+**The SCOPE FOR SECURITY AUDIT section below has a number of publicly known issues and findings that are OUT OF SCOPE. Please carefully review.**
 
-        **Is this Security Finding really just documented as intentional behavior of protocol?**
+{section_1_4}
+
+Is this Security Finding really just documented as intentional behavior of protocol?
 
         Carefully check NatSpec, comments, docs, function naming.
 
-        ## EXPLOITABILITY: Is this Security Finding exploitable?
+{section_1_5}
 
-        - Is it possible to produce a Minimal reproducible PoC showing state change, non-dust effect, realistic actors, validating the Security Finding?
+Is this Security Finding exploitable?
 
-        ## IMPACT CLASSIFICATION CHECK: What is objective impact of Security Finding?
+- Is it possible to produce a Minimal reproducible PoC showing state change, non-dust effect, realistic actors, validating the Security Finding?
+
+{section_1_6}
+
+What is objective impact of Security Finding?
 
         **High:** Theft/permanent loss of assets, unauthorized drains, economic attacks (non-dust)
         **Medium:** DoS of critical actions, accounting drift, mispricing, privilege escalation
         **Low:** Dust amounts, stylistic issues, event inconsistencies, view-function errors
 
-        ## LIKELIHOOD ASSESSMENT CHECK: What is likelihood of Security Finding being exploited?
+{section_1_7}
+
+What is likelihood of Security Finding being exploited?
 
         **Common:** No preconditions, works anytime/anywhere, no special resources
         **Occasional:** Specific but realistic conditions, some chains, moderate setup
         **Rare:** Multiple unlikely conditions, extreme market states, significant resources
 
-        ## USER ERROR CHECK: Does Security Finding require User error or Mistake?
+{section_1_8}
 
-        - User chooses bad recipient, provides bad parameters, approves malicious contract, signs malicious data, etc.
+Does Security Finding require User error or Mistake?
 
-        ## GOVERNANCE/CENTRALIZATION RISK
+- User chooses bad recipient, provides bad parameters, approves malicious contract, signs malicious data, etc.
 
-        **Question: Can governance/team prevent this by acting responsibly?**
+{section_1_9}
+
+Can governance/team prevent this by acting responsibly?
 
         **Security Finding is Governance Risk if:**
         - Admin sets wrong parameters, chooses malicious oracle, misconfigures
@@ -242,17 +270,21 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
         - Team chooses malicious integration, configures incorrectly
         - Security Finding can we remedied by Admin/privileged Users making different choices/decisions (without code changes or redeploying, of course)
 
-        ## SPECULATION CHECK: Is Security Finding dependin on future state of the code?
+{section_1_10}
 
-        **Question: Does root cause exist NOW and is exploitable with TODAY's code?**
+Is Security Finding depending on future state of the code?
+
+**Question: Does root cause exist NOW and is exploitable with TODAY's code?**
 
         **Security Finding is future speculation if:**
         -  "Finding depends on if protocol integrates/adds/upgrades in future..."
         -  "Could/might/potentially happen if..." (hypothetical)
 
-        ## NON-STANDARD ERC20 TOKEN CHECK: Does Security Finding depending on contract interaction with Non-standard token?
+{section_1_11}
 
-        - Fee-on-transfer/rebasing/decimals edge cases (unless explicitly supported or USDT)
+Does Security Finding depend on contract interaction with Non-standard token?
+
+- Fee-on-transfer/rebasing/decimals edge cases (unless explicitly supported or USDT)
 
         ## OUTPUT REQUIREMENTS
 

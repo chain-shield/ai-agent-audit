@@ -1,6 +1,7 @@
 use crate::{
     config::CREATE_TESTS,
     llm_review::{
+        dynamic_prompts::prompt_index,
         findings::findings::{Finding, Findings},
         threat_models::patterns::Pattern,
     },
@@ -39,20 +40,23 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     post_instructions: &str,
     report_type: FindingReportType,
 ) -> String {
+    let section_2_header =
+        prompt_index::generated_section_header("SECURITY FINDINGS TO EVALUATE", 2);
     let mut prompt = instructions.to_string();
 
-    prompt.push_str("\n\n");
-    prompt.push_str("## **SECURITY FINDINGS TO EVALUATE**");
-    prompt.push_str("\n\n");
+    prompt.push_str(&format!(
+        r#"
+
+{section_2_header}
+
+"#
+    ));
 
     for finding in &finding.findings {
         let report = get_finding_report(finding, None, report_type);
         prompt.push_str(&report);
         prompt.push_str("\n\n");
     }
-
-    prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");
-    prompt.push_str("\n\n");
 
     prompt.push_str(code);
     prompt.push_str("\n\n");

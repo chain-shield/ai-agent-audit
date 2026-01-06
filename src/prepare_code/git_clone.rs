@@ -19,7 +19,7 @@ use std::{
 use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
-use crate::config::{AuditType, audit_config};
+use crate::config::{audit_config, AuditType};
 use crate::utils::check_folder_name::{
     is_library_package_json, is_monorepo_config_file, is_root_config_file, is_script_file,
     is_test_file,
@@ -655,7 +655,10 @@ impl RepoPaths {
         for doc in &self.docs {
             if let Some((filename, content)) = self.read_file_content(doc)? {
                 // info!("extracting content from {} doc file", filename);
-                docs.push_str(&format!("### {}\n\n{}\n\n", filename, content));
+                docs.push_str(&format!(
+                    "------------------------------ {} ------------------------------ \n\n{}\n\n",
+                    filename, content
+                ));
             }
         }
 

@@ -14,6 +14,7 @@ use crate::{
         dynamic_prompts::{
             self, actors,
             invariants::{self, generate_invariant_prompt, get_invariant_json},
+            prompt_index,
         },
         threat_models::{
             issues::{IssuePrompt, IssueStructTrait},
@@ -21,10 +22,12 @@ use crate::{
         },
     },
     prepare_code::git_clone::RepoPaths,
+    reporting::save_file,
 };
+
 use log::info;
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
 /// Executes the findings generation phase
@@ -57,11 +60,23 @@ where
         .expect("could not extract context");
 
     let audit_scope = generate_audit_scope(repo).await?;
+    let section_10_header = prompt_index::generated_section_header(
+        "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
+        10,
+    );
 
     let combined_context = if audit_scope.is_empty() {
         context
     } else {
-        format!("{context}\n\n ===================== # AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT ===================== \n{audit_scope}")
+        format!(
+            r#"
+{context}
+
+{section_10_header}
+
+{audit_scope}
+        "#
+        )
     };
 
     let codeblock = Arc::new(code.to_string());
@@ -88,27 +103,18 @@ where
 
     match issue_prompt {
         IssuePrompt::Combined((pattern_category, some_actors, some_invariants)) => {
-            let actor_context = if some_actors.is_some() {
+            let (actor_context, actor_index) = if some_actors.is_some() {
                 let actors = some_actors.clone().unwrap_or_default();
-                let actors_capabilities =
-                    actors::generate_formated_list_from_actor_data(&actors.actors);
-                format!("\n ===================== # POTENTIAL BAD ACTORS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITY ===================== \n
-                 **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis.\n\n
-                {}",actors_capabilities)
+                actors::generate_formated_list_from_actor_data(&actors.actors, 7)
             } else {
-                String::new()
+                (String::new(), String::new())
             };
 
-            let invariant_context = if some_invariants.is_some() {
+            let (invariant_context, invariant_index) = if some_invariants.is_some() {
                 let invariants = some_invariants.clone().unwrap_or_default();
-                let invariant_list =
-                    invariants::generate_full_list_of_invariant_findings(&invariants);
-                format!("\n ===================== # LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITIES ===================== \n
-                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your analysis.\n\n
-                 Also, this is NOT a complete list of invariants, other may exist in codebase.
-                {}",invariant_list)
+                invariants::generate_full_list_of_invariant_findings(&invariants, 7)
             } else {
-                String::new()
+                (String::new(), String::new())
             };
 
             for category in pattern_category.into_iter() {
@@ -116,7 +122,7 @@ where
                     get_category_library_spec(&category).expect("could not extract category spec");
 
                 // construct prompt
-                let instruction_prompt =
+                let (instruction_prompt, pattern_index) =
                     dynamic_prompts::findings::generate_pattern_category_to_findings_prompt(
                         &category, repo,
                     );
@@ -127,15 +133,32 @@ where
                         repo,
                     );
 
-                let prompt_actors = Arc::new(format!(
-                    "{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
-                ));
+                // generate table of contents for each prompt
+                let prompt_index_actors =
+                    prompt_index::generate_pattern_category_to_finding_discovery_prompt(
+                        &pattern_index,
+                        &actor_index,
+                    );
+                let prompt_index_invariants =
+                    prompt_index::generate_pattern_category_to_finding_discovery_prompt(
+                        &pattern_index,
+                        &invariant_index,
+                    );
 
-                // log::info!("{}", prompt_actors);
+                let prompt_actors = Arc::new(format!(
+                    "{prompt_index_actors}{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
+                ));
+                save_file::save_file_locally(&prompt_actors, &PathBuf::from("actor_prompt.md"))?;
 
                 let prompt_invariant = Arc::new(format!(
-                    "{instruction_prompt}{invariant_context}{code_plus_context}{json_requirement_prompt}"
+                    "{prompt_index_invariants}{instruction_prompt}{invariant_context}{code_plus_context}{json_requirement_prompt}"
                 ));
+                save_file::save_file_locally(
+                    &prompt_invariant,
+                    &PathBuf::from("invariant_prompt.md"),
+                )?;
+
+                panic!("done with saving prompt files..");
 
                 for run in 0..category_spec.runs {
                     if some_actors.is_some() {
@@ -219,14 +242,25 @@ where
 /// in a structured format for optimal LLM processing.
 fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
     let mut code_plus_context = String::new();
+    let section_8_header = prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", 8);
+    let section_9_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 9);
 
-    code_plus_context.push_str(
-        "\n\n ===================== # SOLIDITY CODE TO REVIEW ===================== \n\n",
-    );
+    code_plus_context.push_str(&format!(
+        r#"
+{}
+                "#,
+        section_8_header
+    ));
     code_plus_context.push_str(codeblock);
 
-    code_plus_context
-        .push_str("\n\n ===================== # ADDITIONAL CONTEXT ===================== \n\n");
+    code_plus_context.push_str(&format!(
+        r#"
+
+{}
+
+        "#,
+        section_9_header
+    ));
     code_plus_context.push_str(&added_context);
     code_plus_context.push_str("\n\n");
 

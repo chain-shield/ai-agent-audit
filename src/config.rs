@@ -34,25 +34,17 @@ pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
 pub const OPENAI_MODEL: &str = "gpt-5.2";
 pub const SKIP_LIBRARIES: bool = true;
-pub const SKIP_INVARIANT_RUNS: bool = false;
 
-// SKIP or RUN MAIN PATTERN RUNS
+pub const SKIP_INVARIANT_RUNS: bool = false;
 pub const SKIP_ACTOR_PATTERN_RUNS: bool = false;
+
 // RUNS R1 (basic) and R2 (complex) patterns
-pub const R1_RUNS: usize = 10;
-pub const R2_RUNS: usize = 10;
+pub const R1_RUNS: usize = 1;
+pub const R2_RUNS: usize = 1;
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
-pub const INVARIANT_RUNS: usize = 5;
-pub const MAX_PATTERN_RUN_TOP: usize = 3; // 2 for large protocol, default: 3
-pub const MAX_PATTERN_RUN_RARE: usize = 3; // 2 for large protocol, default: 3
-pub const MAX_PATTERN_RUN_MOST: usize = 3; // 0 for large protocol, default: 3
-pub const MAX_PATTERN_RUN_FREQUENT: usize = 3; // 2 for large protocol, default: 3
-pub const MAX_PATTERN_RELEVANT_FREQUENT: usize = 20; // 2 for large protocol, default: 3
-pub const MAX_PATTERN_LIBRARY: usize = 3;
-pub const MAX_PATTERN_NICHE: usize = 4; // 3 for large protocol, default: 4
-pub const MAX_PATTERN_GENERAL: usize = 4; // 2 for large protocol, default: 4
+pub const INVARIANT_RUNS: usize = 3;
 
 pub const MAX_FILE_RUNS: usize = 1;
 

@@ -11,12 +11,13 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
+        summarize::{FileSummaryType, summarize_protocol, summarize_src_files},
     },
     config::{SKIP_ACTOR_PATTERN_RUNS, SKIP_INVARIANT_RUNS},
     cost::cost_data::get_token_count,
     llm_review::{
         analysis::pre_audit_analysis,
+        dynamic_prompts::prompt_index,
         threat_models::{actors::Actors, invariants::ContractInvariants},
     },
     prepare_code::git_clone::RepoPaths,
@@ -111,10 +112,16 @@ pub async fn generate_and_save_metadata_context(repo: &RepoPaths) -> anyhow::Res
     }
 
     let protocol_summary = summarize_protocol(repo, Some(&full_context_plus_summaries)).await?;
+    let section_9_1_header = prompt_index::generated_sub_header("PROTOCOL OVERVIEW", 9, 1);
 
     metadata.push_str(&format!(
-        "\n ------------ ## PROTOCOL OVERVIEW ------------ \n\n{}\n\n",
-        protocol_summary
+        r#"
+
+{}
+
+{}
+        "#,
+        section_9_1_header, protocol_summary
     ));
 
     let metadata_context = Arc::clone(&METADATA_CONTEXT);
@@ -152,27 +159,59 @@ pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String
 
     // prompt_context.push_str("\n## Slither Contract Summary\n");
     // prompt_context.push_str(&contract_summary);
-    full_prompt_context
-        .push_str("\n ------------ ## Main List of Files in Project ------------ \n\n");
+    let section_9_2_header =
+        prompt_index::generated_sub_header("MAIN LIST OF FILES IN PROJECT", 9, 2);
+    full_prompt_context.push_str(&format!(
+        r#"
+
+{}
+
+        "#,
+        section_9_2_header
+    ));
     full_prompt_context.push_str(&src_file_list);
     full_prompt_context.push_str("\n\n");
 
     // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = repo.extract_content_from_docs()?;
     // adding FULL DOCS not doc_summaries
-    full_prompt_context.push_str("\n ------------ ## DOCUMENTATION: ------------ \n\n ");
+    let section_9_3_header = prompt_index::generated_sub_header("DOCUMENTATION", 9, 3);
+    full_prompt_context.push_str(&format!(
+        r#"
+
+{}
+
+    "#,
+        section_9_3_header
+    ));
     full_prompt_context.push_str(&documentation);
 
     let lib_config_headers = repo.extract_lib_config_headers()?;
-    full_prompt_context
-        .push_str("\n ------------ ## PACKAGE.JSON HEADERS OF LIB PACKAGES ------------ \n");
+    let section_9_4_header =
+        prompt_index::generated_sub_header("PACKAGE.JSON HEADERS OF LIB PACKAGES", 9, 4);
+    full_prompt_context.push_str(&format!(
+        r#"
+
+{}
+
+        "#,
+        section_9_4_header
+    ));
     full_prompt_context.push_str("\n *Note*: Check for important lib version info\n\n ");
     full_prompt_context.push_str("\n When code reviewing be mindful of which version of openzepplin, chainlink, etc the package version is using.\n\n ");
     full_prompt_context.push_str(&lib_config_headers);
 
     let config_files_content = repo.extract_content_from_config_files()?;
     // adding config files: foundry.toml, package.json, etc
-    full_prompt_context.push_str("\n ------------ ## CONFIG FILES ------------ \n");
+    let section_9_5_header = prompt_index::generated_sub_header("CONFIG FILES", 9, 5);
+    full_prompt_context.push_str(&format!(
+        r#"
+
+{}
+
+    "#,
+        section_9_5_header
+    ));
     full_prompt_context.push_str("\n *Note*: Check for important package version info.\n\n ");
     full_prompt_context.push_str(&config_files_content);
 
@@ -196,22 +235,39 @@ pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
         return Ok(cached);
     }
 
-    let mut audit_scope = "#r 
+    let section_10_1_header = prompt_index::generated_sub_header("PRIVILEGED ROLES", 10, 1);
+    let mut audit_scope = format!(
+        r#"
 
-        ------------ ## Privileged Roles ------------
+{}
 
-        All Privileged Roles are TRUSTED by default unless listed as untrusted below.
+All Privileged Roles are TRUSTED by default unless listed as untrusted below.
 
-        Errors and misuse committed by admin (or any other privileged role) are considered
-        **governance risk, NOT vulnerabilities**.  They will get marked as Low or Informational.
+Errors and misuse committed by admin (or any other privileged role) are considered
+**governance risk, NOT vulnerabilities**.  They will get marked as Low or Informational.
 
-        *Caveat*: If the admin can accidentally brick the protocol even while following spec (no malice or error) 
-        — that can rise to Medium. 
-        Example: a valid function like updateFee() can unintentionally revert all 
-        deposits if called with a certain boundary value, even though the admin followed expected usage.
-#".to_string();
+*Caveat*: If the admin can accidentally brick the protocol even while following spec (no malice or error)
+— that can rise to Medium.
+Example: a valid function like updateFee() can unintentionally revert all
+deposits if called with a certain boundary value, even though the admin followed expected usage.
+"#,
+        section_10_1_header
+    );
 
     let protocol_specific_audit_scope = repo.extract_content_from_scope_file()?;
+    let section_10_2_header =
+        prompt_index::generated_sub_header("CLIENT PROVIDED AUDIT SCOPE", 10, 2);
+
+    if !protocol_specific_audit_scope.is_empty() {
+        audit_scope.push_str(&format!(
+            r#"
+
+{}
+
+        "#,
+            section_10_2_header
+        ));
+    }
 
     audit_scope.push_str(&format!("\n\n {}", protocol_specific_audit_scope));
 

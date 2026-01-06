@@ -1,4 +1,5 @@
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
+use crate::llm_review::dynamic_prompts::prompt_index;
 use crate::llm_review::pattern_phases::generate_patterns::generate_content_plus_context_block;
 use crate::llm_review::phases::rounds::all_rounds::{AllRoundLegitAnalysis, VerifyAllRound};
 use crate::llm_review::phases::rounds::utils::generate_post_round_verify_json_requirement;
@@ -11,6 +12,7 @@ use crate::llm_review::phases::rounds::validate_round::{
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::llm_review::utils::prompt_context::generate_prompt_for_multi_finding_issue_check;
+use crate::reporting::save_file;
 use crate::{
     error::Result,
     llm_review::{
@@ -27,6 +29,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use strum_macros::EnumIter;
 
@@ -214,13 +217,22 @@ where
     }
 
     let verify_prompt = T::Spec::generate_verify_prompt();
+    let section_10_header = prompt_index::generated_section_header(
+        "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
+        10,
+    );
 
     let r_prompt = if audit_scope.is_empty() {
         verify_prompt.to_string()
     } else {
         format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT\n\n{}",
-            &verify_prompt, &audit_scope
+            r#"
+{verify_prompt}
+
+{section_10_header}
+
+{audit_scope}
+"#
         )
     };
 
@@ -235,6 +247,10 @@ where
         FindingReportType::NoPoC,
     );
 
+    save_file::save_file_locally(
+        &instruction_prompt,
+        &PathBuf::from("verify_finding_prompt.md"),
+    )?;
     info!("Verification Round");
     let r_analysis: T = agent.extract_with_retry(&instruction_prompt).await?;
 
@@ -329,13 +345,24 @@ pub async fn run_round_validation(
     }
 
     let validation_prompt = generate_round_validation_prompt(&findings);
+    let section_10_header = prompt_index::generated_section_header(
+        "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
+        10,
+    );
 
     let main_instructions = if audit_scope.is_empty() {
         validation_prompt.to_string()
     } else {
         format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
-            &validation_prompt, &audit_scope
+            r#"
+{validation_prompt}
+
+{section_10_header}
+
+**NOTE**: Only findings within the scope below are legitimate.
+
+{audit_scope}
+"#
         )
     };
 
@@ -360,6 +387,8 @@ pub async fn run_round_validation(
     instruction_prompt.push_str(&code_and_context);
     instruction_prompt.push_str("\n\n");
     instruction_prompt.push_str(&verify_json);
+
+    save_file::save_file_locally(&instruction_prompt, &PathBuf::from("validation_prompt.md"))?;
 
     info!("Validating Verification Rounds");
     let validation_analysis: FindingDowngradeValidation = validation_agent

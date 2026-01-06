@@ -1,12 +1,17 @@
 use crate::{
-    config::{
-        MAX_PATTERN_GENERAL, MAX_PATTERN_LIBRARY, MAX_PATTERN_NICHE, MAX_PATTERN_RELEVANT_FREQUENT,
-        MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_MOST, MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
-        R1_RUNS, R2_RUNS,
-    },
+    config::{R1_RUNS, R2_RUNS},
     llm_review::threat_models::patterns::VulnerabilityPattern,
 };
+
 use std::{collections::HashMap, sync::OnceLock};
+pub const MAX_PATTERN_RUN_TOP: usize = 3; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_RARE: usize = 3; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_MOST: usize = 3; // 0 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 3; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RELEVANT_FREQUENT: usize = 20; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_LIBRARY: usize = 3;
+pub const MAX_PATTERN_NICHE: usize = 4; // 3 for large protocol, default: 4
+pub const MAX_PATTERN_GENERAL: usize = 4; // 2 for large protocol, default: 4
 /// Configuration management for the AI Agent Audit application.
 ///
 /// This module provides centralized configuration handling, with constants

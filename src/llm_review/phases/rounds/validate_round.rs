@@ -301,11 +301,17 @@ impl ValidateLegitAnalysis {
 }
 
 pub fn generate_round_validation_prompt(findings: &Findings) -> String {
+    use crate::llm_review::dynamic_prompts::prompt_index;
+
+    let toc = prompt_index::generate_validation_round_toc();
     let mut prompt = String::new();
     let finding_count = findings.findings.len();
 
+    prompt.push_str(&toc);
+    prompt.push_str("\n\n");
+
     prompt.push_str(&format!(r#"
-        
+
         Your task is the evaluate EACH of the below triaged {finding_count} security findings.
         For 1 or more reasons each security finding has been downgraded to low severity or invalid.
 
