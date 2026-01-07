@@ -131,6 +131,27 @@ pub fn generate_validation_round_toc() -> String {
     )
 }
 
+pub fn generate_verify_invariant_toc() -> String {
+    let section_9_and_11 = get_section_9_and_11();
+    let section_8_bullets = get_section_8_bullets();
+    format!(
+        r#"
+## Table Of Contents
+
+### 1. JSON Output Requirements
+
+### 2. Core Instructions
+
+### 3. Invariants to Verify
+
+### 8. Codebase Where Patterns were Discovered
+{section_8_bullets}
+{section_9_and_11}
+
+"#,
+    )
+}
+
 pub fn generate_pattern_category_to_finding_discovery_prompt(
     pattern_index: &str,
     actor_or_invariant_index: &str,
@@ -198,4 +219,20 @@ fn get_section_8_bullets() -> String {
 - 8.5 External Libraries
 - 8.6 Deployment Scripts"#
         .to_string()
+}
+
+fn get_section_9_and_11() -> String {
+    r#"
+### 9. Additional Context
+- 9.1 Protocol Overview
+- 9.2 Main List of Files in Project
+- 9.3 Documentation
+- 9.4 Package.json Headers of Lib Packages
+- 9.5 Config Files
+
+### 11. Output Requirements
+- JSON Output Format
+
+    "#
+    .to_string()
 }

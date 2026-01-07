@@ -3,7 +3,7 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::INVARIANT_RUNS,
+    config::{ADDITIONAL_CONTEXT_SECTION, AUDIT_SCOPE_SECTION, CODE_SECTION, INVARIANT_RUNS},
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -52,10 +52,13 @@ where
         .expect("could not extract context");
 
     let audit_scope = generate_audit_scope(repo).await?;
-    let section_9_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 9);
+    let code_section_header =
+        prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", CODE_SECTION);
+    let section_9_header =
+        prompt_index::generated_section_header("ADDITIONAL CONTEXT", ADDITIONAL_CONTEXT_SECTION);
     let section_10_header = prompt_index::generated_section_header(
         "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
-        10,
+        AUDIT_SCOPE_SECTION,
     );
 
     let combined_context = if audit_scope.is_empty() {
@@ -84,14 +87,14 @@ where
 
     let codeblock = Arc::new(code.to_string());
 
-    let added_content_from_brain = Arc::new(combined_context);
     // Note: `codeblock` already contains Section 8 with subsections 8.1-8.6
     let code_plus_context = format!(
         r#"
+{code_section_header}
 
 {codeblock}
 
-{added_content_from_brain}
+{combined_context}
 "#
     );
 

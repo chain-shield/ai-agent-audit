@@ -1,5 +1,10 @@
 
-## PROTOCOL OVERVIEW:
+
+
+════════════════════════════════════════════════════════════════════
+███ SECTION 9.1: PROTOCOL OVERVIEW ███
+════════════════════════════════════════════════════════════════════
+                
 
 # Puppy Raffle – Technical Overview
 
@@ -133,16 +138,25 @@ function tokenURI(uint256 id) external view returns (string)
 ## 10. Final Remarks
 Puppy Raffle is a minimalistic "pay-to-play" NFT lottery.  Its core strength is simplicity: one file, no external dependencies besides OpenZeppelin v3.4′s Ownable/ERC-721, making it easy to audit.  The primary weakness is low-entropy randomness, which is acceptable for playful, low-value raffles but should be upgraded for significant prize pools.
 
+        
 
 
-## Main List of Files in Project
+════════════════════════════════════════════════════════════════════
+███ SECTION 9.2: MAIN LIST OF FILES IN PROJECT ███
+════════════════════════════════════════════════════════════════════
+                
 
-src/PuppyRaffle.sol
+        src/PuppyRaffle.sol
 
 
- ## DOCUMENTATION: 
 
- ### README.md
+
+════════════════════════════════════════════════════════════════════
+███ SECTION 9.3: DOCUMENTATION ███
+════════════════════════════════════════════════════════════════════
+                
+
+    ------------------------------ README.md ------------------------------ 
 
 <p align="center">
 <img src="./images/puppy-raffle.svg" width="400" alt="puppy-raffle">
@@ -241,9 +255,15 @@ None
 
 
 
- ## PACKAGE.JSON HEADERS OF LIB PACKAGES: 
 
- Note: Check for important lib version info
+
+════════════════════════════════════════════════════════════════════
+███ SECTION 9.4: PACKAGE.JSON HEADERS OF LIB PACKAGES ███
+════════════════════════════════════════════════════════════════════
+                
+
+        
+ *Note*: Check for important lib version info
 
  
  When code reviewing be mindful of which version of openzepplin, chainlink, etc the package version is using.
@@ -293,9 +313,15 @@ None
     "!/contracts/mocks",
 
 
- ## CONFIG FILES: 
 
- Note: Check for important package version info.
+
+════════════════════════════════════════════════════════════════════
+███ SECTION 9.5: CONFIG FILES ███
+════════════════════════════════════════════════════════════════════
+                
+
+    
+ *Note*: Check for important package version info.
 
  ### foundry.toml
 

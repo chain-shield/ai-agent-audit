@@ -1,9 +1,12 @@
-use crate::llm_review::{
-    agent::agent_enums::{all_enum_variants, generate_enum_list},
-    dynamic_prompts::prompt_index,
-    threat_models::invariants::{
-        ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
-        INVARIANT_LIBRARY,
+use crate::{
+    config::JSON_REQUIREMENT_SECTION,
+    llm_review::{
+        agent::agent_enums::{all_enum_variants, generate_enum_list},
+        dynamic_prompts::prompt_index,
+        threat_models::invariants::{
+            ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
+            INVARIANT_LIBRARY,
+        },
     },
 };
 use rand::seq::SliceRandom;
@@ -102,8 +105,11 @@ When designing each invariant:
     )
 }
 
+// TODO: make toc
 pub fn generate_all_invariants_verify_prompt(invs: &ContractInvariants) -> String {
+    let toc = prompt_index::generate_verify_invariant_toc();
     let verify_json = get_pre_all_invariants_verify_json();
+    let section_1_header = prompt_index::generated_section_header("JSON OUTPUT REQUIREMENTS", 1);
     let section_2_header = prompt_index::generated_section_header("CORE INSTRUCTIONS", 2);
     let section_3_header = prompt_index::generated_section_header("INVARIANTS TO VERIFY", 3);
     let inv_findings_report = {
@@ -117,6 +123,9 @@ pub fn generate_all_invariants_verify_prompt(invs: &ContractInvariants) -> Strin
 
     format!(
         r#"
+{toc}
+{section_1_header}
+
 {json}
 
 {section_2_header}
@@ -219,11 +228,15 @@ pub fn get_invariant_json(inv: &[InvariantType]) -> String {
 
 pub fn get_post_all_invariants_verify_json() -> String {
     let json = get_all_invariants_verify_json();
+    let json_requirement_header = prompt_index::generated_section_header(
+        "JSON OUTPUT REQUIREMENTS",
+        JSON_REQUIREMENT_SECTION,
+    );
 
     format!(
         r#"
 
-        ## OUTPUT REQUIREMENTS 
+        {json_requirement_header}
 
         *Please respond with ONLY valid JSON in the following exact format:*
 
@@ -239,7 +252,6 @@ pub fn get_post_all_invariants_verify_json() -> String {
 pub fn get_pre_all_invariants_verify_json() -> String {
     format!(
         r#"
-
         Before instructions are provided on the task please note required output format:
 
         ## JSON Output Requirement

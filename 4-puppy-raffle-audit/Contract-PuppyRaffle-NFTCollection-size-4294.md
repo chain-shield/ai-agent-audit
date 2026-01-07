@@ -1,6 +1,29 @@
 
- ------------ ## *MAIN TARGET CONTRACT* TO REVIEW ------------ 
 
+
+════════════════════════════════════════════════════════════════════
+███ SECTION 8.1: CODE INDEX (read this first) ███
+════════════════════════════════════════════════════════════════════
+                
+
+### CODE INDEX (read this first)
+
+- `Section 8.2: Main Target Contract:` src/PuppyRaffle.sol
+
+- `Section 8.3: Supporting Contracts, Libraries & Interfaces:` lib/base64/base64.sol
+
+- `Section 8.6: Deployment Scripts:` script/DeployPuppyRaffle.sol
+
+
+
+
+════════════════════════════════════════════════════════════════════
+███ SECTION 8.2: MAIN TARGET CONTRACT ███
+════════════════════════════════════════════════════════════════════
+                
+
+<file path="src/PuppyRaffle.sol">
+```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.6;
 
@@ -217,10 +240,17 @@ contract PuppyRaffle is ERC721, Ownable {
         );
     }
 }
- 
- ------------ END OF MAIN TARGET CONTRACT ------------ 
 
- ------------ ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES ------------ 
+```
+</file>
+
+
+════════════════════════════════════════════════════════════════════
+███ SECTION 8.3: SUPPORTING CONTRACTS, LIBRARIES & INTERFACES ███
+════════════════════════════════════════════════════════════════════
+                
+        <file path="lib/base64/base64.sol">
+```solidity
 // SPDX-License-Identifier: MIT
 
 pragma solidity >=0.6.0;
@@ -352,16 +382,28 @@ library Base64 {
     }
 }
 
-
-## ------------ SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS ------------ 
-
-## ------------ SUPPORTING CONTEXT: EXTERNAL LIBRARIES ------------ 
-
- ------------ END OF SUPPORTING CONTRACTS AND INTERFACES ------------ 
+```
+</file>
 
 
- ------------ ## DEPLOYMENT SCRIPTS ------------ 
+════════════════════════════════════════════════════════════════════
+███ SECTION 8.4: INTERFACES AND ROOT IMPLEMENTATIONS ███
+════════════════════════════════════════════════════════════════════
+                
+            
 
+════════════════════════════════════════════════════════════════════
+███ SECTION 8.5: EXTERNAL LIBRARIES ███
+════════════════════════════════════════════════════════════════════
+                
+            
+
+════════════════════════════════════════════════════════════════════
+███ SECTION 8.6: DEPLOYMENT SCRIPTS ███
+════════════════════════════════════════════════════════════════════
+                
+            <file path="script/DeployPuppyRaffle.sol">
+```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
 
@@ -385,3 +427,5 @@ contract DeployPuppyRaffle is Script {
     }
 }
 
+```
+</file>

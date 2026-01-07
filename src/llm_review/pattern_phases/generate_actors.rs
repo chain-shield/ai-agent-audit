@@ -1,5 +1,5 @@
 use crate::{
-    config::{ADDITIONAL_CONTEXT_SECTION, AUDIT_SCOPE_SECTION},
+    config::{ADDITIONAL_CONTEXT_SECTION, AUDIT_SCOPE_SECTION, CODE_SECTION},
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -21,6 +21,8 @@ pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> 
         .expect("could not extract context");
 
     let audit_scope = generate_audit_scope(repo).await?;
+    let code_section_header =
+        prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", CODE_SECTION);
     let section_9_header =
         prompt_index::generated_section_header("ADDITIONAL CONTEXT", ADDITIONAL_CONTEXT_SECTION);
     let section_10_header = prompt_index::generated_section_header(
@@ -56,6 +58,7 @@ pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> 
     // Note: `code` already contains Section 8 with subsections 8.1-8.6
     let code_plus_context = format!(
         r#"
+{code_section_header} 
 
 {code}
 

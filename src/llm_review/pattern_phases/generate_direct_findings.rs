@@ -166,7 +166,7 @@ where
                     &PathBuf::from("invariant_prompt.md"),
                 )?;
 
-                panic!("done with saving prompt files..");
+                // panic!("done with saving prompt files..");
 
                 for run in 0..category_spec.runs {
                     if some_actors.is_some() {

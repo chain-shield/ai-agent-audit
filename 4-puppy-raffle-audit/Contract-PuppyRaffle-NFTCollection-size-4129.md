@@ -1,5 +1,8 @@
 
- ------------ ## *MAIN TARGET CONTRACT* TO REVIEW ------------ 
+
+═══════════════════════════════════════════════════════════════════════════════
+███ SECTION 8.1: MAIN TARGET CONTRACT ███
+═══════════════════════════════════════════════════════════════════════════════
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.6;
@@ -217,11 +220,12 @@ contract PuppyRaffle is ERC721, Ownable {
         );
     }
 }
- 
- ------------ END OF MAIN TARGET CONTRACT ------------ 
 
- ------------ ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES ------------ 
-// SPDX-License-Identifier: MIT
+
+═══════════════════════════════════════════════════════════════════════════════
+███ SECTION 8.2: SUPPORTING CONTRACTS, LIBRARIES & INTERFACES ███
+═══════════════════════════════════════════════════════════════════════════════
+        // SPDX-License-Identifier: MIT
 
 pragma solidity >=0.6.0;
 
@@ -353,16 +357,18 @@ library Base64 {
 }
 
 
-## ------------ SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS ------------ 
-
-## ------------ SUPPORTING CONTEXT: EXTERNAL LIBRARIES ------------ 
-
- ------------ END OF SUPPORTING CONTRACTS AND INTERFACES ------------ 
-
-
- ------------ ## DEPLOYMENT SCRIPTS ------------ 
-
-// SPDX-License-Identifier: MIT
+═══════════════════════════════════════════════════════════════════════════════
+███ SECTION 8.3: INTERFACES AND ROOT IMPLEMENTATIONS ███
+═══════════════════════════════════════════════════════════════════════════════
+            
+═══════════════════════════════════════════════════════════════════════════════
+███ SECTION 8.4: EXTERNAL LIBRARIES ███
+═══════════════════════════════════════════════════════════════════════════════
+            
+═══════════════════════════════════════════════════════════════════════════════
+███ SECTION 8.5: DEPLOYMENT SCRIPTS ███
+═══════════════════════════════════════════════════════════════════════════════
+            // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
 
 import {Script} from "forge-std/Script.sol";
