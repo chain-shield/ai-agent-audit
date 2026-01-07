@@ -328,7 +328,7 @@ pub async fn run_round_validation(
         return Ok(findings);
     }
 
-    let validation_prompt = generate_round_validation_prompt(&findings);
+    let validation_prompt = generate_round_validation_prompt(&clean_findings);
 
     let main_instructions = if audit_scope.is_empty() {
         validation_prompt.to_string()
