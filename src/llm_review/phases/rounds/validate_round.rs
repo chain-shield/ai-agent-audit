@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::llm_review::{
     findings::findings::{Finding, Findings},
     phases::verify_rounds::FindingStatus,
-    utils::prompt_context::{FindingReportType, get_finding_report},
+    utils::prompt_context::{get_finding_report, FindingReportType},
 };
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -372,18 +372,18 @@ pub fn generate_dynamic_validation_json(findings: &Findings) -> String {
             );
 
         if num < last_finding {
-            json.push_str("}},");
+            json.push_str("},");
         } else {
             json.push_str(
                 r#"
-                    }}
+                    }
                     ]
-                }}
+                }
 
         - all fields must be set to true or false base on your analysis, if in doubt set as true.
         
         **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
-        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        **Please double-check opening and closing brackets: `}` and `]`, make sure 
         they match up correctly.
         "#,
             );
