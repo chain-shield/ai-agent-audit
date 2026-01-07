@@ -159,9 +159,6 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
     }
 
     fn generate_verify_prompt() -> String {
-        let likelihood_list = generate_enum_list(all_enum_variants::<Likelihood>().as_slice());
-        let toc = prompt_index::generate_verification_round_toc();
-        let impact_list = generate_enum_list(all_enum_variants::<Impact>().as_slice());
         let section_1_header = prompt_index::generated_section_header("CORE INSTRUCTIONS", 1);
         let section_1_1 =
             prompt_index::generated_sub_header("VERIFY SECURITY FINDING EXISTS", 1, 1);
@@ -180,8 +177,6 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
 
         format!(
             r#"
-{toc}
-
 {section_1_header}
 
 Your task: to run the following 11 checks on EACH listed security finding:
@@ -285,27 +280,6 @@ Is Security Finding depending on future state of the code?
 Does Security Finding depend on contract interaction with Non-standard token?
 
 - Fee-on-transfer/rebasing/decimals edge cases (unless explicitly supported or USDT)
-
-        ## OUTPUT REQUIREMENTS
-
-        Please continue until you have carefully evaulated ALL findings on EACH of the 11 checks.
-
-        Based on your assessment please provided the following for EACH finding:
-
-        *finding id*: insert finding id (from 'id' field)
-        *finding_title*: insert finding 'title'
-        *does bug exist*: true | false
-        *safeguard against it*: true | false
-        *in scope*: true | false
-        *by design*: true | false
-        *exploitable*: true | false
-        *impact*: {impact_list}
-        *likelihood*: {likelihood_list}
-        *user error or mistake*: true | false
-        *governance risk*: true | false
-        *future speculation*: true | false
-        *non standard token*: true | false
-        *justification:*: Please provide justification for your choices (under 400 words)
 
 "#
         )

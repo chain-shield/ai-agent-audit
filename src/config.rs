@@ -48,6 +48,11 @@ pub const INVARIANT_RUNS: usize = 3;
 
 pub const MAX_FILE_RUNS: usize = 1;
 
+pub const CODE_SECTION: u8 = 8;
+pub const ADDITIONAL_CONTEXT_SECTION: u8 = 9;
+pub const INVARIANT_OR_ACTOR_SECTION: u8 = 7;
+pub const AUDIT_SCOPE_SECTION: u8 = 10;
+pub const JSON_REQUIREMENT_SECTION: u8 = 11;
 pub const MAX_RAG_QUERY_CONTENT_LENGTH: usize = 8192; // 8192 token limit for embedding
 
 /// Docker volume path for repository analysis

@@ -116,7 +116,6 @@ pub mod llm_review {
         pub mod findings;
         pub mod findings_template;
         pub mod invariants;
-        pub mod pattern_findings;
         pub mod patterns;
         pub mod prompt_index;
     }

@@ -1,3 +1,5 @@
+use crate::config::CODE_SECTION;
+use crate::llm_review::dynamic_prompts::prompt_index;
 use crate::llm_review::pattern_phases::generate_patterns;
 use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
 /// Phase 3: Deduplication and verification of discovered security findings
@@ -102,7 +104,24 @@ where
     let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
-    let code_and_context = generate_patterns::generate_content_plus_context_block(code, &context);
+
+    let code_with_header = {
+        let section_8_header = prompt_index::generated_section_header(
+            "CODEBASE WHERE PATTERNS WHERE DISCOVERED",
+            CODE_SECTION,
+        );
+
+        format!(
+            r#"
+
+{section_8_header}
+
+{code}
+"#
+        )
+    };
+    let code_and_context =
+        generate_patterns::generate_content_plus_context_block(&code_with_header, &context);
 
     info!(
         "# of {} AFTER deduping => {}",

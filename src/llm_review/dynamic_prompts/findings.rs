@@ -1,7 +1,7 @@
 use crate::{
     config::AuditType,
     llm_review::{
-        dynamic_prompts::{findings_template, patterns},
+        dynamic_prompts::{findings_template, patterns, prompt_index},
         prompt_support::severity_rubics::{
             CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
         },
@@ -25,20 +25,42 @@ fn generate_shared_findings_prompt_body(
     pattern_count: usize,
     severity_rubic: &str,
 ) -> String {
-    let title_all_caps = title.to_uppercase();
+    let section_2_header = prompt_index::generated_section_header("CORE INSTRUCTIONS", 2);
+    let section_2_1_header = prompt_index::generated_sub_header("ANALYSIS OBJECTIVES", 2, 1);
+    let section_3_header = prompt_index::generated_section_header(
+        &format!(
+            "SECURITY VULNERABILITIES TO LOOK FOR ({} PATTERNS)",
+            pattern_count
+        ),
+        3,
+    );
+    let section_4_header =
+        prompt_index::generated_section_header("SECURITY ANALYSIS GUIDELINES", 4);
+    let section_4_1_header = prompt_index::generated_sub_header("EXPLOIT GUIDELINES", 4, 1);
+    let section_4_2_header = prompt_index::generated_sub_header("ANALYSIS RULES", 4, 2);
+    let section_4_3_header =
+        prompt_index::generated_sub_header("SEMANTIC & MULTI-STEP HUNTING CHECKLIST", 4, 3);
+    let section_5_header = prompt_index::generated_section_header("ATTACK PATTERN EXAMPLES", 5);
+    let section_5_1_header =
+        prompt_index::generated_sub_header("EXAMPLE - INCENTIVES / GAME THEORY", 5, 1);
+    let section_5_2_header =
+        prompt_index::generated_sub_header("EXAMPLE - SEMANTIC (SNAPSHOT VS LIVE READ)", 5, 2);
+    let section_5_3_header = prompt_index::generated_sub_header(
+        "EXAMPLE - Probabilistic (Same Seed / Correlated \"Randomness\"",
+        5,
+        3,
+    );
+
+    let section_6_header = prompt_index::generated_section_header("SEVERITY RUBRIC", 6);
 
     format!(
         r#"
 
-{pre_json} 
+{pre_json}
 
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
-<!-- SECTION 2: CORE INSTRUCTIONS                                                   -->
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
+{section_2_header}
 
-═══════════════════════════════════════════════════════════════════════════════
-███ SECTION 2.1: ANALYSIS OBJECTIVES ███
-═══════════════════════════════════════════════════════════════════════════════
+{section_2_1_header}
 
 ## **Persist until you've thoroughly analyzed ALL possible exploits from provided patterns**
 - Your goal is **maximum coverage** – unearth **EVERY** valid security finding.
@@ -47,32 +69,21 @@ fn generate_shared_findings_prompt_body(
 Please analyse the main target contract below for
 *each* {title} security vulnerability pattern listed below:
 
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
-<!-- SECTION 3: VULNERABILITY PATTERN CATALOG ({pattern_count} PATTERNS)                         -->
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
+{section_3_header}
 
-═══════════════════════════════════════════════════════════════════════════════
-███ SECTION 3: {title_all_caps} VULNERABILITIES TO LOOK FOR ███
-═══════════════════════════════════════════════════════════════════════════════
 {vulnerabilities_block}
 
 
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
-<!-- SECTION 4: SECURITY ANALYSIS GUIDELINES                                                 -->
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
+{section_4_header}
 
-═══════════════════════════════════════════════════════════════════════════════
-███ SECTION 4.1: EXPLOIT GUIDELINES ███
-═══════════════════════════════════════════════════════════════════════════════
+{section_4_1_header}
 
 - Severity priority: **Theft > DoS > accounting mismatch**.
 - Bigger **blast radius** and simpler execution are more valuable.
 - Assert conditions using `assertGt` / `assertEq`, not just logs.
 - For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
 
-═══════════════════════════════════════════════════════════════════════════════
-███ SECTION 4.2: ANALYSIS RULES ███
-═══════════════════════════════════════════════════════════════════════════════
+{section_4_2_header}
 
 - Only report exploits **directly tied** to the provided list of security vulnerability patterns, **not** unrelated issues.
 - Only analyze code **actually present** in the codebase. 
@@ -84,9 +95,7 @@ Please analyse the main target contract below for
 - And clearly Valid finding according to the rubric.
 - If nothing meets these criteria, return `{{"findings":[]}}`.
 
-═══════════════════════════════════════════════════════════════════════════════
-███ SECTION 4.3: SEMANTIC & MULTI-STEP HUNTING CHECKLIST ███
-═══════════════════════════════════════════════════════════════════════════════
+{section_4_3_header}
 
 1. Identify state vars + who can change them between txs. 
 2. Mark snapshot vs live reads (values cached vs reread later). 
@@ -96,13 +105,9 @@ Please analyse the main target contract below for
 6. Synthesize 2+ attack sequences (3–6 steps) before concluding “no issue”.
 
 
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
-<!-- SECTION 5: ATTACK PATTERN EXAMPLES                                             -->
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
+{section_5_header}
 
-═══════════════════════════════════════════════════════════════════════════════
-███ SECTION 5.1: EXAMPLE - INCENTIVES / GAME THEORY ███
-═══════════════════════════════════════════════════════════════════════════════
+{section_5_1_header}
 
 **Pattern:** “Attack is rational because attacker profits from delay/failure; no code bug needed besides an incentive misalignment.”
 
@@ -135,9 +140,7 @@ Please analyse the main target contract below for
 * Add **keeper incentive** (caller reward funded from protocol fees) or make execution **cheap/batched**, and/or add a **fallback** path (permissioned keeper / bounded work per call).
 
 
-═══════════════════════════════════════════════════════════════════════════════
-███ SECTION 5.2: EXAMPLE - SEMANTIC (SNAPSHOT VS LIVE READ) ███
-═══════════════════════════════════════════════════════════════════════════════
+{section_5_2_header}
 
 **Pattern:** value is read twice across calls/txs; attacker changes it in between.
 
@@ -149,7 +152,7 @@ Please analyse the main target contract below for
 
 **Mitigation:** snapshot the value once and reuse, or enforce bounds/time validity.
 
-## Example: Probabilistic (Same Seed / Correlated “Randomness”)
+{section_5_3_header}
 
 **Pattern:** randomness looks fine syntactically but is **correlated/reused**.
 
@@ -163,14 +166,7 @@ Please analyse the main target contract below for
 
 ## Severity rubric each finding should adhere to
 
-
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
-<!-- SECTION 6: SEVERITY FRAMEWORK                                                  -->
-<!-- ═══════════════════════════════════════════════════════════════════════════════ -->
-
-═══════════════════════════════════════════════════════════════════════════════
-███ SECTION 6: SEVERITY RUBRIC ███
-═══════════════════════════════════════════════════════════════════════════════
+{section_6_header}
 
 {severity_rubic}
 

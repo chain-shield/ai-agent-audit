@@ -25,14 +25,14 @@ pub fn generate_formated_list_from_pattern_data(
 
     //pattern index
     let mut pattern_index = prompt_index::generated_table_of_context_header(
-        "Vulnerability Pattern Catalog",
+        "Security Vulnerabilities to Look For",
         section_num,
     );
 
     for (section, pattern) in top_patterns_spec.iter().enumerate() {
         // update table of contents with new entry
         pattern_index.push_str(&format!(
-            "-{}.{} {}\n",
+            "- {}.{} {}\n",
             section_num,
             section + 1,
             pattern.key.to_pretty_str()

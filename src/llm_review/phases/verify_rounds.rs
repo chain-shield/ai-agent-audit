@@ -1,3 +1,4 @@
+use crate::config::CODE_SECTION;
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
 use crate::llm_review::dynamic_prompts::prompt_index;
 use crate::llm_review::pattern_phases::generate_patterns::generate_content_plus_context_block;
@@ -11,7 +12,9 @@ use crate::llm_review::phases::rounds::validate_round::{
 ///
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
-use crate::llm_review::utils::prompt_context::generate_prompt_for_multi_finding_issue_check;
+use crate::llm_review::utils::prompt_context::{
+    self, generate_prompt_for_multi_finding_issue_check,
+};
 use crate::reporting::save_file;
 use crate::{
     error::Result,
@@ -104,7 +107,23 @@ pub async fn execute_rounds(
         .await
         .expect("could not extract context");
 
-    let code_and_context = generate_content_plus_context_block(code, &context);
+    let code_with_header = {
+        let section_8_header = prompt_index::generated_section_header(
+            "CODEBASE WHERE FINDINGS WHERE DISCOVERED",
+            CODE_SECTION,
+        );
+
+        format!(
+            r#"
+
+{section_8_header}
+
+{code}
+"#
+        )
+    };
+
+    let code_and_context = generate_content_plus_context_block(&code_with_header, &context);
 
     let dedup_finding_count = deduped_findings.findings.len();
 
@@ -114,11 +133,11 @@ pub async fn execute_rounds(
     let audit_scope = generate_audit_scope(repo).await?;
 
     //************************
-    // ALL ROUND VERIFICATON
+    // VERIFICATON ROUND
     //************************
 
     let all_round_findings =
-        run_all_round(deduped_findings, &code_and_context, &audit_scope, agent).await?;
+        run_verification_round(deduped_findings, &code_and_context, &audit_scope, agent).await?;
     info!(
         "{} finding tagged as low or invalid",
         tagged_findings(&all_round_findings)
@@ -144,8 +163,12 @@ pub async fn execute_rounds(
         findings: all_round_findings_labeled,
     };
 
+    //************************
+    // VERIFICATON ROUND
+    //************************
+
     let verified_findings =
-        run_round_validation(labeled_findings, &code_and_context, &audit_scope, repo).await?;
+        run_validation_round(labeled_findings, &code_and_context, &audit_scope, repo).await?;
 
     let verify_findings_vec: Vec<Finding> = verified_findings
         .findings
@@ -184,7 +207,7 @@ pub fn tagged_findings(findings: &Findings) -> usize {
         .count()
 }
 
-pub async fn run_all_round(
+pub async fn run_verification_round(
     findings: Findings,
     code_and_context: &str,
     audit_scope: &str,
@@ -222,27 +245,22 @@ where
         10,
     );
 
-    let r_prompt = if audit_scope.is_empty() {
-        verify_prompt.to_string()
-    } else {
-        format!(
-            r#"
-{verify_prompt}
-
+    let scope = format!(
+        r#"
 {section_10_header}
 
 {audit_scope}
 "#
-        )
-    };
+    );
 
     let verify_json = T::Spec::generate_verify_json();
     let post_verify_json = generate_post_round_verify_json_requirement(&verify_json);
 
     let instruction_prompt = generate_prompt_for_multi_finding_issue_check(
-        &code_and_context,
+        &verify_prompt,
         &clean_findings,
-        &r_prompt,
+        &code_and_context,
+        &scope,
         &post_verify_json,
         FindingReportType::NoPoC,
     );
@@ -309,7 +327,7 @@ where
     })
 }
 
-pub async fn run_round_validation(
+pub async fn run_validation_round(
     findings: Findings,
     code_and_context: &str,
     audit_scope: &str,
@@ -344,47 +362,31 @@ pub async fn run_round_validation(
         return Ok(findings);
     }
 
-    let validation_prompt = generate_round_validation_prompt(&findings);
+    let validation_prompt = generate_round_validation_prompt(&clean_findings);
     let section_10_header = prompt_index::generated_section_header(
         "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
         10,
     );
 
-    let main_instructions = if audit_scope.is_empty() {
-        validation_prompt.to_string()
-    } else {
-        format!(
-            r#"
-{validation_prompt}
-
+    let scope = format!(
+        r#"
 {section_10_header}
 
 **NOTE**: Only findings within the scope below are legitimate.
 
 {audit_scope}
 "#
-        )
-    };
+    );
 
     let verify_json = generate_dynamic_validation_json(&clean_findings);
 
-    let mut instruction_prompt = format!("{}\n\n", main_instructions);
+    let mut instruction_prompt = format!("{}\n\n", validation_prompt);
 
-    // if let Some(MultiModalContext { actors, invariants }) = multimodal_context.as_deref() {
-    //     instruction_prompt.push_str("\n\n");
-    //     instruction_prompt.push_str(&format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
-    //              **NOTE**: The actors below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis\n\n
-    //             {}",actors));
-    //     instruction_prompt.push_str("\n\n");
-    //     instruction_prompt.push_str(&format!("## LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
-    //              **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis. Also, this is NOT a complete list of invariants, others may exist in codebase.\n\n
-    //             {}",invariants));
-    // }
-
-    instruction_prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");
-    instruction_prompt.push_str("\n\n");
+    instruction_prompt.push_str("\n");
 
     instruction_prompt.push_str(&code_and_context);
+    instruction_prompt.push_str("\n\n");
+    instruction_prompt.push_str(&scope);
     instruction_prompt.push_str("\n\n");
     instruction_prompt.push_str(&verify_json);
 

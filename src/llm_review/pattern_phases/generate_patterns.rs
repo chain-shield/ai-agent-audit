@@ -52,18 +52,17 @@ where
         .expect("could not extract context");
 
     let audit_scope = generate_audit_scope(repo).await?;
-    let section_7_header = prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", 7);
-    let section_8_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 8);
-    let section_9_header = prompt_index::generated_section_header(
+    let section_9_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 9);
+    let section_10_header = prompt_index::generated_section_header(
         "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
-        9,
+        10,
     );
 
     let combined_context = if audit_scope.is_empty() {
         format!(
             r#"
 
-{section_8_header}
+{section_9_header}
 
 {context}
 "#
@@ -72,11 +71,11 @@ where
         format!(
             r#"
 
-{section_8_header}
+{section_9_header}
 
 {context}
 
-{section_9_header}
+{section_10_header}
 
 {audit_scope}
 "#
@@ -86,10 +85,9 @@ where
     let codeblock = Arc::new(code.to_string());
 
     let added_content_from_brain = Arc::new(combined_context);
+    // Note: `codeblock` already contains Section 8 with subsections 8.1-8.6
     let code_plus_context = format!(
         r#"
-
-{section_7_header}
 
 {codeblock}
 
@@ -185,14 +183,10 @@ where
 /// Combines the contract code with additional context information
 /// in a structured format for optimal LLM processing.
 pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
-    let section_8_header = prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", 8);
     let section_9_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 9);
 
     format!(
         r#"
-
-{section_8_header}
-
 {codeblock}
 
 {section_9_header}

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    config::AuditType,
+    config::{AuditType, JSON_REQUIREMENT_SECTION},
     llm_review::{
         agent::agent_enums::{all_enum_variants, generate_enum_list, EnumData},
         dynamic_prompts::prompt_index,
@@ -31,15 +31,15 @@ where
         .into_iter()
         .collect();
     let issue_list = generate_enum_list(&vulnerabities);
-    let section_11_header = prompt_index::generated_section_header("OUTPUT REQUIREMENTS", 11);
-    let section_11_main_header = prompt_index::generated_sub_header("JSON OUTPUT FORMAT", 11, 0);
+    let section_11_header = prompt_index::generated_section_header(
+        "JSON OUTPUT REQUIREMENTS",
+        JSON_REQUIREMENT_SECTION,
+    );
 
     format!(
         r#"
 
 {section_11_header}
-
-{section_11_main_header}
 
 *Please respond with ONLY valid JSON in the following exact format:*
 
@@ -77,7 +77,7 @@ Before instructions are provided on the task please note required output format:
 
 - **Output must be strictly valid JSON**.
 - No markdown, no code fences.
-- Must validate against schema below in SECTION 11.1; use only allowed enums.
+- Must validate against schema below in SECTION 11; use only allowed enums.
 - If no vulnerabilities are found, return: 
 
 {{

@@ -174,17 +174,12 @@ pub fn generate_invariant_verify_prompt(inv: &InvariantFinding) -> String {
 pub fn get_invariant_json(inv: &[InvariantType]) -> String {
     let status_enum_list = generate_enum_list(all_enum_variants::<InvariantStatus>().as_slice());
     let invariant_type_list = generate_enum_list(inv);
-    let section_1_header = prompt_index::generated_section_header("OUTPUT FORMAT REQUIREMENTS", 1);
-    let section_1_1_header = prompt_index::generated_sub_header("JSON OUTPUT REQUIREMENT", 1, 1);
+    let section_1_header = prompt_index::generated_section_header("JSON OUTPUT REQUIREMENTS", 1);
 
     format!(
         r#"
 
 {section_1_header}
-
-Before instructions are provided on the task please note required output format:
-
-{section_1_1_header}
 
 **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
         
@@ -251,7 +246,7 @@ pub fn get_pre_all_invariants_verify_json() -> String {
 
         - **Output must be strictly valid JSON** 
         - No markdown, no code fences
-        - Must validate against schema below in SECTION 11.1
+        - Must validate against schema below in SECTION 11
 
     "#
     )
@@ -337,7 +332,7 @@ pub fn generate_full_list_of_invariant_findings(
 Also, this is NOT a complete list of invariants, other may exist in codebase.
 
                 "#,
-        prompt_index::generated_section_header(&invariant_title.to_uppercase(), 7)
+        prompt_index::generated_section_header(&invariant_title.to_uppercase(), section_num)
     );
 
     let mut invariant_index =
@@ -351,7 +346,7 @@ Also, this is NOT a complete list of invariants, other may exist in codebase.
     for (section, invariant) in invariants.iter().enumerate() {
         // update table of contents with new entry
         invariant_index.push_str(&format!(
-            "-{}.{} {}\n",
+            "- {}.{} {}\n",
             section_num,
             section + 1,
             invariant.predicate

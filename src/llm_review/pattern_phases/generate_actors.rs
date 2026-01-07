@@ -1,4 +1,5 @@
 use crate::{
+    config::{ADDITIONAL_CONTEXT_SECTION, AUDIT_SCOPE_SECTION},
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -7,9 +8,10 @@ use crate::{
         threat_models::actors::Actors,
     },
     prepare_code::git_clone::RepoPaths,
+    reporting::save_file,
 };
 use log::info;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> Result<Actors> {
     info!("🔍 Phase 0: Generating Actors from contract codebase...");
@@ -19,11 +21,11 @@ pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> 
         .expect("could not extract context");
 
     let audit_scope = generate_audit_scope(repo).await?;
-    let section_8_header = prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", 8);
-    let section_9_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 9);
+    let section_9_header =
+        prompt_index::generated_section_header("ADDITIONAL CONTEXT", ADDITIONAL_CONTEXT_SECTION);
     let section_10_header = prompt_index::generated_section_header(
         "AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT",
-        10,
+        AUDIT_SCOPE_SECTION,
     );
 
     let combined_context = if audit_scope.is_empty() {
@@ -51,10 +53,9 @@ pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> 
     };
 
     // Build code + context block
+    // Note: `code` already contains Section 8 with subsections 8.1-8.6
     let code_plus_context = format!(
         r#"
-
-{section_8_header}
 
 {code}
 
@@ -67,6 +68,7 @@ pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> 
     let json_requirement_prompt = dynamic_prompts::actors::get_actor_list_json();
     let prompt = format!("{instruction_prompt}{code_plus_context}{json_requirement_prompt}");
 
+    save_file::save_file_locally(&prompt, &PathBuf::from("generate_actors_prompt.md"))?;
     // Single LLM call - no need for threads since we only run once per contract
     info!("---- LLM analysis for Enumerating Actors ----");
     let actors: Actors = arc_agent.extract_with_retry(&prompt).await?;

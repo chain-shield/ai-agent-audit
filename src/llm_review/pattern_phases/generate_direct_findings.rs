@@ -3,7 +3,9 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::INVARIANT_RUNS,
+    config::{
+        ADDITIONAL_CONTEXT_SECTION, CODE_SECTION, INVARIANT_OR_ACTOR_SECTION, INVARIANT_RUNS,
+    },
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -105,14 +107,20 @@ where
         IssuePrompt::Combined((pattern_category, some_actors, some_invariants)) => {
             let (actor_context, actor_index) = if some_actors.is_some() {
                 let actors = some_actors.clone().unwrap_or_default();
-                actors::generate_formated_list_from_actor_data(&actors.actors, 7)
+                actors::generate_formated_list_from_actor_data(
+                    &actors.actors,
+                    INVARIANT_OR_ACTOR_SECTION,
+                )
             } else {
                 (String::new(), String::new())
             };
 
             let (invariant_context, invariant_index) = if some_invariants.is_some() {
                 let invariants = some_invariants.clone().unwrap_or_default();
-                invariants::generate_full_list_of_invariant_findings(&invariants, 7)
+                invariants::generate_full_list_of_invariant_findings(
+                    &invariants,
+                    INVARIANT_OR_ACTOR_SECTION,
+                )
             } else {
                 (String::new(), String::new())
             };
@@ -242,8 +250,10 @@ where
 /// in a structured format for optimal LLM processing.
 fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
     let mut code_plus_context = String::new();
-    let section_8_header = prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", 8);
-    let section_9_header = prompt_index::generated_section_header("ADDITIONAL CONTEXT", 9);
+    let section_8_header =
+        prompt_index::generated_section_header("SOLIDITY CODE TO REVIEW", CODE_SECTION);
+    let section_9_header =
+        prompt_index::generated_section_header("ADDITIONAL CONTEXT", ADDITIONAL_CONTEXT_SECTION);
 
     code_plus_context.push_str(&format!(
         r#"

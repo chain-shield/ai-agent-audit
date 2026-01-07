@@ -1,7 +1,10 @@
-use crate::llm_review::{
-    agent::agent_enums::{all_enum_variants, generate_enum_list},
-    dynamic_prompts::prompt_index,
-    threat_models::actors::{Actor, RoleType},
+use crate::{
+    config::JSON_REQUIREMENT_SECTION,
+    llm_review::{
+        agent::agent_enums::{all_enum_variants, generate_enum_list},
+        dynamic_prompts::prompt_index,
+        threat_models::actors::{Actor, RoleType},
+    },
 };
 use rand::seq::SliceRandom;
 
@@ -205,18 +208,15 @@ For this analysis, trusted actors CANNOT act maliciously.
 }
 pub fn get_actor_list_json() -> String {
     let role_types = generate_enum_list(&all_enum_variants::<RoleType>());
-    let section_11_header =
-        prompt_index::generated_section_header("OUTPUT FORMAT REQUIREMENTS", 11);
-    let section_11_1_header = prompt_index::generated_sub_header("JSON OUTPUT REQUIREMENT", 11, 1);
+    let section_11_header = prompt_index::generated_section_header(
+        "JSON OUTPUT REQUIREMENTS",
+        JSON_REQUIREMENT_SECTION,
+    );
 
     format!(
         r#"
 
 {section_11_header}
-
-Before instructions are provided on the task please note required output format:
-
-{section_11_1_header}
 
 **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
         
@@ -265,7 +265,7 @@ pub fn generate_formated_list_from_actor_data(
 **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis.
 
                 "#,
-        prompt_index::generated_section_header(&actor_title.to_uppercase(), 7)
+        prompt_index::generated_section_header(&actor_title.to_uppercase(), section_num)
     );
 
     let mut actor_index = prompt_index::generated_table_of_context_header(actor_title, section_num);
@@ -279,7 +279,7 @@ pub fn generate_formated_list_from_actor_data(
     for (section, actor) in actors.iter().enumerate() {
         // update table of contents with new entry
         actor_index.push_str(&format!(
-            "-{}.{} {}\n",
+            "- {}.{} {}\n",
             section_num,
             section + 1,
             actor.name
@@ -288,7 +288,7 @@ pub fn generate_formated_list_from_actor_data(
         // add new actor to list
         actor_list.push_str(&prompt_index::generated_sub_header(
             &actor.name.to_uppercase(),
-            7,
+            section_num,
             section + 1,
         ));
 

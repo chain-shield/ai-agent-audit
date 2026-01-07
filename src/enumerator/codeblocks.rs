@@ -1,7 +1,7 @@
 use crate::build_brain::graph_db::SmartContractFunction;
 use crate::build_brain::inheritance_map::{self, resolve_contract_file};
 use crate::build_brain::summarize_db::get_file_summary_from_db;
-use crate::config::{CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB};
+use crate::config::{CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB, CODE_SECTION};
 use crate::cost::cost_data::get_token_count;
 /// Intelligent code slicing for focused AI analysis.
 ///
@@ -384,7 +384,8 @@ pub async fn generate_codeblock_from_codebase(
         // Add main contract code (CRITICAL - always include)
         let (main_contract_code, contract_file) =
             get_contract_file_content(&main_contract, None, repo).await?;
-        let section_8_2_header = prompt_index::generated_sub_header("MAIN TARGET CONTRACT", 8, 2);
+        let section_8_2_header =
+            prompt_index::generated_sub_header("MAIN TARGET CONTRACT", CODE_SECTION, 2);
         let main_section = format!(
             r#"
 
@@ -606,8 +607,11 @@ pub async fn generate_codeblock_from_codebase(
             source_files_skipped_budget
         );
 
-        let supporting_lib_header =
-            prompt_index::generated_sub_header("INTERFACES AND ROOT IMPLEMENTATIONS", 8, 4);
+        let supporting_lib_header = prompt_index::generated_sub_header(
+            "INTERFACES AND ROOT IMPLEMENTATIONS",
+            CODE_SECTION,
+            4,
+        );
         markdown_codeblock_for_llm.push_str(&format!(
             r#"
 {}
@@ -758,7 +762,8 @@ pub async fn generate_codeblock_from_codebase(
             impl_skipped_budget
         );
 
-        let supporting_lib_header = prompt_index::generated_sub_header("EXTERNAL LIBRARIES", 8, 5);
+        let supporting_lib_header =
+            prompt_index::generated_sub_header("EXTERNAL LIBRARIES", CODE_SECTION, 5);
         markdown_codeblock_for_llm.push_str(&format!(
             r#"
 {}
@@ -821,7 +826,8 @@ pub async fn generate_codeblock_from_codebase(
             }
         }
 
-        let section_8_6_header = prompt_index::generated_sub_header("DEPLOYMENT SCRIPTS", 8, 6);
+        let section_8_6_header =
+            prompt_index::generated_sub_header("DEPLOYMENT SCRIPTS", CODE_SECTION, 6);
         markdown_codeblock_for_llm.push_str(&format!(
             r#"
 {}
@@ -1287,7 +1293,7 @@ fn generate_code_index(
     script_files_list: &[String],
 ) -> String {
     let section_8_1_header =
-        prompt_index::generated_sub_header("CODE INDEX (read this first)", 8, 1);
+        prompt_index::generated_sub_header("CODE INDEX (read this first)", CODE_SECTION, 1);
 
     let mut index = format!(
         r#"
@@ -1302,7 +1308,9 @@ fn generate_code_index(
 
     // Section 8.2: Main Target Contract
     if !main_contract_files.is_empty() {
-        index.push_str("- `Section 8.2: Main Target Contract:` ");
+        index.push_str(&format!(
+            "- `Section {CODE_SECTION}.2: Main Target Contract:` "
+        ));
         index.push_str(&main_contract_files.join(", "));
         index.push_str("\n\n");
     }
@@ -1313,7 +1321,9 @@ fn generate_code_index(
     section_8_3_files.extend(source_files_list.iter().cloned());
 
     if !section_8_3_files.is_empty() {
-        index.push_str("- `Section 8.3: Supporting Contracts, Libraries & Interfaces:` ");
+        index.push_str(&format!(
+            "- `Section {CODE_SECTION}.3: Supporting Contracts, Libraries & Interfaces:` "
+        ));
         index.push_str(&section_8_3_files.join(", "));
         index.push_str("\n\n");
     }
@@ -1324,21 +1334,27 @@ fn generate_code_index(
     section_8_4_files.extend(impl_files_list.iter().cloned());
 
     if !section_8_4_files.is_empty() {
-        index.push_str("- `Section 8.4: Interfaces and Root Implementations:` ");
+        index.push_str(&format!(
+            "- `Section {CODE_SECTION}.4: Interfaces and Root Implementations:` "
+        ));
         index.push_str(&section_8_4_files.join(", "));
         index.push_str("\n\n");
     }
 
     // Section 8.5: External Libraries
     if !lib_files_list.is_empty() {
-        index.push_str("- `Section 8.5: External Libraries:` ");
+        index.push_str(&format!(
+            "- `Section {CODE_SECTION}.5: External Libraries:` "
+        ));
         index.push_str(&lib_files_list.join(", "));
         index.push_str("\n\n");
     }
 
     // Section 8.6: Deployment Scripts
     if !script_files_list.is_empty() {
-        index.push_str("- `Section 8.6: Deployment Scripts:` ");
+        index.push_str(&format!(
+            "- `Section {CODE_SECTION}.6: Deployment Scripts:` "
+        ));
         index.push_str(&script_files_list.join(", "));
         index.push_str("\n\n");
     }

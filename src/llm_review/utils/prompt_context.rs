@@ -1,7 +1,7 @@
 use crate::{
     config::CREATE_TESTS,
     llm_review::{
-        dynamic_prompts::prompt_index,
+        dynamic_prompts::prompt_index::{self, generate_verification_round_toc},
         findings::findings::{Finding, Findings},
         threat_models::patterns::Pattern,
     },
@@ -34,15 +34,39 @@ pub fn generate_prompt_for_issue_check(
 }
 
 pub fn generate_prompt_for_multi_finding_issue_check(
-    code: &str,
-    finding: &Findings,
     instructions: &str,
+    finding: &Findings,
+    code: &str,
+    scope: &str,
     post_instructions: &str,
     report_type: FindingReportType,
 ) -> String {
+    let (list_of_findings, section_2_bullets) = {
+        let mut list = String::new();
+        let mut bullets_for_toc = String::new();
+        for (i, finding) in finding.findings.iter().enumerate() {
+            // add table of contents bullet
+            bullets_for_toc.push_str(&format!("- 2.{} {}\n", i + 1, &finding.title));
+
+            // add sub section header
+            let finding_header = prompt_index::generated_sub_header(&finding.title, 2, i + 1);
+            list.push_str(&finding_header);
+
+            let report = get_finding_report(finding, None, report_type);
+            list.push_str(&report);
+            list.push_str("\n\n");
+        }
+        (list, bullets_for_toc)
+    };
+
+    let toc = generate_verification_round_toc(&section_2_bullets);
+
     let section_2_header =
         prompt_index::generated_section_header("SECURITY FINDINGS TO EVALUATE", 2);
-    let mut prompt = instructions.to_string();
+    let mut prompt = toc;
+
+    prompt.push_str(instructions);
+    prompt.push_str("\n\n");
 
     prompt.push_str(&format!(
         r#"
@@ -51,14 +75,11 @@ pub fn generate_prompt_for_multi_finding_issue_check(
 
 "#
     ));
-
-    for finding in &finding.findings {
-        let report = get_finding_report(finding, None, report_type);
-        prompt.push_str(&report);
-        prompt.push_str("\n\n");
-    }
-
+    prompt.push_str(&list_of_findings);
+    prompt.push_str("\n\n");
     prompt.push_str(code);
+    prompt.push_str("\n\n");
+    prompt.push_str(scope);
     prompt.push_str("\n\n");
     prompt.push_str(post_instructions);
 

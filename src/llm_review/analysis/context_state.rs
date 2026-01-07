@@ -11,9 +11,12 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{FileSummaryType, summarize_protocol, summarize_src_files},
+        summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
     },
-    config::{SKIP_ACTOR_PATTERN_RUNS, SKIP_INVARIANT_RUNS},
+    config::{
+        ADDITIONAL_CONTEXT_SECTION, AUDIT_SCOPE_SECTION, SKIP_ACTOR_PATTERN_RUNS,
+        SKIP_INVARIANT_RUNS,
+    },
     cost::cost_data::get_token_count,
     llm_review::{
         analysis::pre_audit_analysis,
@@ -112,7 +115,8 @@ pub async fn generate_and_save_metadata_context(repo: &RepoPaths) -> anyhow::Res
     }
 
     let protocol_summary = summarize_protocol(repo, Some(&full_context_plus_summaries)).await?;
-    let section_9_1_header = prompt_index::generated_sub_header("PROTOCOL OVERVIEW", 9, 1);
+    let section_9_1_header =
+        prompt_index::generated_sub_header("PROTOCOL OVERVIEW", ADDITIONAL_CONTEXT_SECTION, 1);
 
     metadata.push_str(&format!(
         r#"
@@ -159,8 +163,11 @@ pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String
 
     // prompt_context.push_str("\n## Slither Contract Summary\n");
     // prompt_context.push_str(&contract_summary);
-    let section_9_2_header =
-        prompt_index::generated_sub_header("MAIN LIST OF FILES IN PROJECT", 9, 2);
+    let section_9_2_header = prompt_index::generated_sub_header(
+        "MAIN LIST OF FILES IN PROJECT",
+        ADDITIONAL_CONTEXT_SECTION,
+        2,
+    );
     full_prompt_context.push_str(&format!(
         r#"
 
@@ -175,7 +182,8 @@ pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String
     // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = repo.extract_content_from_docs()?;
     // adding FULL DOCS not doc_summaries
-    let section_9_3_header = prompt_index::generated_sub_header("DOCUMENTATION", 9, 3);
+    let section_9_3_header =
+        prompt_index::generated_sub_header("DOCUMENTATION", ADDITIONAL_CONTEXT_SECTION, 3);
     full_prompt_context.push_str(&format!(
         r#"
 
@@ -187,8 +195,11 @@ pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String
     full_prompt_context.push_str(&documentation);
 
     let lib_config_headers = repo.extract_lib_config_headers()?;
-    let section_9_4_header =
-        prompt_index::generated_sub_header("PACKAGE.JSON HEADERS OF LIB PACKAGES", 9, 4);
+    let section_9_4_header = prompt_index::generated_sub_header(
+        "PACKAGE.JSON HEADERS OF LIB PACKAGES",
+        ADDITIONAL_CONTEXT_SECTION,
+        4,
+    );
     full_prompt_context.push_str(&format!(
         r#"
 
@@ -203,7 +214,8 @@ pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String
 
     let config_files_content = repo.extract_content_from_config_files()?;
     // adding config files: foundry.toml, package.json, etc
-    let section_9_5_header = prompt_index::generated_sub_header("CONFIG FILES", 9, 5);
+    let section_9_5_header =
+        prompt_index::generated_sub_header("CONFIG FILES", ADDITIONAL_CONTEXT_SECTION, 5);
     full_prompt_context.push_str(&format!(
         r#"
 
@@ -235,7 +247,8 @@ pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
         return Ok(cached);
     }
 
-    let section_10_1_header = prompt_index::generated_sub_header("PRIVILEGED ROLES", 10, 1);
+    let section_10_1_header =
+        prompt_index::generated_sub_header("PRIVILEGED ROLES", AUDIT_SCOPE_SECTION, 1);
     let mut audit_scope = format!(
         r#"
 
@@ -256,20 +269,20 @@ deposits if called with a certain boundary value, even though the admin followed
 
     let protocol_specific_audit_scope = repo.extract_content_from_scope_file()?;
     let section_10_2_header =
-        prompt_index::generated_sub_header("CLIENT PROVIDED AUDIT SCOPE", 10, 2);
+        prompt_index::generated_sub_header("CLIENT PROVIDED AUDIT SCOPE", AUDIT_SCOPE_SECTION, 2);
 
-    if !protocol_specific_audit_scope.is_empty() {
-        audit_scope.push_str(&format!(
-            r#"
+    audit_scope.push_str(&format!(
+        r#"
 
 {}
 
         "#,
-            section_10_2_header
-        ));
-    }
+        section_10_2_header
+    ));
 
-    audit_scope.push_str(&format!("\n\n {}", protocol_specific_audit_scope));
+    if !protocol_specific_audit_scope.is_empty() {
+        audit_scope.push_str(&format!("\n\n {}", protocol_specific_audit_scope));
+    }
 
     // 1 . gather IR + storage  (re-use existing function)
     log::info!("get audit scope from file...");

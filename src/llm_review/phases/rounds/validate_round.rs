@@ -2,10 +2,14 @@ use log::info;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::llm_review::{
-    findings::findings::{Finding, Findings},
-    phases::verify_rounds::FindingStatus,
-    utils::prompt_context::{FindingReportType, get_finding_report},
+use crate::{
+    config::JSON_REQUIREMENT_SECTION,
+    llm_review::{
+        dynamic_prompts::prompt_index,
+        findings::findings::{Finding, Findings},
+        phases::verify_rounds::FindingStatus,
+        utils::prompt_context::{get_finding_report, FindingReportType},
+    },
 };
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -304,6 +308,13 @@ pub fn generate_round_validation_prompt(findings: &Findings) -> String {
     use crate::llm_review::dynamic_prompts::prompt_index;
 
     let toc = prompt_index::generate_validation_round_toc();
+    let section_1 = prompt_index::generated_section_header("CORE INSTRUCTIONS", 1);
+    let section_1_1 = prompt_index::generated_sub_header("Task Overview", 1, 1);
+    let section_1_2 = prompt_index::generated_sub_header(
+        "Security Findings + Reasons They were Downgraded",
+        1,
+        2,
+    );
     let mut prompt = String::new();
     let finding_count = findings.findings.len();
 
@@ -312,13 +323,17 @@ pub fn generate_round_validation_prompt(findings: &Findings) -> String {
 
     prompt.push_str(&format!(r#"
 
+        {section_1}
+
+        {section_1_1} 
+
         Your task is the evaluate EACH of the below triaged {finding_count} security findings.
         For 1 or more reasons each security finding has been downgraded to low severity or invalid.
 
         For each and every finding, your job is to evaluate the validity of each reason each finding was downgraded
         (governance risk, does not exist, user mistake, future speculation, etc..), and mark each reason as true or false.
 
-        # Security Findings + Reasons They were Downgraded
+        {section_1_2}
 
         "#));
 
@@ -350,16 +365,21 @@ pub fn generate_round_validation_prompt(findings: &Findings) -> String {
 }
 
 pub fn generate_dynamic_validation_json(findings: &Findings) -> String {
-    let mut json = r#"
+    let section_11 = prompt_index::generated_section_header(
+        "JSON OUTPUT REQUIREMENTS",
+        JSON_REQUIREMENT_SECTION,
+    );
+    let mut json = format!(
+        r#"
 
-        ## OUTPUT REQUIREMENTS 
+        {section_11}
 
         *Please respond with ONLY valid JSON in the following exact format:*
 
         {{
             "findings": [
         "#
-    .to_string();
+    );
 
     let last_finding = findings.findings.len() - 1;
 
