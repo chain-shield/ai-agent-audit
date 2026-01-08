@@ -263,11 +263,14 @@ pub fn get_invariant_verify_json() -> String {
 }
 
 pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantType]) -> String {
-    let top_invariant_spec: Vec<InvariantSpec> = INVARIANT_LIBRARY
+    let mut top_invariant_spec: Vec<InvariantSpec> = INVARIANT_LIBRARY
         .iter()
         .filter(|inv| patterns_to_use.contains(&inv.key))
         .map(|inv| inv.to_owned())
         .collect();
+
+    let mut rng = rand::rng();
+    top_invariant_spec.shuffle(&mut rng);
 
     let mut top_invariant_list = String::new();
 
