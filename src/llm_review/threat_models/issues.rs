@@ -9,7 +9,6 @@ use crate::{
         },
         dynamic_prompts::{
             findings_template::get_post_json_requirement_for_multipattern,
-            inv_findings::generate_multi_invariant_to_findings_prompt,
             invariants::{
                 self, generate_all_invariants_verify_prompt, generate_invariant_verify_prompt,
                 get_post_all_invariants_verify_json,
@@ -160,8 +159,8 @@ impl IssueStructTrait for ContractInvariants {
     fn issue_title(&self) -> String {
         "invariant".to_string()
     }
-    fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String {
-        generate_multi_invariant_to_findings_prompt(&self, repo)
+    fn multi_issue_to_findings_prompt(&self, _: &RepoPaths) -> String {
+        unimplemented!("Not implimented for ContractInvariants");
     }
     fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
         let invariants: Vec<InvariantType> = self.issues().iter().map(|p| p.inv_type).collect();
