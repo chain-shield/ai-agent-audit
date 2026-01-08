@@ -115,9 +115,7 @@ pub mod llm_review {
         pub mod actors;
         pub mod findings;
         pub mod findings_template;
-        pub mod inv_findings;
         pub mod invariants;
-        pub mod pattern_findings;
         pub mod patterns;
     }
     pub mod phases {
@@ -137,7 +135,6 @@ pub mod llm_review {
         pub mod generate_direct_findings;
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
         pub mod generate_patterns;
-        pub mod multipattern_to_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_patterns;
     }
