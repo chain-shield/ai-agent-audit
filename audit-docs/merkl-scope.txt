@@ -1,2 +1,0 @@
-./contracts/DistributionCreator.sol
-./contracts/Distributor.sol
