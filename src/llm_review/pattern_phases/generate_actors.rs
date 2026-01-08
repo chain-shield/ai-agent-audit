@@ -7,9 +7,10 @@ use crate::{
         threat_models::actors::Actors,
     },
     prepare_code::git_clone::RepoPaths,
+    reporting::save_file,
 };
 use log::info;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> Result<Actors> {
     info!("🔍 Phase 0: Generating Actors from contract codebase...");
@@ -35,6 +36,8 @@ pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> 
     let instruction_prompt = dynamic_prompts::actors::generate_actors_prompt();
     let json_requirement_prompt = dynamic_prompts::actors::get_actor_list_json();
     let prompt = format!("{instruction_prompt}{code_plus_context}{json_requirement_prompt}");
+
+    save_file::save_file_locally(&prompt, &PathBuf::from("prompts/generate_actor_prompt.md"))?;
 
     // Single LLM call - no need for threads since we only run once per contract
     info!("---- LLM analysis for Enumerating Actors ----");

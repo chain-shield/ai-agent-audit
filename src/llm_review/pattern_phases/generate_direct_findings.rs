@@ -21,10 +21,11 @@ use crate::{
         },
     },
     prepare_code::git_clone::RepoPaths,
+    reporting::save_file,
 };
 use log::info;
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
 /// Executes the findings generation phase
@@ -136,6 +137,14 @@ where
                 let prompt_invariant = Arc::new(format!(
                     "{instruction_prompt}{invariant_context}{code_plus_context}{json_requirement_prompt}"
                 ));
+                save_file::save_file_locally(
+                    &prompt_actors,
+                    &PathBuf::from("prompts/actor_prompt.md"),
+                )?;
+                save_file::save_file_locally(
+                    &prompt_invariant,
+                    &PathBuf::from("prompts/invariant_prompt.md"),
+                )?;
 
                 for run in 0..category_spec.runs {
                     if some_actors.is_some() {

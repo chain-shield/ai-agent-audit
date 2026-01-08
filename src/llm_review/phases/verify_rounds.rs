@@ -11,6 +11,7 @@ use crate::llm_review::phases::rounds::validate_round::{
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::llm_review::utils::prompt_context::generate_prompt_for_multi_finding_issue_check;
+use crate::reporting::save_file;
 use crate::{
     error::Result,
     llm_review::{
@@ -27,6 +28,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use strum_macros::EnumIter;
 
@@ -235,6 +237,11 @@ where
         FindingReportType::NoPoC,
     );
 
+    save_file::save_file_locally(
+        &instruction_prompt,
+        &PathBuf::from("prompts/verification_prompt.md"),
+    )?;
+
     info!("Verification Round");
     let r_analysis: T = agent.extract_with_retry(&instruction_prompt).await?;
 
@@ -362,6 +369,10 @@ pub async fn run_round_validation(
     instruction_prompt.push_str(&verify_json);
 
     info!("Validating Verification Rounds");
+    save_file::save_file_locally(
+        &instruction_prompt,
+        &PathBuf::from("prompts/validation_prompt.md"),
+    )?;
     let validation_analysis: FindingDowngradeValidation = validation_agent
         .extract_with_retry(&instruction_prompt)
         .await?;
