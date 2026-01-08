@@ -115,6 +115,7 @@ where
                 &prompt,
                 &PathBuf::from("prompts/generate_invariant_prompt.md"),
             )?;
+
             // info!("invariant prompt => {}", prompt);
             for run in 0..INVARIANT_RUNS {
                 spawn_run(Arc::clone(&prompt), run + 1);
