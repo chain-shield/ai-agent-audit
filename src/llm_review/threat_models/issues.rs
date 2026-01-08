@@ -10,8 +10,7 @@ use crate::{
         dynamic_prompts::{
             findings_template::get_post_json_requirement_for_multipattern,
             invariants::{
-                self, generate_all_invariants_verify_prompt, generate_invariant_verify_prompt,
-                get_post_all_invariants_verify_json,
+                self, generate_all_invariants_verify_prompt, get_post_all_invariants_verify_json,
             },
         },
         findings::findings::{Finding, Findings},
@@ -104,7 +103,7 @@ impl IssueTrait for InvariantFinding {
         )
     }
     fn generate_verify_prompt(&self) -> String {
-        generate_invariant_verify_prompt(&self)
+        unimplemented!("Not implimented for InvariantFinding");
     }
 }
 

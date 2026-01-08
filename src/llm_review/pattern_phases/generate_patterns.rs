@@ -8,14 +8,8 @@ use crate::{
     llm_review::{
         agent::agent_enums::AIAgent,
         analysis::context_state::{generate_audit_scope, get_metadata_context},
-        dynamic_prompts::{
-            self,
-            invariants::{generate_invariant_prompt, get_invariant_json},
-        },
-        threat_models::{
-            issues::{IssuePrompt, IssueStructTrait},
-            pattern_category::get_category_library_spec,
-        },
+        dynamic_prompts::invariants::{generate_invariant_prompt, get_invariant_json},
+        threat_models::issues::{IssuePrompt, IssueStructTrait},
     },
     prepare_code::git_clone::RepoPaths,
     reporting::save_file,
@@ -83,26 +77,8 @@ where
     };
 
     match issue_prompt {
-        IssuePrompt::Combined((pattern_category, _, _)) => {
-            for (i, category) in pattern_category.into_iter().enumerate() {
-                let category_spec =
-                    get_category_library_spec(&category).expect("could not extract category spec");
-
-                // construct promopt
-                let instruction_prompt =
-                    dynamic_prompts::patterns::generate_pattern_category_prompt(&category);
-                let json_requirement_prompt =
-                    dynamic_prompts::patterns::get_pattern_json_requirement(&category_spec.issues);
-                let prompt = Arc::new(format!(
-                    "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
-                ));
-
-                // info!("pattern prompt => {}", prompt);
-
-                for run in 0..category_spec.runs {
-                    spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
-                }
-            }
+        IssuePrompt::Combined((_, _, _)) => {
+            log::warn!("this feature is depreciated, see generate_direct_findings.rs for latest implimentation");
         }
         IssuePrompt::Invariant(invariants) => {
             let inv_prompt = Arc::new(generate_invariant_prompt(&invariants));

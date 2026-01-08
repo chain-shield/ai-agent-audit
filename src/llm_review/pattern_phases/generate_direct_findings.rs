@@ -3,7 +3,6 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::INVARIANT_RUNS,
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -13,7 +12,7 @@ use crate::{
         },
         dynamic_prompts::{
             self, actors,
-            invariants::{self, generate_invariant_prompt, get_invariant_json},
+            invariants::{self},
         },
         threat_models::{
             issues::{IssuePrompt, IssueStructTrait},
@@ -164,16 +163,8 @@ where
                 }
             }
         }
-        IssuePrompt::Invariant(invariants) => {
-            let inv_prompt = Arc::new(generate_invariant_prompt(&invariants));
-            let json_requirement_prompt = Arc::new(get_invariant_json(&invariants));
-            let prompt = Arc::new(format!(
-                "{inv_prompt}{code_plus_context}{json_requirement_prompt}"
-            ));
-            // info!("invariant prompt => {}", prompt);
-            for _ in 0..INVARIANT_RUNS {
-                spawn_run(Arc::clone(&prompt));
-            }
+        IssuePrompt::Invariant(_) => {
+            log::warn!("this feature has been depreciated");
         }
     }
 
