@@ -20,7 +20,6 @@ pub struct FindingDb {
     pub description: String,
     pub impact: String,           // FK → seeds.id
     pub proof_of_concept: String, // e.g. "High", "Info", …
-    pub proof_of_code: String,
     pub severity: String,
     // pub confidence:   Option<f32>,
     // pub sources_used: Vec<u8>,
@@ -42,7 +41,6 @@ impl FindingsDb {
               description         TEXT,
               impact              TEXT,
               proof_of_concept    TEXT,
-              proof_of_code       TEXT,
               severity            TEXT
             );
 
@@ -55,7 +53,7 @@ impl FindingsDb {
 
     pub fn insert(&self, f: &FindingDb, repo: &RepoPaths) -> Result<()> {
         self.0.execute(
-            "INSERT INTO findings VALUES (?1,?2,?3,?4,?5,?6,?7,?8);",
+            "INSERT INTO findings VALUES (?1,?2,?3,?4,?5,?6,?7);",
             params![
                 f.id,
                 repo.project_id,
@@ -63,7 +61,6 @@ impl FindingsDb {
                 f.description,
                 f.impact,
                 f.proof_of_concept,
-                f.proof_of_code,
                 f.severity
             ],
         )?;
@@ -78,7 +75,7 @@ impl FindingsDb {
         for finding in &findings.findings {
             let finding_db = FindingDb::from_finding(finding, repo);
             tx.execute(
-                "INSERT INTO findings VALUES (?1,?2,?3,?4,?5,?6,?7,?8);",
+                "INSERT INTO findings VALUES (?1,?2,?3,?4,?5,?6,?7);",
                 params![
                     finding_db.id,
                     finding_db.project_id,
@@ -86,7 +83,6 @@ impl FindingsDb {
                     finding_db.description,
                     finding_db.impact,
                     finding_db.proof_of_concept,
-                    finding_db.proof_of_code,
                     finding_db.severity
                 ],
             )?;
@@ -99,7 +95,7 @@ impl FindingsDb {
     /// Retrieve all findings for a given project
     pub fn get_findings_by_project(&self, repo: &RepoPaths) -> Result<Findings> {
         let mut stmt = self.0.prepare(
-            "SELECT id, project_id, title, description, impact, proof_of_concept, proof_of_code, severity
+            "SELECT id, project_id, title, description, impact, proof_of_concept, severity
              FROM findings
              WHERE project_id = ?1",
         )?;
@@ -112,8 +108,7 @@ impl FindingsDb {
                 description: row.get(3)?,
                 impact: row.get(4)?,
                 proof_of_concept: row.get(5)?,
-                proof_of_code: row.get(6)?,
-                severity: row.get(7)?,
+                severity: row.get(6)?,
             })
         })?;
 
@@ -134,10 +129,9 @@ impl FindingDb {
             id: uuid::Uuid::new_v4().to_string(),
             project_id: repo.project_id.clone(),
             title: finding.title.clone(),
-            description: finding.description.clone().unwrap_or_default(),
-            impact: finding.impact.clone().unwrap_or_default(),
-            proof_of_concept: finding.proof_of_concept.clone().unwrap_or_default(),
-            proof_of_code: finding.proof_of_code.clone().unwrap_or_default(),
+            description: finding.description.clone(),
+            impact: finding.impact.clone(),
+            proof_of_concept: finding.proof_of_concept.clone(),
             severity: finding.severity.to_string(),
         }
     }
@@ -155,31 +149,16 @@ impl FindingDb {
             privilege: PrivilegeLevel::Permissionless,
             contract: String::new(),
             function: String::new(),
-            description: if self.description.is_empty() {
-                None
-            } else {
-                Some(self.description.clone())
-            },
-            impact: if self.impact.is_empty() {
-                None
-            } else {
-                Some(self.impact.clone())
-            },
-            proof_of_concept: if self.proof_of_concept.is_empty() {
-                None
-            } else {
-                Some(self.proof_of_concept.clone())
-            },
-            proof_of_code: if self.proof_of_code.is_empty() {
-                None
-            } else {
-                Some(self.proof_of_code.clone())
-            },
+            description: self.description.clone(),
+            impact: self.impact.clone(),
+            proof_of_concept: self.proof_of_concept.clone(),
+            justification: None,
+            proof_of_code: None,
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
             severity: Severity::from_str(&self.severity).unwrap_or_default(),
-            mitigation: None,
+            mitigation: String::new(),
             status: None,
             status_justification: None,
             competition_report: None,

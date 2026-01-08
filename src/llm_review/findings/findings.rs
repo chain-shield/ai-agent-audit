@@ -30,19 +30,21 @@ pub struct Finding {
     pub derived_from: Option<String>,
     pub title: String,
     pub exploit_type: VulnerabilityType,
-    pub privilege: PrivilegeLevel,   // permissionless vs role-gated
-    pub contract: String,            // exact constract name where issue appears
+    pub privilege: PrivilegeLevel,     // permissionless vs role-gated
+    pub contract: String,              // exact constract name where issue appears
     pub function: String, // exact function name where issue appears, if not applicable set to 'NA'
-    pub description: Option<String>, // description of issue, include code snippet if relevant
-    pub impact: Option<String>, // Impact of Issue
-    pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker
-    pub proof_of_code: Option<String>, // Write Foundry Unit test to prove issue exists
+    pub description: String, // description of issue, include code snippet if relevant
+    pub impact: String,   // Impact of Issue
+    pub proof_of_concept: String, // Demonstrate how issue can be exploited by hacker
+    pub justification: Option<String>, // justify to client why this finding is: exists in the
+    // code, impactful, exploitable, and not user mistake or governance risk
+    pub proof_of_code: Option<String>,
     pub poc_test_file: Option<PathBuf>,
     pub poc_test_command: Option<String>,
     pub poc_test_status: Option<PocStatus>,
     #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
-    pub mitigation: Option<String>,
+    pub mitigation: String,
     pub status: Option<Vec<FindingStatus>>,
     pub status_justification: Option<String>,
     // competition ready report (C4, Sherlock,etc) for issue, only produced if All Tests Passed for PoC
@@ -158,8 +160,8 @@ impl Finding {
     ) -> anyhow::Result<bool> {
         let title_similiarity_score = semantic_compare::similarity_score(&self.title, &issue.title);
         let desc_similiarity_score = semantic_compare::similarity_score(
-            &self.description.clone().unwrap_or_default(),
-            &issue.description.clone().unwrap_or_default(),
+            &self.description.clone(),
+            &issue.description.clone(),
         );
         // contract, function and issue type MUST match
         if issue.hash() != self.hash() || title_similiarity_score <= 0.25 {
@@ -178,14 +180,8 @@ impl Finding {
             .replace("{contract}", &self.contract)
             .replace("{function}", &self.function)
             .replace("{issue_type}", &self.exploit_type.to_string())
-            .replace(
-                "{description_a}",
-                &self.description.clone().unwrap_or_default(),
-            )
-            .replace(
-                "{description_b}",
-                &issue.description.clone().unwrap_or_default(),
-            );
+            .replace("{description_a}", &self.description.clone())
+            .replace("{description_b}", &issue.description.clone());
 
         add_to_inference_cost_by_type(&prompt, ai_agent.get_metadata(), TokenType::Input).await;
 

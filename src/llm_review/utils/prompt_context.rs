@@ -244,12 +244,12 @@ pub fn get_finding_report(
 
     //description
     findings_report.push_str("## Description\n");
-    findings_report.push_str(&finding.description.clone().unwrap_or_default());
+    findings_report.push_str(&finding.description);
     findings_report.push_str("\n\n");
 
     //impact
     findings_report.push_str("## Impact\n");
-    findings_report.push_str(&finding.impact.clone().unwrap_or_default());
+    findings_report.push_str(&finding.impact);
     findings_report.push_str("\n\n");
 
     // for final report include status, confidence, and complexity
@@ -260,19 +260,23 @@ pub fn get_finding_report(
     }
     //POC
     findings_report.push_str("## Proof of Concept\n");
-    findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
+    findings_report.push_str(&finding.proof_of_concept);
     findings_report.push_str("\n\n");
 
-    if report_type != FindingReportType::NoPoC {
-        //Proof of Code
-        findings_report.push_str("## Proof of Code\n");
-        findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
-        findings_report.push_str("\n\n");
-    }
+    findings_report.push_str("## Justification for Client\n");
+    findings_report.push_str(&finding.justification.clone().unwrap_or_default());
+    findings_report.push_str("\n\n");
+
+    // if report_type != FindingReportType::NoPoC {
+    //     //Proof of Code
+    //     findings_report.push_str("## Proof of Code\n");
+    //     findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
+    //     findings_report.push_str("\n\n");
+    // }
 
     //Suggested Fix
     findings_report.push_str("## Suggested Mitigation\n");
-    findings_report.push_str(&finding.mitigation.clone().unwrap_or_default());
+    findings_report.push_str(&finding.mitigation);
     findings_report.push_str("\n\n");
 
     findings_report.push_str("\n");

@@ -129,7 +129,7 @@ impl IssueTrait for Finding {
         AllRoundLegitAnalysis::generate_verify_prompt()
     }
     fn description(&self) -> String {
-        self.description.clone().unwrap_or_default()
+        self.description.clone()
     }
 }
 

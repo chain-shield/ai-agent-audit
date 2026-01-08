@@ -80,9 +80,6 @@ where
         - Severity priority: **Theft > DoS > accounting mismatch**.
         - Bigger **blast radius** and simpler execution are more valuable.
         - Assert conditions using `assertGt` / `assertEq`, not just logs.
-        - For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
-
-        ---
 
         ------------ ## {issue_type} Overview ------------ 
 
@@ -210,7 +207,7 @@ where
             "function": "{{function_name}}", 
             "impact": "monetary/functional consequences",
             "proof_of_concept": "Step-by-step exploitation scenario",
-            "proof_of_code": "compilable Foundry unit test",
+            "justification": "In under 150 words justify to client how this finding: exists in code, is impactful, is exploitable, and is not user mistake or governance risk",
             "severity": "{severity_list}",
             "mitigation": "concrete code fix"
             }}
