@@ -18,10 +18,11 @@ use crate::{
         },
     },
     prepare_code::git_clone::RepoPaths,
+    reporting::save_file,
 };
 use log::info;
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
 /// Executes the findings generation phase
@@ -109,6 +110,11 @@ where
             let prompt = Arc::new(format!(
                 "{inv_prompt}{code_plus_context}{json_requirement_prompt}"
             ));
+
+            save_file::save_file_locally(
+                &prompt,
+                &PathBuf::from("prompts/generate_invariant_prompt.md"),
+            )?;
             // info!("invariant prompt => {}", prompt);
             for run in 0..INVARIANT_RUNS {
                 spawn_run(Arc::clone(&prompt), run + 1);

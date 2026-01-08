@@ -1,4 +1,5 @@
 use crate::llm_review::pattern_phases::generate_patterns;
+use crate::reporting::save_file;
 use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
 /// Phase 3: Deduplication and verification of discovered security findings
 ///
@@ -21,6 +22,7 @@ use log::info;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub trait IsLegit {
@@ -115,6 +117,10 @@ where
     let post_verify_json = T::verify_json_required_prompt();
 
     let full_prompt = format!("{}{}{}", verify_prompt, code_and_context, post_verify_json);
+    save_file::save_file_locally(
+        &full_prompt,
+        &PathBuf::from("prompts/verify_invariant_prompt.md"),
+    )?;
 
     info!(
         "Verifying {} {} in batch...",
