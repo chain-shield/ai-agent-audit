@@ -128,33 +128,6 @@ pub fn generate_all_invariants_verify_prompt(invs: &ContractInvariants) -> Strin
     )
 }
 
-pub fn generate_invariant_verify_prompt(inv: &InvariantFinding) -> String {
-    let verify_json = get_invariant_verify_json();
-    let inv_finding_report = generate_formatted_invariant_finding(inv);
-
-    format!(
-        r#"
-        ## Your task: decide if the reported Invariant is valid and should be respected, and if so, does it hold in the code or is it violated? 
-        
-        You should return `"true"` if invariant is valid and description, predicate, and status all check out.
-        Otherwise return `"false"`.
-
-        ## INVARIANT TO VERIFY
-        {report} 
-
-        ## OUTPUT REQUIREMENTS 
-
-        *Please respond with ONLY valid JSON in the following exact format:*
-
-        {json}
-
-        **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
-        "#,
-        json = verify_json,
-        report = inv_finding_report
-    )
-}
-
 pub fn get_invariant_json(inv: &[InvariantType]) -> String {
     let status_enum_list = generate_enum_list(all_enum_variants::<InvariantStatus>().as_slice());
     let invariant_type_list = generate_enum_list(inv);
@@ -246,17 +219,6 @@ pub fn get_all_invariants_verify_json() -> String {
                     "why_its_not_valid": "in 40 words less explain why NOT valid (OMIT if valid)"
                 }}
             ]
-        }}
-        "#
-    )
-}
-
-pub fn get_invariant_verify_json() -> String {
-    format!(
-        r#"
-        {{
-            "is_invariant_valid": true|false,
-            "why_its_not_valid": "in 40 words less explain why NOT legit (OMIT if legit)"
         }}
         "#
     )

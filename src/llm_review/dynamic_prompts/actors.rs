@@ -216,16 +216,6 @@ pub fn get_actor_list_json() -> String {
     "#,
     )
 }
-pub fn get_verify_actor_abuse_json() -> String {
-    format!(
-        r#"
-        {{
-            "is_legit_abuse": true|false,
-            "why_its_not_legit": "in 40 words less explain why NOT legit (OMIT if legit)"
-        }}
-        "#
-    )
-}
 
 pub fn generate_formated_list_from_actor_data(actors_slice: &[Actor]) -> String {
     let mut actor_list = String::new();

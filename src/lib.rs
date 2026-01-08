@@ -116,7 +116,6 @@ pub mod llm_review {
         pub mod findings;
         pub mod findings_template;
         pub mod invariants;
-        pub mod patterns;
     }
     pub mod phases {
         pub mod add_poc_findings;
