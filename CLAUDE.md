@@ -12,15 +12,17 @@ AI Agent Audit is a Rust-based smart contract security analysis tool that combin
 1. **Repository Preparation** (`prepare_code/`) - Clone and build repositories in Docker containers
 2. **Static Analysis** (`build_brain/`) - Extract call graphs, IR, and storage layouts using Slither
 3. **Code Enumeration** (`enumerator/`) - Generate contextual code slices for focused analysis
-4. **AI Analysis** (`llm_review/`) - Multi-LLM security analysis across 24+ vulnerability categories
+4. **AI Analysis** (`llm_review/`) - Multi-phase security analysis with 80+ vulnerability patterns
 5. **Vector Database** (`build_brain/vector_db.rs`) - Store embeddings in Qdrant for semantic search
 6. **Report Generation** (`reporting/`) - Create professional audit reports with findings
 
 ### Key Components
 - **AI Agents** (`ai_bot/`) - Vector-enhanced AI agents with semantic context retrieval
-- **LLM Configuration** (`llm_review/config.rs`) - Multi-provider LLM support (OpenAI, Anthropic, Gemini, DeepSeek)
-- **Vulnerability Detection** (`prompts/`) - 21 specialized vulnerability detection modules
-- **Invariant Analysis** (`invariant_prompts/`) - Protocol invariant analysis across 6 categories
+- **LLM Configuration** (`llm_review/agent/agent_factory.rs`) - Multi-provider LLM support (OpenAI, Anthropic, Gemini, DeepSeek)
+- **Vulnerability Patterns** (`llm_review/threat_models/patterns.rs`) - 80+ distinct vulnerability patterns
+- **Pattern Categories** (`llm_review/threat_models/pattern_category.rs`) - Organized pattern libraries (Signature Validation, Vault Share-Based, Oracle Price Feed, AMM/DEX, etc.)
+- **Invariant Analysis** (`llm_review/threat_models/invariants.rs`) - Protocol invariant analysis across 6 categories
+- **Actor Discovery** (`llm_review/threat_models/actors.rs`) - Systematic threat actor identification
 - **Cost Tracking** (`cost/`) - Real-time inference cost monitoring across providers
 
 ## Common Development Commands
@@ -80,9 +82,10 @@ RUST_LOG=info
 ```
 
 ### Key Configuration Constants
-- `MAX_DEPTH: usize = 3` - Call graph traversal depth (src/main.rs:30)
-- `TOKEN_BUDGET: usize = 150_000` - Maximum tokens per code block (src/main.rs:33)
-- `RUNS: usize = 3` - Number of discovery rounds per contract (src/llm_review/config.rs:43)
+- `MAX_DEPTH: usize = 3` - Call graph traversal depth (src/main.rs)
+- `TOKEN_BUDGET: usize = 150_000` - Maximum tokens per code block (src/main.rs)
+- `RUNS: usize = 3` - Number of discovery rounds per contract (src/config.rs)
+- `INVARIANT_RUNS: usize = 1` - Number of invariant discovery rounds (src/config.rs)
 
 ## Module Architecture
 
@@ -90,20 +93,62 @@ RUST_LOG=info
 - **`build_brain/enrichment.rs`** - Slither integration and semantic database building
 - **`build_brain/callgraph.rs`** - Call graph analysis and traversal
 - **`build_brain/vector_db.rs`** - Qdrant vector database operations
-- **`enumerator/codeblock_maker.rs`** - Code slice generation with call graph context
-- **`llm_review/code_review.rs`** - Main security analysis orchestration
+- **`enumerator/codeblocks.rs`** - Code slice generation with call graph context and token budgeting
+- **`llm_review/analysis/code_review_v2.rs`** - Main security analysis orchestration
 
 ### AI Analysis System
-- **`llm_review/config.rs`** - LLM provider configuration and model definitions
-- **`llm_review/review_utils.rs`** - AI agent builders and utilities
-- **`llm_review/prompt_support/`** - Multi-stage prompt engineering (pre/post/qualify/verify)
+- **`llm_review/agent/agent_factory.rs`** - Centralized AI agent creation with multi-provider support
+- **`llm_review/utils/review_utils.rs`** - AI agent builders and utilities
+- **`llm_review/dynamic_prompts/`** - Dynamic prompt generation (findings, invariants, actors)
+- **`llm_review/prompt_support/`** - Multi-stage prompt engineering (PoC generation, deduplication, report creation)
 - **`ai_bot/agent.rs`** - Vector-enhanced AI agents with semantic search
 
 ### Vulnerability Detection
-The system detects 24 distinct vulnerability categories:
-- **Core Security** (8 active): Reentrancy, Access Control, DoS, Integer Math, Pragma, Randomness, Unexpected ETH, MEV
-- **Quality Checks** (24 total): All vulnerability types for verification and deduplication
+The system uses a comprehensive pattern-based approach:
+- **80+ Vulnerability Patterns** (`llm_review/threat_models/patterns.rs`) - Distinct vulnerability types including:
+  - Access Control & Auth (6 patterns): AccessControlOrAuthByPass, GovernanceDelegationFlaw, DoubleExecutionOrReplay, etc.
+  - Reentrancy & Call Order (4 patterns): Reentrancy, ReadOnlyReentrancy, CEIViolation, etc.
+  - Economic & Oracle (5 patterns): SlippageMissingOrInsufficient, OracleUsingDEXorTWAP, FlashLoanEconomicManipulation, etc.
+  - Accounting & Invariants (4 patterns): AccountingInvariantViolation, PrecisionDriftAccumulation, etc.
+  - Game Theory & Incentives (9 patterns): UnincentivizedMaintenanceOrKeeperlessProgress, FirstOrLastMoverAdvantage, etc.
+- **Pattern Categories** (`llm_review/threat_models/pattern_category.rs`) - Organized libraries:
+  - Signature Validation (10 patterns)
+  - Vault Share-Based (11 patterns)
+  - Oracle Price Feed (12 patterns)
+  - AMM/DEX (14 patterns)
+  - Marketplace/Exchange (14 patterns)
+  - Common Patterns (20 patterns)
+  - Library Analysis (20 patterns)
+  - Frequent Patterns (15 patterns)
+  - Relevant Patterns (61 curated high/medium severity patterns)
 - **Invariant Analysis** (6 types): Arithmetic, Balance, Permission, Referential, State Machine, Temporal
+- **24 Vulnerability Types** (`llm_review/findings/finding_enums.rs`) - For categorization and deduplication
+
+### Analysis Phases
+The tool uses a multi-phase analysis workflow:
+
+#### Pattern Discovery Phase (`pattern_phases/`)
+- **`generate_patterns.rs`** - Discovers vulnerability patterns using AI agents
+- **`generate_actors.rs`** - Identifies threat actors and their capabilities
+- **`generate_direct_findings.rs`** - Direct finding generation from patterns
+- **`verify_patterns.rs`** - Deduplicates and verifies discovered patterns
+
+#### Verification & Validation Phase (`phases/`)
+- **`verify_rounds.rs`** - Multi-round verification of findings with 11-gate analysis:
+  1. Verify Security Finding Exists
+  2. Existing Safeguards Check
+  3. Scope Check
+  4. By Design Check
+  5. Exploitability Check
+  6. Impact Classification Check
+  7. Likelihood Assessment Check
+  8. User Error Check
+  9. Governance/Centralization Risk Check
+  10. Speculation Check
+  11. Non-Standard ERC20 Token Check
+- **`rounds/validate_round.rs`** - Validation round for false negative detection
+- **`add_poc_findings.rs`** - Generates Proof-of-Concept tests for findings
+- **`create_report.rs`** - Creates professional audit reports
 
 ### Docker Integration
 - **`docker-compose.yml`** - Qdrant vector database service
@@ -125,12 +170,16 @@ After analysis, the tool generates:
 ## Key Data Structures
 
 ### Security Findings
-- **`Finding`** (src/llm_review/config.rs:46) - Individual vulnerability finding with severity, impact, PoC, and mitigation
-- **`InvariantFinding`** (src/llm_review/config.rs:67) - Protocol invariant violation with pre/post state analysis
+- **`Finding`** (src/llm_review/findings/findings.rs) - Individual vulnerability finding with severity, impact, PoC, and mitigation
+- **`Findings`** - Collection of findings for a contract
+- **`Pattern`** (src/llm_review/threat_models/patterns.rs) - Vulnerability pattern instance with contract/function location
+- **`InvariantFinding`** (src/llm_review/threat_models/invariants.rs) - Protocol invariant violation with pre/post state analysis
 
 ### Analysis Configuration
-- **`VulnerabilityType`** enum - 24 distinct vulnerability categories
+- **`VulnerabilityPattern`** enum - 80+ distinct vulnerability patterns
+- **`VulnerabilityType`** enum - 24 distinct vulnerability categories for deduplication
 - **`Severity`** enum - High, Medium, Low, Info severity levels
+- **`ImpactHint`** enum - High, HighMedium, Medium, MediumLow, Low impact hints
 - **`LlmCostType`** enum - Cost tracking across different LLM providers
 
 ## Vector Database Integration
