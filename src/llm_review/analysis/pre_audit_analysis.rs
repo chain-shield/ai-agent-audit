@@ -35,7 +35,7 @@ pub async fn generate_actors(codeblock: &str, repo: &RepoPaths) -> Result<Actors
 pub async fn generate_invariants(codeblock: &str, repo: &RepoPaths) -> Result<ContractInvariants> {
     let invariant_prompt = IssuePrompt::Invariant(InvariantType::iter().collect());
 
-    let invariant_discovery_agent = generate_openai_agent(repo, "medium")?;
+    let invariant_discovery_agent = generate_invariant_openai_agent(repo, "medium")?;
     let invariant_verify_agent = generate_openai_agent(repo, "high")?;
 
     // Phase 1: Generate actors and their capabilities
@@ -102,6 +102,66 @@ pub fn generate_openai_agent(repo: &RepoPaths, reasoning_effort: &str) -> Result
     Ok(agent)
 }
 
+pub fn generate_invariant_openai_agent(
+    repo: &RepoPaths,
+    reasoning_effort: &str,
+) -> Result<Arc<AIAgent>> {
+    // custom agent for digging up list of actors
+    let config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.2")
+        .with_preamble(r#"
+You are a world-class expert at Solidity EVM smart contract auditing. You specialize in
+discovering invariants in complex solidity codebases.
+
+## How to think
+
+When designing each invariant:
+
+1. Model the contract and its role
+   - Identify what the contract is for (e.g. signature validation, vault, permissions, recovery module, oracle, router).
+   - Identify who the key actors are (owners, signers, admins, modules, external protocols).
+
+2. Extract candidate invariants from the spec and context
+   - Translate any stated invariants or assumptions in the docs/scope into precise, checkable properties.
+   - Think about:
+     - Access control and privilege boundaries.
+     - Balance and accounting relationships.
+     - Nonces, counters, and sequencing.
+     - Configuration / image hash / checkpointer behavior.
+     - Cross-contract or cross-chain relationships if referenced.
+
+3. Make them machine-checkable
+   - Express each invariant as a clear predicate over contract state and/or events.
+   - Use concrete conditions like:
+     - Relationships between balances and totals.
+     - Relationships between stored configuration and computed hashes.
+     - Conditions on who is allowed to perform which actions under which flags/modes.
+     - Temporal properties across function calls (e.g. nonces, cooldowns, checkpoints).
+
+4. Actively search for violations
+   - For each invariant, scan the code for:
+     - Branches that skip checks (e.g. flag bits, mode switches, early returns).
+     - Edge cases in loops, array indexing, or boundary conditions.
+     - Multi-step flows (chained signatures, batched calls, upgradable configs) where state may drift from the intended invariant.
+   - If you find a credible way the invariant could be broken, mark it as PossibleViolation (or equivalent status) and describe:
+     - The pre-state (relevant configuration / storage / role assumptions).
+     - The actions or sequence of calls.
+     - The post-state and why it violates the invariant.
+     - The likely impact.
+
+5. Coverage vs signal
+   - It is acceptable to include some simpler invariants if they help cover more potential High/Medium issues.
+   - Still avoid vague or purely stylistic "invariants"; each one should correspond to a concrete, checkable property whose violation could matter in practice.
+
+
+"#)
+        .with_file_retrieval(false)
+        .with_openai_reasoning_effort(reasoning_effort);
+
+    let agent = Arc::new(AgentFactory::create_openai_agent(&config)?);
+
+    Ok(agent)
+}
 pub fn generate_gemini_agent(repo: &RepoPaths) -> Result<Arc<AIAgent>> {
     // custom agent for digging up list of actors
     let config = AgentConfig::new(Some(repo.clone()))
