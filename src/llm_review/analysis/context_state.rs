@@ -17,6 +17,7 @@ use crate::{
     cost::cost_data::get_token_count,
     llm_review::{
         analysis::pre_audit_analysis,
+        dynamic_prompts::invariants,
         threat_models::{actors::Actors, invariants::ContractInvariants},
     },
     prepare_code::git_clone::RepoPaths,
@@ -251,16 +252,25 @@ pub async fn generate_multi_modal_context(
     // Release lock before expensive operation
     drop(multimodal_cache);
 
-    let actors = if !SKIP_ACTOR_PATTERN_RUNS {
-        pre_audit_analysis::generate_actors(codeblock, repo).await?
-    } else {
-        Actors::default()
-    };
-    let invariants = if !SKIP_INVARIANT_RUNS {
-        pre_audit_analysis::generate_invariants(codeblock, repo).await?
-    } else {
-        ContractInvariants::default()
-    };
+    let (invariants_res, actors_res) = tokio::join!(
+        async {
+            if !SKIP_INVARIANT_RUNS {
+                pre_audit_analysis::generate_invariants(codeblock, repo).await
+            } else {
+                Ok(ContractInvariants::default())
+            }
+        },
+        async {
+            if !SKIP_ACTOR_PATTERN_RUNS {
+                pre_audit_analysis::generate_actors(codeblock, repo).await
+            } else {
+                Ok(Actors::default())
+            }
+        }
+    );
+
+    let invariants = invariants_res.expect("error extracting invariants");
+    let actors = actors_res.expect("error extracting actors");
 
     let multimodal_context = MultiModalContext { actors, invariants };
 
