@@ -7,11 +7,8 @@ use crate::{
             agent_enums::AIAgent,
             agent_factory::{AgentConfig, AgentFactory},
         },
-        dynamic_prompts::{
-            findings_template::get_post_json_requirement_for_multipattern,
-            invariants::{
-                self, generate_all_invariants_verify_prompt, get_post_all_invariants_verify_json,
-            },
+        dynamic_prompts::invariants::{
+            self, generate_all_invariants_verify_prompt, get_post_all_invariants_verify_json,
         },
         findings::findings::{Finding, Findings},
         phases::{rounds::all_rounds::AllRoundLegitAnalysis, verify_rounds::FindingAnalysis},
@@ -19,7 +16,6 @@ use crate::{
         threat_models::actors::Actors,
         utils::prompt_context::{self, FindingReportType},
     },
-    prepare_code::git_clone::RepoPaths,
     utils::semantic_compare,
 };
 
@@ -54,8 +50,6 @@ pub trait IssueStructTrait: Send + Sync + Sized + 'static {
     fn new(issues: Vec<Self::Spec>) -> Self;
     fn generate_verify_prompt(&self) -> String;
     fn verify_json_required_prompt() -> String;
-    fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String;
-    fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String;
     async fn dedup(self) -> anyhow::Result<Self>;
     fn issue_title(&self) -> String;
 }
@@ -158,13 +152,6 @@ impl IssueStructTrait for ContractInvariants {
     fn issue_title(&self) -> String {
         "invariant".to_string()
     }
-    fn multi_issue_to_findings_prompt(&self, _: &RepoPaths) -> String {
-        unimplemented!("Not implimented for ContractInvariants");
-    }
-    fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
-        let invariants: Vec<InvariantType> = self.issues().iter().map(|p| p.inv_type).collect();
-        get_post_json_requirement_for_multipattern(&invariants, "Invariant", repo)
-    }
 }
 
 #[async_trait]
@@ -184,14 +171,6 @@ impl IssueStructTrait for Findings {
     }
     fn issue_title(&self) -> String {
         "finding".to_string()
-    }
-    // NOTE: not need for this case
-    fn multi_issue_to_findings_prompt(&self, _repo: &RepoPaths) -> String {
-        unimplemented!("Not implimented for Findings");
-    }
-    // NOTE: not need for this case
-    fn multi_issue_findings_json_required_prompt(&self, _repo: &RepoPaths) -> String {
-        unimplemented!("Not implimented for Findings");
     }
     // NOTE: not need for this case
     fn generate_verify_prompt(&self) -> String {
