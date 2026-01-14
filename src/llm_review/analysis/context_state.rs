@@ -17,7 +17,6 @@ use crate::{
     cost::cost_data::get_token_count,
     llm_review::{
         analysis::pre_audit_analysis,
-        dynamic_prompts::invariants,
         threat_models::{actors::Actors, invariants::ContractInvariants},
     },
     prepare_code::git_clone::RepoPaths,
