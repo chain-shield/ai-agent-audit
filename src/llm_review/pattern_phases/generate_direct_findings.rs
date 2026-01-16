@@ -43,6 +43,7 @@ where
     let issue_title = match issue_prompt {
         IssuePrompt::Combined(_) => "vulnerability patterns",
         IssuePrompt::Invariant(_) => "invariants",
+        IssuePrompt::Actor => "actors",
     };
     info!(
         "🔍 Phase 1: Generating {} from contract codebase...",
@@ -163,7 +164,7 @@ where
                 }
             }
         }
-        IssuePrompt::Invariant(_) => {
+        _ => {
             log::warn!("this feature has been depreciated");
         }
     }
