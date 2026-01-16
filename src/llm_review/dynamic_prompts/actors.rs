@@ -1,6 +1,9 @@
-use crate::llm_review::{
-    agent::agent_enums::{all_enum_variants, generate_enum_list},
-    threat_models::actors::{Actor, Actors, RoleType},
+use crate::{
+    config::MAX_PATTERNS_FOR_PROMPT,
+    llm_review::{
+        agent::agent_enums::{all_enum_variants, generate_enum_list},
+        threat_models::actors::{Actor, Actors, RoleType},
+    },
 };
 use rand::seq::SliceRandom;
 
@@ -231,6 +234,9 @@ pub fn generate_formated_list_from_actor_data(actors_slice: &[Actor]) -> String 
     // Randomize the order of patterns
     let mut rng = rand::rng();
     actors.shuffle(&mut rng);
+
+    // if list is too long, take first 30
+    actors = actors.into_iter().take(MAX_PATTERNS_FOR_PROMPT).collect();
 
     for actor in actors {
         actor_list.push_str("\n\n");
