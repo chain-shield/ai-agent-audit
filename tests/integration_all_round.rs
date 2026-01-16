@@ -67,14 +67,9 @@ async fn test_all_round_integration_with_ai() -> Result<()> {
     println!("🔍 Starting All-Round Verification...");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-    let verified_findings = verify_rounds::run_all_round(
-        findings.clone(),
-        &code_with_context,
-        None,
-        audit_scope,
-        &agent,
-    )
-    .await?;
+    let verified_findings =
+        verify_rounds::run_all_round(findings.clone(), &code_with_context, audit_scope, &agent)
+            .await?;
 
     // Display results
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

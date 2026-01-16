@@ -1,4 +1,5 @@
 use crate::llm_review::pattern_phases::generate_patterns;
+use crate::llm_review::threat_models::actors::Actors;
 use crate::reporting::save_file;
 use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
 /// Phase 3: Deduplication and verification of discovered security findings
@@ -31,7 +32,7 @@ pub trait IsLegit {
     fn get_justification(&self) -> String;
 }
 
-pub trait InvariantAnalysis {
+pub trait PatternVerification {
     type Spec: IsLegit;
     fn findings(&self) -> &[Self::Spec];
 }
@@ -51,7 +52,7 @@ pub struct VerifyInvariants {
     pub findings: Vec<LegitInvariant>,
 }
 
-impl InvariantAnalysis for VerifyInvariants {
+impl PatternVerification for VerifyInvariants {
     type Spec = LegitInvariant;
     fn findings(&self) -> &[Self::Spec] {
         &self.findings
@@ -70,6 +71,38 @@ impl IsLegit for LegitInvariant {
     }
 }
 
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LegitActor {
+    pub actor_id: String,
+    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
+    pub is_actor_valid: bool,
+    pub why_its_not_valid: Option<String>,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyActors {
+    pub findings: Vec<LegitActor>,
+}
+
+impl PatternVerification for VerifyActors {
+    type Spec = LegitActor;
+    fn findings(&self) -> &[Self::Spec] {
+        &self.findings
+    }
+}
+
+impl IsLegit for LegitActor {
+    fn id(&self) -> String {
+        self.actor_id.clone()
+    }
+    fn is_legit(&self) -> bool {
+        self.is_actor_valid
+    }
+    fn get_justification(&self) -> String {
+        self.why_its_not_valid.clone().unwrap_or_default()
+    }
+}
+
 pub async fn verify_invariants(
     patterns: ContractInvariants,
     code: &str,
@@ -77,6 +110,15 @@ pub async fn verify_invariants(
     repo: &RepoPaths,
 ) -> Result<ContractInvariants> {
     execute::<ContractInvariants, VerifyInvariants>(patterns, code, agent, repo).await
+}
+
+pub async fn verify_actors(
+    patterns: Actors,
+    code: &str,
+    agent: &Arc<AIAgent>,
+    repo: &RepoPaths,
+) -> Result<Actors> {
+    execute::<Actors, VerifyActors>(patterns, code, agent, repo).await
 }
 
 /// Executes the verification phase
@@ -92,8 +134,8 @@ pub async fn execute<T, M>(
 where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
     <T as IssueStructTrait>::Spec: Send + Sync + Clone + DeserializeOwned + IssueTrait + 'static,
-    M: Clone + DeserializeOwned + JsonSchema + InvariantAnalysis + Send + Sync,
-    <M as InvariantAnalysis>::Spec: Send + Sync + IsLegit + JsonSchema,
+    M: Clone + DeserializeOwned + JsonSchema + PatternVerification + Send + Sync,
+    <M as PatternVerification>::Spec: Send + Sync + IsLegit + JsonSchema,
 {
     let issue_title = patterns.issue_title();
     info!("🔍 Phase 2: Deduplicating and verifying {}...", issue_title);
@@ -127,9 +169,9 @@ where
         dedup_pattern_count,
         deduped_patterns.issue_title()
     );
-    let invariant_analysis: M = agent.extract_with_retry(&full_prompt).await?;
+    let pattern_verification: M = agent.extract_with_retry(&full_prompt).await?;
 
-    let r_map: HashMap<String, &M::Spec> = invariant_analysis
+    let r_map: HashMap<String, &M::Spec> = pattern_verification
         .findings()
         .iter()
         .map(|inv| (inv.id(), inv))
@@ -144,7 +186,7 @@ where
             match r_option {
                 Some(r) => {
                     if !r.is_legit() {
-                        info!("Invariant is Invalid: {}", r.get_justification());
+                        info!("{} is Invalid: {}", issue_title, r.get_justification());
                         return false;
                     } else {
                         return true;
@@ -152,7 +194,8 @@ where
                 }
                 None => {
                     log::warn!(
-                        "Invariant '{}' (ID: {}) was not verified by LLM - filtering out",
+                        "{} '{}' (ID: {}) was not verified by LLM - filtering out",
+                        issue_title,
                         p.title_str(),
                         p_id
                     );

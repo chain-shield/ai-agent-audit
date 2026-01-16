@@ -3,12 +3,15 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::INVARIANT_RUNS,
+    config::{ACTOR_RUNS, INVARIANT_RUNS},
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
         analysis::context_state::{generate_audit_scope, get_metadata_context},
-        dynamic_prompts::invariants::{generate_invariant_prompt, get_invariant_json},
+        dynamic_prompts::{
+            actors::{generate_actors_prompt, get_actor_list_json},
+            invariants::{generate_invariant_prompt, get_invariant_json},
+        },
         threat_models::issues::{IssuePrompt, IssueStructTrait},
     },
     prepare_code::git_clone::RepoPaths,
@@ -35,6 +38,7 @@ where
     let issue_title = match issue_prompt {
         IssuePrompt::Combined(_) => "vulnerability patterns",
         IssuePrompt::Invariant(_) => "invariants",
+        IssuePrompt::Actor => "actors",
     };
     info!(
         "🔍 Phase 1: Generating {} from contract codebase...",
@@ -81,8 +85,8 @@ where
             log::warn!("this feature is depreciated, see generate_direct_findings.rs for latest implimentation");
         }
         IssuePrompt::Invariant(invariants) => {
-            let inv_prompt = Arc::new(generate_invariant_prompt(&invariants));
-            let json_requirement_prompt = Arc::new(get_invariant_json(&invariants));
+            let inv_prompt = generate_invariant_prompt(&invariants);
+            let json_requirement_prompt = get_invariant_json(&invariants);
             let prompt = Arc::new(format!(
                 "{inv_prompt}{code_plus_context}{json_requirement_prompt}"
             ));
@@ -94,6 +98,23 @@ where
 
             // info!("invariant prompt => {}", prompt);
             for run in 0..INVARIANT_RUNS {
+                spawn_run(Arc::clone(&prompt), run + 1);
+            }
+        }
+        IssuePrompt::Actor => {
+            let actor_prompt = generate_actors_prompt();
+            let json_requirement_prompt = get_actor_list_json();
+            let prompt = Arc::new(format!(
+                "{actor_prompt}{code_plus_context}{json_requirement_prompt}"
+            ));
+
+            save_file::save_file_locally(
+                &prompt,
+                &PathBuf::from("prompts/generate_actor_prompt.md"),
+            )?;
+
+            // info!("invariant prompt => {}", prompt);
+            for run in 0..ACTOR_RUNS {
                 spawn_run(Arc::clone(&prompt), run + 1);
             }
         }

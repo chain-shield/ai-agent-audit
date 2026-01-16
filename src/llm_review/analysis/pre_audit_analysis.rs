@@ -6,7 +6,7 @@ use crate::{
         },
         pattern_phases,
         threat_models::{
-            actors::Actors,
+            actors::{Actor, Actors},
             invariants::{ContractInvariants, InvariantFinding, InvariantType},
             issues::{IssuePrompt, IssueStructTrait},
         },
@@ -19,23 +19,60 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 
 pub async fn generate_actors(codeblock: &str, repo: &RepoPaths) -> Result<Actors> {
-    let actor_discovery_agent = generate_openai_agent(repo, "high")?;
+    // let actor_discovery_agent = generate_gemini_agent(repo)?;
+    let actor_discovery_agent = generate_openai_agent(repo, "medium")?;
+    let actor_verify_agent = generate_openai_agent(repo, "high")?;
 
     // Phase 1: Generate actors and their capabilities
     log::info!("PRE AUDIT PHASE: GENERATE ACTORS");
-    let actors: Actors =
-        pattern_phases::generate_actors::execute(codeblock, &actor_discovery_agent, repo).await?;
+    // let actors: Actors =
+    //     pattern_phases::generate_actors::execute(codeblock, &actor_discovery_agent, repo).await?;
+    let actors: Actors = pattern_phases::generate_patterns::execute(
+        IssuePrompt::Actor,
+        codeblock,
+        &actor_discovery_agent,
+        repo,
+    )
+    .await?;
 
     let actor_count = actors.actors.len();
     log::info!("total of {} Actors found!", actor_count);
 
-    Ok(actors)
+    let actors_with_id: Actors = Actors {
+        actors: actors
+            .actors
+            .into_iter()
+            .map(|a| Actor {
+                id: Some(nanoid!()),
+                ..a
+            })
+            .collect(),
+    };
+
+    // Phase 2: Verify actors
+    log::info!("PHASE 2: VERIFY actors");
+    let verified_actors = if !actors_with_id.issues().is_empty() {
+        pattern_phases::verify_patterns::verify_actors(
+            actors_with_id,
+            codeblock,
+            &actor_verify_agent,
+            repo,
+        )
+        .await?
+    } else {
+        Actors::default()
+    };
+
+    log::info!("{} verified actors found!", verified_actors.actors.len());
+
+    Ok(verified_actors)
 }
 
 pub async fn generate_invariants(codeblock: &str, repo: &RepoPaths) -> Result<ContractInvariants> {
     let invariant_prompt = IssuePrompt::Invariant(InvariantType::iter().collect());
 
-    let invariant_discovery_agent = generate_invariant_openai_agent(repo, "medium")?;
+    let invariant_discovery_agent = generate_invariant_gemini_agent(repo)?;
+    // let invariant_discovery_agent = generate_invariant_openai_agent(repo, "medium")?;
     let invariant_verify_agent = generate_openai_agent(repo, "high")?;
 
     // Phase 1: Generate actors and their capabilities
@@ -102,14 +139,7 @@ pub fn generate_openai_agent(repo: &RepoPaths, reasoning_effort: &str) -> Result
     Ok(agent)
 }
 
-pub fn generate_invariant_openai_agent(
-    repo: &RepoPaths,
-    reasoning_effort: &str,
-) -> Result<Arc<AIAgent>> {
-    // custom agent for digging up list of actors
-    let config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.2")
-        .with_preamble(r#"
+const INVARIANT_DISCOVERY_SYSTEM_PROMPT: &'static str = r#"
 You are a world-class expert at Solidity EVM smart contract auditing. You specialize in
 discovering invariants in complex solidity codebases.
 
@@ -152,9 +182,16 @@ When designing each invariant:
 5. Coverage vs signal
    - It is acceptable to include some simpler invariants if they help cover more potential High/Medium issues.
    - Still avoid vague or purely stylistic "invariants"; each one should correspond to a concrete, checkable property whose violation could matter in practice.
+"#;
 
-
-"#)
+pub fn generate_invariant_openai_agent(
+    repo: &RepoPaths,
+    reasoning_effort: &str,
+) -> Result<Arc<AIAgent>> {
+    // custom agent for digging up list of actors
+    let config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.2")
+        .with_preamble(INVARIANT_DISCOVERY_SYSTEM_PROMPT)
         .with_file_retrieval(false)
         .with_openai_reasoning_effort(reasoning_effort);
 
@@ -162,12 +199,25 @@ When designing each invariant:
 
     Ok(agent)
 }
+
+pub fn generate_invariant_gemini_agent(repo: &RepoPaths) -> Result<Arc<AIAgent>> {
+    // custom agent for digging up list of actors
+    let config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gemini-3-pro-preview")
+        .with_preamble(INVARIANT_DISCOVERY_SYSTEM_PROMPT)
+        .with_file_retrieval(false);
+
+    let agent = Arc::new(AgentFactory::create_gemini_agent(&config)?);
+
+    Ok(agent)
+}
+
 pub fn generate_gemini_agent(repo: &RepoPaths) -> Result<Arc<AIAgent>> {
     // custom agent for digging up list of actors
     let config = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model("gemini-3-pro-preview")
-        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.");
+        .with_preamble("You are a world-class Solidity EVM security researcher.");
 
     let agent = Arc::new(AgentFactory::create_gemini_agent(&config)?);
 

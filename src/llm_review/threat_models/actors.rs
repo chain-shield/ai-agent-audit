@@ -12,6 +12,7 @@ pub struct Actors {
 pub struct Actor {
     /// describe actor in under 10 words or less
     /// i.e. "Evicted signer behind checkpointer", "Unprivileged user providing initial liquidity"
+    pub id: Option<String>,
     pub name: String,
     pub role_type: RoleType,
     /// full description of actor
