@@ -1,8 +1,11 @@
-use crate::llm_review::{
-    agent::agent_enums::{all_enum_variants, generate_enum_list},
-    threat_models::invariants::{
-        ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
-        INVARIANT_LIBRARY,
+use crate::{
+    config::MAX_PATTERNS_FOR_PROMPT,
+    llm_review::{
+        agent::agent_enums::{all_enum_variants, generate_enum_list},
+        threat_models::invariants::{
+            ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
+            INVARIANT_LIBRARY,
+        },
     },
 };
 use rand::seq::SliceRandom;
@@ -228,6 +231,11 @@ pub fn generate_full_list_of_invariant_findings(co_invariants: &ContractInvarian
     let mut invariants = co_invariants.invariants.clone();
     let mut rng = rand::rng();
     invariants.shuffle(&mut rng);
+
+    invariants = invariants
+        .into_iter()
+        .take(MAX_PATTERNS_FOR_PROMPT)
+        .collect();
 
     for invariant in &invariants {
         let finding = generate_formatted_invariant_finding(invariant);
