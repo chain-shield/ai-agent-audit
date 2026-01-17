@@ -159,7 +159,7 @@ where
                     }
                     if some_invariants.is_some() {
                         info!(
-                            "---- #{} #{} LLM analysis Round for Finding with Invariants----",
+                            "---- {} #{} LLM analysis Round for Finding with Invariants----",
                             category_spec.title,
                             run + 1
                         );
