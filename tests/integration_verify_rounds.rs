@@ -64,10 +64,16 @@ async fn test_verify_rounds_puppy_raffle() -> Result<()> {
     let findings_db = FindingsDb::open()?;
     let findings = findings_db.get_findings_by_project(&repo)?;
 
-    println!("✅ Loaded {} findings from database", findings.findings.len());
+    println!(
+        "✅ Loaded {} findings from database",
+        findings.findings.len()
+    );
 
     if findings.findings.is_empty() {
-        println!("⚠️  No findings found in database for project {}", repo.project_id);
+        println!(
+            "⚠️  No findings found in database for project {}",
+            repo.project_id
+        );
         println!("   Make sure you've run the audit first to populate findings.db");
         return Ok(());
     }
@@ -88,23 +94,26 @@ async fn test_verify_rounds_puppy_raffle() -> Result<()> {
     // Load code and metadata
     println!("\n📖 Loading code and metadata...");
     // The metadata file is named: metadata-4-puppy-raffle-audit-3ff0f0.md
-    let metadata_path = repo.root.join(format!(
-        "metadata-{}.md",
-        repo.project_id
-    ));
-    let metadata = std::fs::read_to_string(&metadata_path)
-        .unwrap_or_else(|_| {
-            println!("⚠️  Could not load metadata from {}", metadata_path.display());
-            String::new()
-        });
+    let metadata_path = repo.root.join(format!("metadata-{}.md", repo.project_id));
+    let metadata = std::fs::read_to_string(&metadata_path).unwrap_or_else(|_| {
+        println!(
+            "⚠️  Could not load metadata from {}",
+            metadata_path.display()
+        );
+        String::new()
+    });
 
     // Load main contract code
-    let contract_path = repo.root.join("Contract-PuppyRaffle-NFTCollection-size-3700.md");
-    let code = std::fs::read_to_string(&contract_path)
-        .unwrap_or_else(|_| {
-            println!("⚠️  Could not load contract from {}", contract_path.display());
-            String::new()
-        });
+    let contract_path = repo
+        .root
+        .join("Contract-PuppyRaffle-NFTCollection-size-3700.md");
+    let code = std::fs::read_to_string(&contract_path).unwrap_or_else(|_| {
+        println!(
+            "⚠️  Could not load contract from {}",
+            contract_path.display()
+        );
+        String::new()
+    });
 
     println!("✅ Loaded {} chars of code", code.len());
     println!("✅ Loaded {} chars of metadata", metadata.len());
@@ -119,21 +128,18 @@ async fn test_verify_rounds_puppy_raffle() -> Result<()> {
         .with_temperature(1.0)
         .with_max_tokens(16_000); // Claude Sonnet 4.0 max is 64k, using 16k for safety
 
-    let agent = Arc::new(AgentFactory::create_agent(LlmProvider::Anthropic, &agent_config)?);
+    let agent = Arc::new(AgentFactory::create_agent(
+        LlmProvider::Anthropic,
+        &agent_config,
+    )?);
     println!("✅ Agent initialized");
 
     // Run verification rounds
     println!("\n🔍 Starting Verification Rounds...");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    let verified_findings = verify_rounds::execute_rounds(
-        findings,
-        &code_with_context,
-        None,
-        &agent,
-        &repo,
-    )
-    .await?;
+    let verified_findings =
+        verify_rounds::execute_rounds(findings, &code_with_context, None, &agent, &repo).await?;
 
     // Display results
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -186,4 +192,3 @@ async fn test_verify_rounds_puppy_raffle() -> Result<()> {
 
     Ok(())
 }
-

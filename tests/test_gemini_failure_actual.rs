@@ -7,9 +7,9 @@ fn test_actual_failing_json() {
 
     println!("Testing actual failing JSON...");
     println!("JSON length: {} bytes", json.len());
-    
+
     let result = Findings::parse_from_json(json);
-    
+
     match result {
         Ok(findings) => {
             println!("✅ SUCCESS: Parsed {} findings", findings.findings.len());
@@ -17,15 +17,14 @@ fn test_actual_failing_json() {
         }
         Err(e) => {
             println!("❌ FAILED: {}", e);
-            
+
             // Try to clean it manually and see what happens
             let cleaned = Findings::clean_json_string(json);
             println!("\n=== CLEANED JSON ===");
             println!("{}", cleaned);
             println!("=== END CLEANED ===\n");
-            
+
             panic!("Failed to parse: {}", e);
         }
     }
 }
-

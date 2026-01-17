@@ -66,10 +66,7 @@ fn test_nested_lib_folders_should_be_rejected() {
     println!("   Path: {}", packages_lib_pkg.display());
     let result3 = is_library_package_json(&packages_lib_pkg, root);
     println!("   Result: {}", result3);
-    assert!(
-        result3,
-        "Should ACCEPT package.json in packages/lib folder"
-    );
+    assert!(result3, "Should ACCEPT package.json in packages/lib folder");
 
     println!("\n4. lib/utils (should be ACCEPTED):");
     println!("   Path: {}", lib_utils_pkg.display());
@@ -142,4 +139,3 @@ fn test_path_has_one_segment_logic() {
 
     println!("✅ All segment counting tests passed");
 }
-

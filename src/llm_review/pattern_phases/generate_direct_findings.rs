@@ -62,7 +62,9 @@ where
     let combined_context = if audit_scope.is_empty() {
         context
     } else {
-        format!("{context}\n\n ===================== # AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT ===================== \n{audit_scope}")
+        format!(
+            "{context}\n\n ===================== # AUDIT SCOPE AND KEY INVARIANTS PROVIDED BY CLIENT ===================== \n{audit_scope}"
+        )
     };
 
     let codeblock = Arc::new(code.to_string());
@@ -89,74 +91,76 @@ where
 
     match issue_prompt {
         IssuePrompt::Combined((pattern_category, some_actors, some_invariants)) => {
-            let actor_context = if some_actors.is_some() {
-                let actors = some_actors.clone().unwrap_or_default();
-                let actors_capabilities =
-                    actors::generate_formated_list_from_actor_data(&actors.actors);
-                format!("\n ===================== # POTENTIAL BAD ACTORS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITY ===================== \n
-                 **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis.\n\n
-                {}",actors_capabilities)
-            } else {
-                String::new()
-            };
-
-            let invariant_context = if some_invariants.is_some() {
-                let invariants = some_invariants.clone().unwrap_or_default();
-                let invariant_list =
-                    invariants::generate_full_list_of_invariant_findings(&invariants);
-                format!("\n ===================== # LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITIES ===================== \n
-                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your analysis.\n\n
-                 Also, this is NOT a complete list of invariants, other may exist in codebase.
-                {}",invariant_list)
-            } else {
-                String::new()
-            };
-
             for category in pattern_category.into_iter() {
                 let category_spec =
                     get_category_library_spec(&category).expect("could not extract category spec");
 
-                // construct prompt
-                let instruction_prompt =
-                    dynamic_prompts::findings::generate_pattern_category_to_findings_prompt(
-                        &category, repo,
-                    );
-                let json_requirement_prompt =
+                for run in 0..category_spec.runs {
+                    let actor_context = if some_actors.is_some() {
+                        let actors = some_actors.clone().unwrap_or_default();
+                        let actors_capabilities =
+                            actors::generate_formated_list_from_actor_data(&actors.actors);
+                        format!("\n ===================== # POTENTIAL BAD ACTORS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITY ===================== \n
+                 **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis.\n\n
+                {}",actors_capabilities)
+                    } else {
+                        String::new()
+                    };
+
+                    let invariant_context = if some_invariants.is_some() {
+                        let invariants = some_invariants.clone().unwrap_or_default();
+                        let invariant_list =
+                            invariants::generate_full_list_of_invariant_findings(&invariants);
+                        format!("\n ===================== # LIST OF CONTRACT INVARIANTS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITIES ===================== \n
+                 **NOTE**: The invariants below are pertinent to the codebase where vulnerability were found, please incorporate them in your analysis.\n\n
+                 Also, this is NOT a complete list of invariants, other may exist in codebase.
+                {}",invariant_list)
+                    } else {
+                        String::new()
+                    };
+
+                    // construct prompt
+                    let instruction_prompt =
+                        dynamic_prompts::findings::generate_pattern_category_to_findings_prompt(
+                            &category, repo,
+                        );
+                    let json_requirement_prompt =
                     dynamic_prompts::findings_template::get_post_json_requirement_for_multipattern(
                         &category_spec.issues,
                         "security vulnerability pattern",
                         repo,
                     );
 
-                let prompt_actors = Arc::new(format!(
-                    "{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
-                ));
+                    let prompt_actors = Arc::new(format!(
+                        "{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
+                    ));
 
-                // log::info!("{}", prompt_actors);
+                    // log::info!("{}", prompt_actors);
 
-                let prompt_invariant = Arc::new(format!(
-                    "{instruction_prompt}{invariant_context}{code_plus_context}{json_requirement_prompt}"
-                ));
-                save_file::save_file_locally(
-                    &prompt_actors,
-                    &PathBuf::from("prompts/actor_prompt.md"),
-                )?;
-                save_file::save_file_locally(
-                    &prompt_invariant,
-                    &PathBuf::from("prompts/invariant_prompt.md"),
-                )?;
+                    let prompt_invariant = Arc::new(format!(
+                        "{instruction_prompt}{invariant_context}{code_plus_context}{json_requirement_prompt}"
+                    ));
+                    save_file::save_file_locally(
+                        &prompt_actors,
+                        &PathBuf::from("prompts/actor_prompt.md"),
+                    )?;
+                    save_file::save_file_locally(
+                        &prompt_invariant,
+                        &PathBuf::from("prompts/invariant_prompt.md"),
+                    )?;
 
-                for run in 0..category_spec.runs {
                     if some_actors.is_some() {
                         info!(
-                            "---- #{} LLM analysis Round for Finding with Actors----",
+                            "---- #{} {} LLM analysis Round for Finding with Actors----",
+                            category_spec.title,
                             run + 1
                         );
                         spawn_run(Arc::clone(&prompt_actors));
                     }
                     if some_invariants.is_some() {
                         info!(
-                            "---- #{} LLM analysis Round for Finding with Invariants----",
+                            "---- #{} {} LLM analysis Round for Finding with Invariants----",
+                            category_spec.title,
                             run + 1
                         );
                         spawn_run(Arc::clone(&prompt_invariant));

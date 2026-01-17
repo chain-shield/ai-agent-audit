@@ -30,12 +30,22 @@ fn test_invariants_parse_with_unescaped_quotes() {
 
     match result {
         Ok(invariants) => {
-            println!("✅ SUCCESS: Parsed {} invariants", invariants.invariants.len());
+            println!(
+                "✅ SUCCESS: Parsed {} invariants",
+                invariants.invariants.len()
+            );
             assert_eq!(invariants.invariants.len(), 1);
             assert_eq!(invariants.invariants[0].inv_type, InvariantType::Balance);
             assert_eq!(invariants.invariants[0].contract, "Vault");
-            assert_eq!(invariants.invariants[0].status, InvariantStatus::PossibleViolation);
-            assert!(invariants.invariants[0].desc.contains("call{value: amount}"));
+            assert_eq!(
+                invariants.invariants[0].status,
+                InvariantStatus::PossibleViolation
+            );
+            assert!(
+                invariants.invariants[0]
+                    .desc
+                    .contains("call{value: amount}")
+            );
         }
         Err(e) => {
             panic!("❌ Failed to parse invariants JSON: {}", e);
@@ -70,7 +80,10 @@ fn test_invariants_parse_from_llm_response() {
 
     match result {
         Ok(invariants) => {
-            println!("✅ SUCCESS: Parsed {} invariants from LLM response", invariants.invariants.len());
+            println!(
+                "✅ SUCCESS: Parsed {} invariants from LLM response",
+                invariants.invariants.len()
+            );
             assert_eq!(invariants.invariants.len(), 1);
             assert_eq!(invariants.invariants[0].inv_type, InvariantType::Arithmetic);
             assert_eq!(invariants.invariants[0].status, InvariantStatus::Holds);
@@ -104,7 +117,10 @@ fn test_invariants_parse_with_markdown_code_blocks() {
 
     match result {
         Ok(invariants) => {
-            println!("✅ SUCCESS: Parsed {} invariants from markdown", invariants.invariants.len());
+            println!(
+                "✅ SUCCESS: Parsed {} invariants from markdown",
+                invariants.invariants.len()
+            );
             assert_eq!(invariants.invariants.len(), 1);
             assert_eq!(invariants.invariants[0].inv_type, InvariantType::Permission);
         }
@@ -130,4 +146,3 @@ fn test_invariants_empty_list() {
         }
     }
 }
-
