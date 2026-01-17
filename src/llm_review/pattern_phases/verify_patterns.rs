@@ -21,7 +21,7 @@ use crate::{
 use log::info;
 
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

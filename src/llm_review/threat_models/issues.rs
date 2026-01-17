@@ -1,7 +1,7 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
         agent::{
             agent_enums::AIAgent,

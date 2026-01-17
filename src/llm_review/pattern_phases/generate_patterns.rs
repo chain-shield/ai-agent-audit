@@ -82,7 +82,9 @@ where
 
     match issue_prompt {
         IssuePrompt::Combined((_, _, _)) => {
-            log::warn!("this feature is depreciated, see generate_direct_findings.rs for latest implimentation");
+            log::warn!(
+                "this feature is depreciated, see generate_direct_findings.rs for latest implimentation"
+            );
         }
         IssuePrompt::Invariant(invariants) => {
             let inv_prompt = generate_invariant_prompt(&invariants);

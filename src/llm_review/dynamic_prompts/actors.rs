@@ -238,6 +238,8 @@ pub fn generate_formated_list_from_actor_data(actors_slice: &[Actor]) -> String 
     // if list is too long, take first 30
     actors = actors.into_iter().take(MAX_PATTERNS_FOR_PROMPT).collect();
 
+    log::info!("printing {} actors in prompt", actors.len());
+
     for actor in actors {
         actor_list.push_str("\n\n");
         actor_list.push_str(&format!("### Actor Name: {}\n", &actor.name));

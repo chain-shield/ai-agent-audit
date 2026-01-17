@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::{
     config::AuditType,
     llm_review::{
-        agent::agent_enums::{all_enum_variants, generate_enum_list, EnumData},
+        agent::agent_enums::{EnumData, all_enum_variants, generate_enum_list},
         findings::{
             finding_enums::{Severity, VulnerabilityType},
             findings::PrivilegeLevel,
