@@ -4,8 +4,8 @@ use crate::{
         agent::agent_enums::{all_enum_variants, generate_enum_list},
         dynamic_prompts::invariants,
         threat_models::invariants::{
-            ContractInvariants, INVARIANT_LIBRARY, InvariantFinding, InvariantSpec,
-            InvariantStatus, InvariantType,
+            ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
+            INVARIANT_LIBRARY,
         },
     },
 };
@@ -280,7 +280,7 @@ pub fn generate_full_list_of_invariant_findings(co_invariants: &ContractInvarian
         .take(MAX_PATTERNS_FOR_PROMPT)
         .collect();
 
-    log::info!("printing {} actors in prompt", invariants.len());
+    // log::info!("printing {} actors in prompt", invariants.len());
 
     for invariant in &invariants {
         let finding = generate_formatted_invariant_finding(invariant);
