@@ -18,7 +18,7 @@ use crate::{
             pre_poc::PRE_CREATE_POC,
         },
         utils::{
-            prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+            prompt_context::{FindingReportType, generate_prompt_for_issue_check},
             save_run_poc::save_and_run_poc_test,
         },
     },

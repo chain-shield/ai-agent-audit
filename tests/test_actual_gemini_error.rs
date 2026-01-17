@@ -25,9 +25,9 @@ fn test_actual_gemini_broken_json() {
     }"#;
 
     println!("Testing actual Gemini broken JSON...");
-    
+
     let result = Findings::parse_from_json(broken_json);
-    
+
     match result {
         Ok(findings) => {
             println!("✅ SUCCESS: Parsed {} findings", findings.findings.len());
@@ -80,9 +80,9 @@ fn test_actual_gemini_pattern_multiple_breaks() {
     }"#;
 
     println!("Testing multiple broken findings...");
-    
+
     let result = Findings::parse_from_json(broken_json);
-    
+
     match result {
         Ok(findings) => {
             println!("✅ SUCCESS: Parsed {} findings", findings.findings.len());
@@ -96,4 +96,3 @@ fn test_actual_gemini_pattern_multiple_breaks() {
         }
     }
 }
-

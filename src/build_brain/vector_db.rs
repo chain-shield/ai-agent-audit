@@ -8,12 +8,12 @@ use std::path::PathBuf;
 use crate::config::audit_config;
 use crate::error::{AuditError, Result};
 use log::info;
-use qdrant_client::qdrant::{
-    vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
-    VectorParams, VectorsConfig,
-};
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
+use qdrant_client::qdrant::{
+    CreateCollection, Distance, PointStruct, UpsertPointsBuilder, VectorParams, VectorsConfig,
+    vectors_config::Config,
+};
 
 use crate::build_brain::enbeddings::embed_files;
 use crate::build_brain::slither_ffi;

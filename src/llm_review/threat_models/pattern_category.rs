@@ -241,14 +241,14 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
     },
     PatternCategorySpec {
         category: PatternCategory::R1,
-        title: "Common Code4rena",
+        title: "R1",
         issues: R1_PATTERNS,
         tier: PatternTier::Tier1,
         runs: R1_RUNS,
     },
     PatternCategorySpec {
         category: PatternCategory::R2,
-        title: "Complex Code4rena",
+        title: "R2",
         issues: R2_PATTERNS,
         tier: PatternTier::Tier1,
         runs: R2_RUNS,

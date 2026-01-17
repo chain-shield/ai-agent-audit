@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::prepare_code::git_clone::{extract_list_of_files, RepoPaths};
+use crate::prepare_code::git_clone::{RepoPaths, extract_list_of_files};
 
 /// Returns true if the file path contains exactly ONE occurrence of any segment from the list.
 /// This prevents matching files in nested lib folders (e.g., /lib/.../lib/).

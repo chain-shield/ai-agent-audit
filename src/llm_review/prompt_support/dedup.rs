@@ -30,7 +30,7 @@ You are a Solidity-security triager.
 Answer with exactly **YES** or **NO** (no punctuation, no prose).
 
 USER
-Are these two reports describing the *same vulnerability pattern, invariant, or malicious actor abuse*?
+Are these two reports describing the *same vulnerability pattern, invariant, or actor*?
 
 ---- REPORT A ----
 {report_a}
