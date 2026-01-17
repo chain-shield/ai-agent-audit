@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::llm_review::{
     findings::findings::{Finding, Findings},
     phases::verify_rounds::FindingStatus,
-    utils::prompt_context::{get_finding_report, FindingReportType},
+    utils::prompt_context::{FindingReportType, get_finding_report},
 };
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]

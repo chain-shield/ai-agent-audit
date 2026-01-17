@@ -1,19 +1,22 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
         agent::{
             agent_enums::AIAgent,
             agent_factory::{AgentConfig, AgentFactory},
         },
-        dynamic_prompts::invariants::{
-            self, generate_all_invariants_verify_prompt, get_post_all_invariants_verify_json,
+        dynamic_prompts::{
+            actors::{self, generate_all_actors_verify_prompt, get_post_all_actors_verify_json},
+            invariants::{
+                self, generate_all_invariants_verify_prompt, get_post_all_invariants_verify_json,
+            },
         },
         findings::findings::{Finding, Findings},
         phases::{rounds::all_rounds::AllRoundLegitAnalysis, verify_rounds::FindingAnalysis},
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
-        threat_models::actors::Actors,
+        threat_models::actors::{Actor, Actors},
         utils::prompt_context::{self, FindingReportType},
     },
     utils::semantic_compare,
@@ -31,8 +34,10 @@ use crate::llm_review::threat_models::{
     pattern_category::PatternCategory,
 };
 
+// TODO: setup actor
 pub enum IssuePrompt {
     Invariant(Vec<InvariantType>),
+    Actor,
     Combined(
         (
             Vec<PatternCategory>,
@@ -102,6 +107,31 @@ impl IssueTrait for InvariantFinding {
 }
 
 #[async_trait]
+impl IssueTrait for Actor {
+    fn id(&self) -> Option<String> {
+        self.id.clone()
+    }
+    fn hash(&self) -> String {
+        self.role_type.to_string()
+    }
+    async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
+        is_duplicate_pattern(self, issue, ai_agent).await
+    }
+    fn get_issue_report(&self) -> String {
+        actors::generate_formated_actor(&self)
+    }
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+    fn title_str(&self) -> String {
+        format!("{} - role: {}", self.name, self.role_type.to_string())
+    }
+    fn generate_verify_prompt(&self) -> String {
+        unimplemented!("Not implimented for InvariantFinding");
+    }
+}
+
+#[async_trait]
 impl IssueTrait for Finding {
     fn id(&self) -> Option<String> {
         self.id.clone()
@@ -151,6 +181,34 @@ impl IssueStructTrait for ContractInvariants {
     }
     fn issue_title(&self) -> String {
         "invariant".to_string()
+    }
+}
+
+#[async_trait]
+impl IssueStructTrait for Actors {
+    type Spec = Actor;
+    fn generate_verify_prompt(&self) -> String {
+        generate_all_actors_verify_prompt(&self)
+    }
+    fn verify_json_required_prompt() -> String {
+        get_post_all_actors_verify_json()
+    }
+    fn issues(&self) -> &[Actor] {
+        &self.actors
+    }
+    fn issues_mut(&mut self) -> &mut Vec<Actor> {
+        &mut self.actors
+    }
+    fn new(issues: Vec<Actor>) -> Self {
+        Self {
+            actors: issues.to_vec(),
+        }
+    }
+    async fn dedup(self) -> anyhow::Result<Self> {
+        dedup_pattern(self).await
+    }
+    fn issue_title(&self) -> String {
+        "actor".to_string()
     }
 }
 

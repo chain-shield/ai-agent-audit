@@ -1,8 +1,12 @@
-use crate::llm_review::{
-    agent::agent_enums::{all_enum_variants, generate_enum_list},
-    threat_models::invariants::{
-        ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
-        INVARIANT_LIBRARY,
+use crate::{
+    config::MAX_PATTERNS_FOR_PROMPT,
+    llm_review::{
+        agent::agent_enums::{all_enum_variants, generate_enum_list},
+        dynamic_prompts::invariants,
+        threat_models::invariants::{
+            ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
+            INVARIANT_LIBRARY,
+        },
     },
 };
 use rand::seq::SliceRandom;
@@ -51,6 +55,48 @@ You must base your invariants on the following invariant types and their descrip
 {invariants}
 
 You are not required to use every type, but you should prefer types that clearly match the contract's role (e.g. Balance, Permission, Temporal, StateMachine, Referential, Arithmetic, etc.).
+
+---
+
+## How to think
+
+When designing each invariant:
+
+1. Model the contract and its role
+   - Identify what the contract is for (e.g. signature validation, vault, permissions, recovery module, oracle, router).
+   - Identify who the key actors are (owners, signers, admins, modules, external protocols).
+
+2. Extract candidate invariants from the spec and context
+   - Translate any stated invariants or assumptions in the docs/scope into precise, checkable properties.
+   - Think about:
+     - Access control and privilege boundaries.
+     - Balance and accounting relationships.
+     - Nonces, counters, and sequencing.
+     - Configuration / image hash / checkpointer behavior.
+     - Cross-contract or cross-chain relationships if referenced.
+
+3. Make them machine-checkable
+   - Express each invariant as a clear predicate over contract state and/or events.
+   - Use concrete conditions like:
+     - Relationships between balances and totals.
+     - Relationships between stored configuration and computed hashes.
+     - Conditions on who is allowed to perform which actions under which flags/modes.
+     - Temporal properties across function calls (e.g. nonces, cooldowns, checkpoints).
+
+4. Actively search for violations
+   - For each invariant, scan the code for:
+     - Branches that skip checks (e.g. flag bits, mode switches, early returns).
+     - Edge cases in loops, array indexing, or boundary conditions.
+     - Multi-step flows (chained signatures, batched calls, upgradable configs) where state may drift from the intended invariant.
+   - If you find a credible way the invariant could be broken, mark it as PossibleViolation (or equivalent status) and describe:
+     - The pre-state (relevant configuration / storage / role assumptions).
+     - The actions or sequence of calls.
+     - The post-state and why it violates the invariant.
+     - The likely impact.
+
+5. Coverage vs signal
+   - It is acceptable to include some simpler invariants if they help cover more potential High/Medium issues.
+   - Still avoid vague or purely stylistic "invariants"; each one should correspond to a concrete, checkable property whose violation could matter in practice.
 
     "#,
         invariants = invariant_categories
@@ -228,6 +274,13 @@ pub fn generate_full_list_of_invariant_findings(co_invariants: &ContractInvarian
     let mut invariants = co_invariants.invariants.clone();
     let mut rng = rand::rng();
     invariants.shuffle(&mut rng);
+
+    invariants = invariants
+        .into_iter()
+        .take(MAX_PATTERNS_FOR_PROMPT)
+        .collect();
+
+    // log::info!("printing {} actors in prompt", invariants.len());
 
     for invariant in &invariants {
         let finding = generate_formatted_invariant_finding(invariant);

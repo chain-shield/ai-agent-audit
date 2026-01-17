@@ -25,11 +25,11 @@ use crate::{
             insert_file_summary_to_db,
         },
     },
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
-        agent::agent_enums::{all_enum_variants, generate_enum_list, AgentMetadata},
+        agent::agent_enums::{AgentMetadata, all_enum_variants, generate_enum_list},
         contract::contract_category::{
-            generate_formated_list_of_contract_categories, ContractCategory,
+            ContractCategory, generate_formated_list_of_contract_categories,
         },
     },
     prepare_code::git_clone::RepoPaths,

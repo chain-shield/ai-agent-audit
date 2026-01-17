@@ -1,11 +1,21 @@
-use crate::llm_review::{
-    agent::agent_enums::{all_enum_variants, generate_enum_list},
-    threat_models::actors::{Actor, RoleType},
+use crate::{
+    config::MAX_PATTERNS_FOR_PROMPT,
+    llm_review::{
+        agent::agent_enums::{all_enum_variants, generate_enum_list},
+        threat_models::actors::{Actor, Actors, RoleType},
+    },
 };
 use rand::seq::SliceRandom;
 
 pub fn generate_actors_prompt() -> String {
-    let role_types = generate_enum_list(&all_enum_variants::<RoleType>());
+    let mut role_types = all_enum_variants::<RoleType>();
+
+    // Randomize the order of types
+    let mut rng = rand::rng();
+    role_types.shuffle(&mut rng);
+
+    let role_types = generate_enum_list(&role_types);
+
     format!(
         r#"
             Your task: Identify ALL actors who can interact with or influence the target contract, 
@@ -210,8 +220,8 @@ pub fn get_actor_list_json() -> String {
         ]
         }}
 
-        **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
-        **Please double-check opening and closing brakets: `}}` and `]`, make sure 
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON.
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure
         they match up correctly.
     "#,
     )
@@ -224,6 +234,11 @@ pub fn generate_formated_list_from_actor_data(actors_slice: &[Actor]) -> String 
     // Randomize the order of patterns
     let mut rng = rand::rng();
     actors.shuffle(&mut rng);
+
+    // if list is too long, take first 30
+    actors = actors.into_iter().take(MAX_PATTERNS_FOR_PROMPT).collect();
+
+    // log::info!("printing {} actors in prompt", actors.len());
 
     for actor in actors {
         actor_list.push_str("\n\n");
@@ -247,4 +262,120 @@ pub fn generate_formated_list_from_actor_data(actors_slice: &[Actor]) -> String 
     }
 
     actor_list
+}
+
+pub fn generate_all_actors_verify_prompt(actors: &Actors) -> String {
+    let verify_json = get_pre_all_actors_verify_json();
+    let actors_report = generate_full_list_of_actors(actors);
+
+    format!(
+        r#"
+        {json} 
+
+        ## Your task: decide if EACH reported actor is valid? 
+
+        You should return `"true"` for `is_actor_valid` if actor is valid, role, description, and capabilities all check out.
+        Otherwise return `"false"`.
+
+        Please continue until you have carefully evaluated ALL actors.
+
+        Based on your assessment please provided the following for EACH actor:
+
+        *actor id*: insert actor id (from 'id' field)
+        *is actor valid*: true | false
+
+        ## actors TO VERIFY
+        {report} 
+
+        "#,
+        json = verify_json,
+        report = actors_report
+    )
+}
+
+pub fn get_post_all_actors_verify_json() -> String {
+    let json = get_all_actors_verify_json();
+
+    format!(
+        r#"
+
+        ## OUTPUT REQUIREMENTS 
+
+        *Please respond with ONLY valid JSON in the following exact format:*
+
+        {json}
+
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        they match up correctly.
+    "#
+    )
+}
+
+pub fn get_pre_all_actors_verify_json() -> String {
+    let json = get_all_actors_verify_json();
+
+    format!(
+        r#"
+
+        Before instructions are provided on the task please note required output format:
+
+        ## JSON Output Requirement
+
+        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+
+        {json}
+    "#
+    )
+}
+
+pub fn get_all_actors_verify_json() -> String {
+    format!(
+        r#"
+        {{
+            "findings": [
+                {{
+                    "actor_id": "copy the 'Actor Id' value from the actor above",
+                    "is_actor_valid": true|false,
+                    "why_its_not_valid": "in 40 words or less explain why NOT valid (OMIT if valid)"
+                }}
+            ]
+        }}
+        "#
+    )
+}
+
+pub fn generate_full_list_of_actors(actors: &Actors) -> String {
+    let mut actor_list = String::new();
+
+    for actor in &actors.actors {
+        let actor_desc = generate_formated_actor(actor);
+        actor_list.push_str(&actor_desc);
+        actor_list.push_str("\n\n");
+    }
+
+    actor_list
+}
+
+pub fn generate_formated_actor(actor: &Actor) -> String {
+    let mut actor_desc = String::new();
+
+    actor_desc.push_str(&format!("\n\n### Actor Name: {}\n", &actor.name));
+
+    if let Some(id) = &actor.id {
+        actor_desc.push_str(&format!("\n\n### Actor Id: {}\n", id));
+    }
+
+    actor_desc.push_str(&format!(
+        "\n\n### Actor Role: {}\n",
+        &actor.role_type.to_string()
+    ));
+
+    actor_desc.push_str("\n### Actor Description\n");
+    actor_desc.push_str(&actor.description.to_string());
+
+    actor_desc.push_str("\n### Actor Capabilities\n");
+    actor_desc.push_str(&actor.capabilities.join(", "));
+
+    actor_desc
 }

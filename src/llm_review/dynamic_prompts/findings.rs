@@ -91,6 +91,11 @@ fn generate_formated_list_from_pattern_data(patterns_to_use: &[VulnerabilityPatt
 
     let mut top_patterns_list = String::new();
 
+    // log::info!(
+    //     "printing {} vulnerability patterns!",
+    //     top_patterns_spec.len()
+    // );
+
     for pattern in top_patterns_spec {
         top_patterns_list.push_str("\n\n");
         top_patterns_list.push_str("### Vulnerability Pattern\n");
