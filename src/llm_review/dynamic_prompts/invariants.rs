@@ -2,7 +2,6 @@ use crate::{
     config::MAX_PATTERNS_FOR_PROMPT,
     llm_review::{
         agent::agent_enums::{all_enum_variants, generate_enum_list},
-        dynamic_prompts::invariants,
         threat_models::invariants::{
             ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
             INVARIANT_LIBRARY,
