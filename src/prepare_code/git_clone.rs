@@ -21,8 +21,8 @@ use walkdir::WalkDir;
 use crate::cli_args::parse::Cli;
 use crate::config::{AuditType, audit_config};
 use crate::utils::check_folder_name::{
-    is_library_package_json, is_monorepo_config_file, is_root_config_file, is_script_file,
-    is_test_file,
+    contains_build_config, is_library_package_json, is_monorepo_config_file, is_root_config_file,
+    is_script_file, is_test_file,
 };
 use crate::utils::file_security::validate_repo_url;
 use crate::utils::remapping::parse_and_store_remappings;
@@ -583,6 +583,56 @@ impl RepoPaths {
     /// root folder of protocol that contains foundery.toml etc
     pub fn get_protocol_root(&self) -> PathBuf {
         self.root.join(&self.repo_name)
+    }
+
+    /// Determine which directories Slither should be executed against.
+    ///
+    /// Slither needs to be run at a directory that contains a build configuration
+    /// (e.g., `hardhat.config.*` or `foundry.toml`). For monorepos, each package
+    /// often has its own config and must be analyzed separately.
+    ///
+    /// Priority:
+    /// 1. If `monorepo_folders` is set, use those explicit folders.
+    /// 2. Otherwise, use `source_code_folders` entries that *also* contain a build config.
+    /// 3. Otherwise, fall back to the protocol root if it contains a build config.
+    /// 4. Otherwise, scan first-level subdirectories of the protocol root for build configs.
+    pub fn slither_roots(&self) -> Result<Vec<PathBuf>> {
+        // 1) explicit monorepo folders file
+        let explicit = self.extract_monorepo_folders()?;
+        if !explicit.is_empty() {
+            return Ok(explicit);
+        }
+
+        let protocol_root = self.get_protocol_root();
+        let mut roots: Vec<PathBuf> = Vec::new();
+
+        // 2) treat code_folders/source_code_folders as potential package roots (monorepo-friendly)
+        for folder in &self.source_code_folders {
+            if folder.exists() && contains_build_config(&folder.clone()) {
+                roots.push(folder.clone());
+            }
+        }
+
+        // 3) single-project fallback: root config
+        if roots.is_empty() && protocol_root.exists() && contains_build_config(&protocol_root) {
+            roots.push(protocol_root.clone());
+        }
+
+        // 4) last resort: check immediate subdirectories (cheap; avoids deep walking)
+        if roots.is_empty() && protocol_root.exists() {
+            if let Ok(entries) = std::fs::read_dir(&protocol_root) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() && contains_build_config(&path) {
+                        roots.push(path);
+                    }
+                }
+            }
+        }
+
+        roots.sort();
+        roots.dedup();
+        Ok(roots)
     }
 
     /// Generic helper to safely read a file, skipping symlinks and empty files.

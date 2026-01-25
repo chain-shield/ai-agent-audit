@@ -4,7 +4,7 @@ use ai_agent_audit::{
     cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
-    enumerator::{self, codeblocks},
+    enumerator::{self, codeblocks, interface_implementations},
     error::Result,
     llm_review::{
         agent::agent_factory::init_llm_clients,
@@ -17,7 +17,6 @@ use ai_agent_audit::{
     },
 };
 use dotenvy::dotenv;
-use enumerator::interface_implementations;
 use log::{info, warn};
 use std::path::Path;
 

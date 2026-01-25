@@ -36,6 +36,133 @@ use crate::{
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
 
+/// Check if a file path contains standard library folders that should be excluded from summarization.
+/// Returns true if the file is a standard library file (should be excluded).
+fn is_standard_library_file(file_path: &std::path::Path) -> bool {
+    let path_str = file_path.to_string_lossy().to_lowercase();
+
+    // Exclude node_modules entirely
+    if path_str.contains("node_modules") {
+        return true;
+    }
+
+    // Exclude test folders (contains mocks and test contracts)
+    if path_str.contains("/test/") || path_str.contains("/tests/") {
+        return true;
+    }
+
+    // Exclude audit folders (contains flattened contracts, PoCs, and audit artifacts)
+    if path_str.contains("/audit/") || path_str.contains("/audits/") {
+        return true;
+    }
+
+    // Common standard library patterns in /lib/ folders
+    let standard_lib_patterns = [
+        // Foundry standard libraries
+        "/lib/forge-std/",
+        "/lib/ds-test/",
+        // OpenZeppelin
+        "/lib/openzeppelin-contracts/",
+        "/lib/openzeppelin-contracts-upgradeable/",
+        "/lib/@openzeppelin/",
+        // Solmate
+        "/lib/solmate/",
+        // Solady
+        "/lib/solady/",
+        // PRBMath
+        "/lib/prb-math/",
+        "/lib/prb-test/",
+        // Chainlink
+        "/lib/chainlink/",
+        "/lib/chainlink-brownie-contracts/",
+        // Uniswap
+        "/lib/v2-core/",
+        "/lib/v2-periphery/",
+        "/lib/v3-core/",
+        "/lib/v3-periphery/",
+        "/lib/uniswap-v2-core/",
+        "/lib/uniswap-v2-periphery/",
+        "/lib/uniswap-v3-core/",
+        "/lib/uniswap-v3-periphery/",
+        "/lib/uniswapv2/",
+        "/lib/zuniswapv2/",
+        // Polygon/FX Portal
+        "/lib/fx-portal/",
+        // Gnosis Safe
+        "/lib/safe-contracts/",
+        "/lib/safe-smart-account/",
+        // ERC standards
+        "/lib/erc721a/",
+        "/lib/erc1155/",
+        "/lib/erc4626/",
+        // Testing libraries
+        "/lib/weird-erc20/",
+        // Common utilities
+        "/lib/create2-helpers/",
+        "/lib/multicall/",
+        "/lib/permit2/",
+        // Aave
+        "/lib/aave-v3-core/",
+        "/lib/aave-v3-periphery/",
+        // Compound
+        "/lib/compound-protocol/",
+        // Curve
+        "/lib/curve-contract/",
+        // Balancer
+        "/lib/balancer-v2-monorepo/",
+        // Maker
+        "/lib/dss/",
+        // Synthetix
+        "/lib/synthetix/",
+        // Yearn
+        "/lib/yearn-vaults/",
+        // Sushiswap
+        "/lib/sushiswap/",
+        // 1inch
+        "/lib/1inch/",
+        // 0x
+        "/lib/0x-monorepo/",
+        // Optimism
+        "/lib/optimism/",
+        // Arbitrum
+        "/lib/arbitrum/",
+        "/lib/nitro-contracts/",
+        // zkSync
+        "/lib/zksync/",
+        "/lib/era-contracts/",
+        // LayerZero
+        "/lib/layerzero/",
+        "/lib/solidity-examples/",
+        // Axelar
+        "/lib/axelar-gmp-sdk-solidity/",
+        // Wormhole
+        "/lib/wormhole/",
+        // Hyperlane
+        "/lib/hyperlane-monorepo/",
+        // Connext
+        "/lib/nxtp/",
+        // Common test helpers
+        "/lib/test/",
+        "/lib/testing/",
+        // Hardhat plugins
+        "/lib/hardhat-deploy/",
+        // Other common libraries
+        "/lib/clones-with-immutable-args/",
+        "/lib/create3-factory/",
+        "/lib/erc4337/",
+        "/lib/account-abstraction/",
+        "/lib/seaport/",
+        "/lib/murky/",
+        "/lib/ens-contracts/",
+        "/lib/canonical-weth/",
+    ];
+
+    // Check if path contains any standard library pattern
+    standard_lib_patterns
+        .iter()
+        .any(|pattern| path_str.contains(pattern))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, EnumString, strum_macros::Display)]
 pub enum FileSummaryType {
     Source,
@@ -62,12 +189,12 @@ pub struct FileSummary {
     pub contract_category: ContractCategory,
 }
 
-// pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 300;
-// pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 50;
-// pub const MAX_CHARS_STORAGE_DESC: u16 = 50;
 pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 100;
 pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 20;
 pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
+// pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 40;
+// pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 10;
+// pub const MAX_CHARS_STORAGE_DESC: u16 = 16;
 
 pub async fn summarize_src_files(repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
     summarize_src_files_with_model(repo, "gpt-5").await
@@ -172,6 +299,11 @@ Respond only with valid JSON matching the schema!
             }
         }
 
+        // Skip standard library files (node_modules, OpenZeppelin, Forge-std, etc.)
+        if is_standard_library_file(file) {
+            continue;
+        }
+
         // check if lib folder or test files
         if file.to_string_lossy().contains(".t.sol") {
             continue;
@@ -187,6 +319,7 @@ Respond only with valid JSON matching the schema!
             if is_script_file(file) {
                 current_file_summary_type = FileSummaryType::DeployScript;
             } else if repo.source_code_folders.iter().any(|f| file.starts_with(f)) {
+                info!("adding {} to summary stack", file.display());
                 current_file_summary_type = FileSummaryType::Source;
             } else {
                 current_file_summary_type = FileSummaryType::OutOfScope;
@@ -222,6 +355,16 @@ Respond only with valid JSON matching the schema!
 
         // push full path & content into the work queue
         work_items.push((file.to_owned(), content, current_file_summary_type.clone()));
+    }
+
+    let summary_count = work_items
+        .iter()
+        .filter(|(_, _, file_type)| *file_type == FileSummaryType::Source)
+        .count();
+
+    info!("summarizing {} files...", summary_count);
+    if summary_count > 200 {
+        panic!("over 200 files are going to be summarized, please check if this is correct!");
     }
 
     // let mut files_to_summarize = String::new();
