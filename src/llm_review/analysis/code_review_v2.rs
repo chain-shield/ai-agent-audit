@@ -52,8 +52,24 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
-    // let custom_scoped_contracts: Option<Vec<_>> = None;
+    // let custom_scoped_contracts = Some(vec![
+    //     "GovernorOLAS",
+    //     "GovernorTimelockControl",
+    //     "BridgeMessenger",
+    //     "VerifyBridgedData",
+    //     "GuardCM",
+    //     "ServiceManager",
+    //     "StakingBase",
+    //     "RecoveryModule",
+    //     "ServiceManagerProxy",
+    //     "SafeMultisigWithRecoveryModule",
+    //     "Tokenomics",
+    //     "LiquidityManagerCore",
+    //     "BuyBackBurner",
+    //     "DefaultTargetDispenserL2",
+    //     "LiquidityManagerProxy",
+    // ]);
+    let custom_scoped_contracts: Option<Vec<String>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![

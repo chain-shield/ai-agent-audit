@@ -59,7 +59,7 @@ pub async fn get_dot_funcs_and_dot_edges(repo: &RepoPaths) -> Result<(Vec<DotFun
 }
 
 pub async fn generate_call_graph_blobs(repo: &RepoPaths) -> Result<Vec<String>> {
-    let folders = repo.extract_monorepo_folders()?;
+    let folders = repo.slither_roots()?;
 
     if folders.is_empty() {
         let json = slither_ffi::run_printer_json(&repo, "call-graph", None).await?;
@@ -67,6 +67,7 @@ pub async fn generate_call_graph_blobs(repo: &RepoPaths) -> Result<Vec<String>> 
     } else {
         let mut total_output = Vec::<String>::new();
         for folder in folders {
+            // folders are best-effort inferred; keep the guard as a safety check
             if contains_build_config(&folder) {
                 let json = slither_ffi::run_printer_json(&repo, "call-graph", Some(folder)).await?;
                 let blobs = extract_dot_blobs(&json)?;
