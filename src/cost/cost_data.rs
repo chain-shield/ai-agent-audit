@@ -38,6 +38,10 @@ pub enum LlmCostType {
     DeepseekInput,
     /// DeepSeek output tokens
     DeepseekOutput,
+    /// Kimi/Fireworks input tokens
+    KimiInput,
+    /// Kimi/Fireworks output tokens
+    KimiOutput,
 }
 
 /// Token direction for cost calculation
@@ -66,6 +70,8 @@ impl LlmCostType {
             LlmCostType::GeminiOutput => 10.00,
             LlmCostType::DeepseekInput => 0.07,
             LlmCostType::DeepseekOutput => 1.10,
+            LlmCostType::KimiInput => 0.60,
+            LlmCostType::KimiOutput => 3.00,
         }
     }
 }
@@ -96,6 +102,9 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // DeepSeek models
             "deepseek-chat" => 0.07,
             "deepseek-coder" => 0.07,
+
+            // Kimi/Fireworks models
+            "accounts/fireworks/models/kimi-k2p5" | "kimi-k2p5" | "kimi-k2.5" => 0.60,
 
             // Default fallback for unknown models
             _ => {
@@ -131,6 +140,9 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "deepseek-chat" => 1.10,
             "deepseek-coder" => 1.10,
 
+            // Kimi/Fireworks models
+            "accounts/fireworks/models/kimi-k2p5" | "kimi-k2p5" | "kimi-k2.5" => 3.00,
+
             // Default fallback for unknown models
             _ => {
                 log::warn!(
@@ -155,6 +167,8 @@ impl AIAgent {
             AIAgent::Gemini { .. } => 10.00,
             AIAgent::Deepseek { .. } if token_type == TokenType::Input => 0.07,
             AIAgent::Deepseek { .. } => 1.10,
+            AIAgent::Kimi { .. } if token_type == TokenType::Input => 0.60,
+            AIAgent::Kimi { .. } => 3.00,
         }
     }
 }

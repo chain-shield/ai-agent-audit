@@ -92,6 +92,8 @@ pub mod llm_review {
         pub mod agent_enums;
         /// AI agent factory for centralized agent creation
         pub mod agent_factory;
+        /// Kimi k2.5 integration via Fireworks.ai
+        pub mod kimi;
     }
     pub mod analysis {
 

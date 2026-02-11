@@ -1,8 +1,9 @@
 use super::agent_enums::{AIAgent, AgentMetadata};
+use super::kimi::{KIMI_K2P5_MODEL, KimiAgent, KimiAgentConfig, KimiClient};
 /// AI Agent Factory for centralized agent creation across LLM providers.
 ///
 /// This module provides a unified interface for creating AI agents from different
-/// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) with consistent configuration
+/// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek, Kimi) with consistent configuration
 /// and error handling.
 use crate::config::{OPENAI_MODEL, audit_config};
 use crate::error::{AuditError, Result};
@@ -52,6 +53,7 @@ pub enum LlmProvider {
     Anthropic,
     Gemini,
     DeepSeek,
+    Kimi,
 }
 
 impl LlmProvider {
@@ -62,6 +64,7 @@ impl LlmProvider {
             LlmProvider::Anthropic,
             LlmProvider::Gemini,
             LlmProvider::DeepSeek,
+            LlmProvider::Kimi,
         ]
     }
 
@@ -72,6 +75,7 @@ impl LlmProvider {
             LlmProvider::Anthropic => "anthropic",
             LlmProvider::Gemini => "gemini",
             LlmProvider::DeepSeek => "deepseek",
+            LlmProvider::Kimi => "kimi",
         }
     }
 
@@ -82,6 +86,7 @@ impl LlmProvider {
             LlmProvider::Anthropic => "ANTHROPIC_API_KEY",
             LlmProvider::Gemini => "GEMINI_API_KEY",
             LlmProvider::DeepSeek => "DEEPSEEK_API_KEY",
+            LlmProvider::Kimi => "FIREWORKS_API_KEY",
         }
     }
 
@@ -97,6 +102,7 @@ impl LlmProvider {
             "anthropic" | "claude" => Some(LlmProvider::Anthropic),
             "gemini" | "google" => Some(LlmProvider::Gemini),
             "deepseek" => Some(LlmProvider::DeepSeek),
+            "kimi" | "fireworks" => Some(LlmProvider::Kimi),
             _ => None,
         }
     }
@@ -238,6 +244,35 @@ impl GeminiConfig {
     }
 }
 
+/// Kimi/Fireworks-specific configuration options
+#[derive(Debug, Clone)]
+pub struct KimiConfig {
+    /// Maximum tokens for response (default: 16384)
+    /// Note: Fireworks API requires stream=true for max_tokens > 4096
+    /// Streaming is automatically enabled when max_tokens > 4096
+    pub max_tokens: u32,
+    /// Top-p (nucleus sampling) parameter (0.0-1.0, default: 1.0)
+    pub top_p: f64,
+    /// Top-k sampling parameter (default: 40)
+    pub top_k: u32,
+    /// Presence penalty (-2.0 to 2.0, default: 0.0)
+    pub presence_penalty: f64,
+    /// Frequency penalty (-2.0 to 2.0, default: 0.0)
+    pub frequency_penalty: f64,
+}
+
+impl Default for KimiConfig {
+    fn default() -> Self {
+        Self {
+            max_tokens: 16384, // Streaming enabled automatically for >4096 tokens
+            top_p: 1.0,
+            top_k: 40,
+            presence_penalty: 0.0,
+            frequency_penalty: 0.0,
+        }
+    }
+}
+
 /// Configuration for creating AI agents.
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
@@ -267,6 +302,8 @@ pub struct AgentConfig {
     pub anthropic_config: AnthropicConfig,
     /// Gemini-specific configuration (thinking level)
     pub gemini_config: GeminiConfig,
+    /// Kimi/Fireworks-specific configuration
+    pub kimi_config: KimiConfig,
 }
 
 impl AgentConfig {
@@ -286,6 +323,7 @@ impl AgentConfig {
             openai_config: OpenAIConfig::default(),
             anthropic_config: AnthropicConfig::default(),
             gemini_config: GeminiConfig::default(),
+            kimi_config: KimiConfig::default(),
         }
     }
 
@@ -414,6 +452,36 @@ impl AgentConfig {
         self
     }
 
+    /// Sets Kimi max tokens for response generation.
+    pub fn with_kimi_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.kimi_config.max_tokens = max_tokens;
+        self
+    }
+
+    /// Sets Kimi top_k sampling parameter.
+    pub fn with_kimi_top_k(mut self, top_k: u32) -> Self {
+        self.kimi_config.top_k = top_k;
+        self
+    }
+
+    /// Sets Kimi top_p (nucleus sampling) parameter.
+    pub fn with_kimi_top_p(mut self, top_p: f64) -> Self {
+        self.kimi_config.top_p = top_p;
+        self
+    }
+
+    /// Sets Kimi presence penalty.
+    pub fn with_kimi_presence_penalty(mut self, penalty: f64) -> Self {
+        self.kimi_config.presence_penalty = penalty;
+        self
+    }
+
+    /// Sets Kimi frequency penalty.
+    pub fn with_kimi_frequency_penalty(mut self, penalty: f64) -> Self {
+        self.kimi_config.frequency_penalty = penalty;
+        self
+    }
+
     /// Creates an agent configuration for security auditing with advanced tools enabled.
     pub fn for_security_audit(repo_paths: RepoPaths) -> Self {
         Self::new(Some(repo_paths))
@@ -428,6 +496,7 @@ static OPENAI_CLIENT: OnceLock<openai::Client> = OnceLock::new();
 static ANTHROPIC_CLIENT: OnceLock<anthropic::Client> = OnceLock::new();
 static GEMINI_CLIENT: OnceLock<gemini::Client> = OnceLock::new();
 static DEEPSEEK_CLIENT: OnceLock<deepseek::Client> = OnceLock::new();
+static KIMI_CLIENT: OnceLock<KimiClient> = OnceLock::new();
 
 /// Initializes all LLM clients from environment variables.
 ///
@@ -468,6 +537,17 @@ pub fn init_llm_clients() -> Result<()> {
         DEEPSEEK_CLIENT.set(client).map_err(|_| {
             AuditError::configuration("deepseek_client", "DeepSeek client already initialized")
         })?;
+    }
+
+    // Initialize Kimi/Fireworks client if API key is available
+    if audit_config().has_fireworks_key() && KIMI_CLIENT.get().is_none() {
+        log::info!("Initializing Kimi/Fireworks client...");
+        if let Some(client) = KimiClient::from_env() {
+            KIMI_CLIENT.set(client).map_err(|_| {
+                AuditError::configuration("kimi_client", "Kimi client already initialized")
+            })?;
+            log::info!("Kimi/Fireworks client initialized successfully");
+        }
     }
 
     Ok(())
@@ -517,6 +597,16 @@ fn deepseek_client() -> Result<&'static deepseek::Client> {
         AuditError::configuration(
             "deepseek_client",
             "DeepSeek client not initialized or API key not configured",
+        )
+    })
+}
+
+/// Returns the Kimi/Fireworks client instance.
+fn kimi_client() -> Result<&'static KimiClient> {
+    KIMI_CLIENT.get().ok_or_else(|| {
+        AuditError::configuration(
+            "kimi_client",
+            "Kimi client not initialized or FIREWORKS_API_KEY not configured",
         )
     })
 }
@@ -809,6 +899,45 @@ impl AgentFactory {
         })
     }
 
+    /// Creates a Kimi agent with the specified configuration.
+    ///
+    /// Uses the Fireworks.ai API with Kimi k2.5 model (custom HTTP client, no rig).
+    pub fn create_kimi_agent(config: &AgentConfig) -> Result<AIAgent> {
+        let client = kimi_client()?.clone();
+        let model = match config.model.as_str() {
+            "default" | "kimi_k2_5" => KIMI_K2P5_MODEL.to_string(),
+            _ => config.model.clone(),
+        };
+
+        let agent_config = KimiAgentConfig {
+            model: model.clone(),
+            preamble: config.preamble.clone(),
+            context: config.context.clone(),
+            temperature: config.temperature,
+            max_tokens: config.kimi_config.max_tokens,
+            top_p: config.kimi_config.top_p,
+            top_k: config.kimi_config.top_k,
+            presence_penalty: config.kimi_config.presence_penalty,
+            frequency_penalty: config.kimi_config.frequency_penalty,
+        };
+
+        let agent = KimiAgent::new(client, agent_config);
+
+        // Create metadata for pricing calculations
+        // Use the resolved model string (not "default") for accurate cost tracking
+        let metadata = AgentMetadata {
+            model,
+            temperature: config.temperature,
+            service_tier: None,     // Kimi doesn't have service tiers
+            reasoning_effort: None, // Kimi doesn't have reasoning effort
+            file_picker_enabled: config.enable_file_picker,
+            file_retrieval_enabled: config.enable_file_retrieval,
+            dynamic_context_enabled: config.enable_dynamic_context,
+        };
+
+        Ok(AIAgent::Kimi { agent, metadata })
+    }
+
     /// Creates an agent from the specified provider type.
     pub fn create_agent(provider: LlmProvider, config: &AgentConfig) -> Result<AIAgent> {
         match provider {
@@ -816,6 +945,7 @@ impl AgentFactory {
             LlmProvider::Anthropic => Self::create_anthropic_agent(config),
             LlmProvider::Gemini => Self::create_gemini_agent(config),
             LlmProvider::DeepSeek => Self::create_deepseek_agent(config),
+            LlmProvider::Kimi => Self::create_kimi_agent(config),
         }
     }
 

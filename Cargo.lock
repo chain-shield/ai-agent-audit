@@ -59,6 +59,7 @@ dependencies = [
  "clap",
  "dotenvy",
  "env_logger",
+ "futures-util",
  "git2",
  "glob",
  "hex",

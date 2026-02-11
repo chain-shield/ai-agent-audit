@@ -39,13 +39,13 @@ pub const SKIP_INVARIANT_RUNS: bool = false;
 // SKIP or RUN MAIN PATTERN RUNS
 pub const SKIP_ACTOR_PATTERN_RUNS: bool = false;
 // RUNS R1 (basic) and R2 (complex) patterns
-pub const R1_RUNS: usize = 10; // default: 10 , testing: 5
-pub const R2_RUNS: usize = 10; // default: 10 , testing: 5
+pub const R1_RUNS: usize = 2; // default: 10 , testing: 5
+pub const R2_RUNS: usize = 2; // default: 10 , testing: 5
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
-pub const INVARIANT_RUNS: usize = 3;
-pub const ACTOR_RUNS: usize = 2;
+pub const INVARIANT_RUNS: usize = 1; // default: 3
+pub const ACTOR_RUNS: usize = 1; // default: 2
 pub const MAX_PATTERNS_FOR_PROMPT: usize = 32; // too many patterns and performance drops
 
 pub const MAX_PATTERN_RUN_TOP: usize = 3; // 2 for large protocol, default: 3
@@ -122,6 +122,9 @@ pub struct AuditConfig {
     /// DeepSeek API key for DeepSeek models
     pub deepseek_api_key: Option<String>,
 
+    /// Fireworks API key for Kimi models
+    pub fireworks_api_key: Option<String>,
+
     /// Logging level for the application
     pub log_level: String,
 
@@ -161,6 +164,7 @@ impl Default for AuditConfig {
             anthropic_api_key: None,
             gemini_ai_api_key: None,
             deepseek_api_key: None,
+            fireworks_api_key: None,
             log_level: "info".to_string(),
             docker_volume: DOCKER_VOLUME.to_string(),
             max_repo_url_length: MAX_REPO_URL_LENGTH,
@@ -189,6 +193,7 @@ impl AuditConfig {
     /// * `ANTHROPIC_API_KEY` - Anthropic API key (optional)
     /// * `GEMINI_API_KEY` - Gemini AI API key (optional)
     /// * `DEEPSEEK_API_KEY` - DeepSeek API key (optional)
+    /// * `FIREWORKS_API_KEY` - Fireworks API key for Kimi models (optional)
     /// * `RUST_LOG` - Logging level (default: info)
     pub fn from_env() -> Result<Self> {
         let mut config = Self::default();
@@ -209,12 +214,14 @@ impl AuditConfig {
         config.anthropic_api_key = env::var("ANTHROPIC_API_KEY").ok();
         config.gemini_ai_api_key = env::var("GEMINI_API_KEY").ok();
         config.deepseek_api_key = env::var("DEEPSEEK_API_KEY").ok();
+        config.fireworks_api_key = env::var("FIREWORKS_API_KEY").ok();
 
         // Validate at least one API key is provided
         if config.openai_api_key.is_none()
             && config.anthropic_api_key.is_none()
             && config.gemini_ai_api_key.is_none()
             && config.deepseek_api_key.is_none()
+            && config.fireworks_api_key.is_none()
         {
             return Err(AuditError::configuration(
                 "API_KEYS",
@@ -243,6 +250,7 @@ impl AuditConfig {
             && self.anthropic_api_key.is_none()
             && self.gemini_ai_api_key.is_none()
             && self.deepseek_api_key.is_none()
+            && self.fireworks_api_key.is_none()
         {
             return Err(AuditError::configuration(
                 "API_KEYS",
@@ -291,6 +299,14 @@ impl AuditConfig {
                 ));
             }
         }
+        if let Some(k) = &self.fireworks_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "FIREWORKS_API_KEY",
+                    "Appears to be a placeholder key",
+                ));
+            }
+        }
 
         Ok(())
     }
@@ -315,6 +331,11 @@ impl AuditConfig {
         self.deepseek_api_key.is_some()
     }
 
+    /// Returns true if Fireworks API key is configured (for Kimi models).
+    pub fn has_fireworks_key(&self) -> bool {
+        self.fireworks_api_key.is_some()
+    }
+
     /// Returns a list of configured LLM providers.
     pub fn available_providers(&self) -> Vec<String> {
         let mut providers = Vec::new();
@@ -329,6 +350,9 @@ impl AuditConfig {
         }
         if self.has_deepseek_key() {
             providers.push("DeepSeek".to_string());
+        }
+        if self.has_fireworks_key() {
+            providers.push("Kimi".to_string());
         }
         providers
     }
@@ -345,6 +369,7 @@ impl AuditConfig {
             anthropic_api_key: None,
             gemini_ai_api_key: None,
             deepseek_api_key: None,
+            fireworks_api_key: None,
             log_level: "debug".to_string(),
             docker_volume: DOCKER_VOLUME.to_string(),
             max_repo_url_length: MAX_REPO_URL_LENGTH,

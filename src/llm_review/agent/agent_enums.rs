@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
+use super::kimi::KimiAgent;
 use crate::utils::extract_retry::agent_extract_with_retry;
 use rig::{
     agent::Agent,
@@ -55,6 +56,11 @@ pub enum AIAgent {
     /// DeepSeek models (cost-effective option)
     Deepseek {
         agent: Agent<deepseek::CompletionModel>,
+        metadata: AgentMetadata,
+    },
+    /// Kimi k2.5 model via Fireworks.ai (custom HTTP client, no rig)
+    Kimi {
+        agent: KimiAgent,
         metadata: AgentMetadata,
     },
 }
@@ -118,11 +124,12 @@ impl AIAgent {
             AIAgent::Openai { agent, .. } => agent.prompt(prompt).await?,
             AIAgent::Gemini { agent, .. } => agent.prompt(prompt).await?,
             AIAgent::Deepseek { agent, .. } => agent.prompt(prompt).await?,
+            AIAgent::Kimi { agent, .. } => agent.prompt(prompt).await?,
         };
         Ok(out)
     }
 
-    //
+    /// Extracts structured data from LLM response with automatic retry logic.
     pub async fn extract_with_retry<T>(&self, prompt: &str) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
@@ -140,6 +147,10 @@ impl AIAgent {
             AIAgent::Deepseek { agent, metadata } => {
                 Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
             }
+            AIAgent::Kimi { agent, metadata } => {
+                // Kimi uses custom HTTP client with its own retry logic and cost tracking
+                Ok(agent.extract_with_retry::<T>(prompt, metadata).await?)
+            }
         }
     }
 
@@ -152,6 +163,7 @@ impl AIAgent {
             AIAgent::Openai { metadata, .. } => &metadata.model,
             AIAgent::Gemini { metadata, .. } => &metadata.model,
             AIAgent::Deepseek { metadata, .. } => &metadata.model,
+            AIAgent::Kimi { metadata, .. } => &metadata.model,
         }
     }
 
@@ -184,6 +196,7 @@ impl AIAgent {
             AIAgent::Openai { metadata, .. } => metadata.temperature,
             AIAgent::Gemini { metadata, .. } => metadata.temperature,
             AIAgent::Deepseek { metadata, .. } => metadata.temperature,
+            AIAgent::Kimi { metadata, .. } => metadata.temperature,
         }
     }
 
@@ -194,6 +207,7 @@ impl AIAgent {
             AIAgent::Openai { metadata, .. } => metadata.file_picker_enabled,
             AIAgent::Gemini { metadata, .. } => metadata.file_picker_enabled,
             AIAgent::Deepseek { metadata, .. } => metadata.file_picker_enabled,
+            AIAgent::Kimi { metadata, .. } => metadata.file_picker_enabled,
         }
     }
 
@@ -204,6 +218,7 @@ impl AIAgent {
             AIAgent::Openai { metadata, .. } => metadata.file_retrieval_enabled,
             AIAgent::Gemini { metadata, .. } => metadata.file_retrieval_enabled,
             AIAgent::Deepseek { metadata, .. } => metadata.file_retrieval_enabled,
+            AIAgent::Kimi { metadata, .. } => metadata.file_retrieval_enabled,
         }
     }
 
@@ -214,6 +229,7 @@ impl AIAgent {
             AIAgent::Openai { metadata, .. } => metadata.dynamic_context_enabled,
             AIAgent::Gemini { metadata, .. } => metadata.dynamic_context_enabled,
             AIAgent::Deepseek { metadata, .. } => metadata.dynamic_context_enabled,
+            AIAgent::Kimi { metadata, .. } => metadata.dynamic_context_enabled,
         }
     }
 
@@ -224,6 +240,7 @@ impl AIAgent {
             AIAgent::Openai { .. } => "openai",
             AIAgent::Gemini { .. } => "gemini",
             AIAgent::Deepseek { .. } => "deepseek",
+            AIAgent::Kimi { .. } => "kimi",
         }
     }
 
@@ -235,6 +252,7 @@ impl AIAgent {
             AIAgent::Openai { metadata, .. } => metadata,
             AIAgent::Gemini { metadata, .. } => metadata,
             AIAgent::Deepseek { metadata, .. } => metadata,
+            AIAgent::Kimi { metadata, .. } => metadata,
         }
     }
 }

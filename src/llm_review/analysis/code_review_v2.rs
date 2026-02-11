@@ -403,6 +403,10 @@ pub async fn generate_ai_agents(
         .with_model("gemini-3-pro-preview")
         .with_preamble(solidity_auditor_preamble);
 
+    let pattern_discovery_config_kimi = AgentConfig::new(Some(repo.clone()))
+        .with_model("kimi_k2_5")
+        .with_preamble(solidity_auditor_preamble);
+
     // let pattern_discovery_config_claude = AgentConfig::new(Some(repo.clone()))
     //     .with_temperature(0.2)
     //     .with_model(CLAUDE_4_5_SONNET)
@@ -418,8 +422,12 @@ pub async fn generate_ai_agents(
         .with_openai_reasoning_effort("high")
         .with_file_picker(false);
 
-    let pattern_discovery_agent = Arc::new(AgentFactory::create_gemini_agent(
-        &pattern_discovery_config_gemini,
+    // let pattern_discovery_agent = Arc::new(AgentFactory::create_gemini_agent(
+    //     &pattern_discovery_config_gemini,
+    // )?);
+    //
+    let pattern_discovery_agent = Arc::new(AgentFactory::create_kimi_agent(
+        &pattern_discovery_config_kimi,
     )?);
 
     // let pattern_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(

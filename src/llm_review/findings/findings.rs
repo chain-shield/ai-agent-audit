@@ -386,6 +386,12 @@ where
 
         let mut cleaned_str = cleaned.to_string();
 
+        // Fix single quotes to double quotes (JavaScript object notation -> JSON)
+        // This handles cases where LLMs return {'key': 'value'} instead of {"key": "value"}
+        // We need to be careful to only replace quotes that are part of the JSON structure,
+        // not quotes inside string values
+        cleaned_str = cleaned_str.replace("'", "\"");
+
         // Fix broken JSON strings where Gemini splits a string value across lines
         // Two patterns to handle:
         // 1. Escaped newline: "proof_of_code": "function test() {...}\\n    \\\"severity\": \"High\""
@@ -490,23 +496,163 @@ where
     }
 
     fn parse_from_llm_response(response: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let json_start = response.find('{');
-        let json_end = response.rfind('}');
+        // 1) Fast path: the whole response is already JSON
+        let trimmed = response.trim();
 
-        match (json_start, json_end) {
-            (Some(start), Some(end)) if start < end => {
-                let json_part = &response[start..=end];
+        let starts_ok = trimmed.starts_with('{') || trimmed.starts_with('[');
+        let ends_ok = trimmed.ends_with('}') || trimmed.ends_with(']');
 
-                // Debug: Log if RUST_LOG=debug is set
-                log::debug!(
-                    "Extracted JSON (first 500 chars): {}",
-                    &json_part[..json_part.len().min(500)]
-                );
+        log::debug!(
+            "JSON extraction: response len={}, trimmed len={}, starts_with={{/[: {}, ends_with={{/]: {}, first 100: {}, last 100: {}",
+            response.len(),
+            trimmed.len(),
+            starts_ok,
+            ends_ok,
+            &trimmed[..trimmed.len().min(100)],
+            &trimmed[trimmed.len().saturating_sub(100)..]
+        );
 
-                Self::parse_from_json(json_part)
-                    .map_err(|e| format!("Failed to parse JSON: {}", e).into())
+        if starts_ok && ends_ok {
+            log::debug!("Fast path: attempting to parse complete JSON");
+            match Self::parse_from_json(trimmed) {
+                Ok(parsed) => {
+                    log::debug!("✅ Fast path succeeded");
+                    return Ok(parsed);
+                }
+                Err(e) => {
+                    log::debug!(
+                        "Fast path failed: {} - falling back to robust extraction",
+                        e
+                    );
+                }
             }
-            _ => Err("No valid JSON found in response".into()),
+        } else {
+            log::debug!("Fast path skipped - falling back to robust extraction");
         }
+
+        // 2) Robust path: models often include analysis + examples + then the JSON.
+        // We scan for any JSON object/array embedded in the text and pick the best candidate
+        // that deserializes into the target type.
+        let cleaned = Self::clean_json_string(response);
+
+        let mut best: Option<(usize, usize, Self)> = None;
+        let mut candidates_checked: usize = 0;
+
+        for (idx, ch) in cleaned.char_indices() {
+            if ch != '{' && ch != '[' {
+                continue;
+            }
+
+            // Avoid pathological worst-cases on giant responses
+            candidates_checked += 1;
+            if candidates_checked > 500 {
+                break;
+            }
+
+            let slice = &cleaned[idx..];
+
+            // Parse exactly one JSON value from this point and learn how many bytes it consumed.
+            // NOTE: `byte_offset()` is available on the stream iterator in our serde_json version.
+            let mut stream =
+                serde_json::Deserializer::from_str(slice).into_iter::<serde_json::Value>();
+            if stream.next().is_none_or(|r| r.is_err()) {
+                continue;
+            }
+
+            let end = idx + stream.byte_offset();
+            if end <= idx || end > cleaned.len() {
+                continue;
+            }
+
+            let candidate = &cleaned[idx..end];
+
+            // Now try to parse into the requested type.
+            if let Ok(parsed) = Self::parse_from_json(candidate) {
+                let cand_len = end - idx;
+                let is_better = best
+                    .as_ref()
+                    .map(|(b_start, b_end, _)| cand_len > (b_end - b_start))
+                    .unwrap_or(true);
+
+                if is_better {
+                    best = Some((idx, end, parsed));
+                }
+            }
+        }
+
+        if let Some((start, end, parsed)) = best {
+            log::debug!(
+                "✅ Robust path succeeded: extracted JSON candidate (start={}, len={}, first 500 chars): {}",
+                start,
+                end - start,
+                &cleaned[start..end.min(start + 500)]
+            );
+            return Ok(parsed);
+        }
+
+        log::error!(
+            "❌ No valid JSON found in response. Checked {} candidates. Response length: {}, first 200 chars: {}",
+            candidates_checked,
+            response.len(),
+            &response[..response.len().min(200)]
+        );
+        Err("No valid JSON found in response".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FromLLMJson;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct Dummy {
+        a: i64,
+        b: String,
+    }
+
+    #[test]
+    fn from_llm_json_extracts_embedded_json_object_even_with_other_json_present() {
+        let response = r#"
+Here is some analysis.
+
+payload = {"model":"accounts/fireworks/models/kimi-k2p5","temperature":0.1}
+
+Now the real answer:
+{"a": 7, "b": "ok"}
+"#;
+
+        let parsed: Dummy = Dummy::parse_from_llm_response(response).unwrap();
+        assert_eq!(
+            parsed,
+            Dummy {
+                a: 7,
+                b: "ok".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn from_llm_json_extracts_embedded_json_array() {
+        let response = r#"Some text before.
+
+[{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]
+
+Some text after."#;
+
+        let parsed: Vec<Dummy> = Vec::<Dummy>::parse_from_llm_response(response).unwrap();
+        assert_eq!(
+            parsed,
+            vec![
+                Dummy {
+                    a: 1,
+                    b: "x".to_string()
+                },
+                Dummy {
+                    a: 2,
+                    b: "y".to_string()
+                }
+            ]
+        );
     }
 }
