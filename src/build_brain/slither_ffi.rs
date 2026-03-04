@@ -239,6 +239,16 @@ pub fn build_slither_args(
         "/workspace".to_string(),
     ];
 
+    // Apple Silicon (macOS arm64) frequently hits docker multi-arch/tooling mismatches
+    // with the toolbox image and/or its transitive runtime dependencies.
+    // Force linux/amd64 for Slither runs to match the clone/build container platform.
+    let force_amd64_platform = std::env::consts::OS == "macos"
+        && matches!(std::env::consts::ARCH, "aarch64" | "arm64");
+    if force_amd64_platform {
+        // Insert right after `docker run` so it applies to the image selection.
+        args.splice(1..1, ["--platform".to_string(), "linux/amd64".to_string()]);
+    }
+
     // Note: We don't set FOUNDRY_PROFILE for Slither because:
     // 1. Custom build profiles may reference solc versions not available in Docker
     // 2. Slither will use foundry.toml's default profile or auto-detect settings

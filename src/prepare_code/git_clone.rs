@@ -503,21 +503,42 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
      {build_command}"
     );
 
+    // On Apple Silicon (arm64 host), the `linux/arm64` toolbox image + SVM-provided `solc`
+    // can fail to execute due to glibc/libstdc++ version mismatches. Forcing `linux/amd64`
+    // makes `forge build` reliable (via emulation) and avoids `Broken pipe (os error 32)`.
+    let force_amd64_platform = std::env::consts::OS == "macos"
+        && matches!(std::env::consts::ARCH, "aarch64" | "arm64");
+    if force_amd64_platform {
+        log::warn!(
+            "Host is {}-{}; forcing docker platform linux/amd64 to avoid solc runtime incompatibilities on arm64 images",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+    }
+
+    let mut docker_args: Vec<String> = vec![
+        "run".to_string(),
+        "--rm".to_string(),
+        "--user".to_string(),
+        "root".to_string(),
+        "-v".to_string(),
+        format!("{}:/workspace", docker_volume),
+        "-w".to_string(),
+        "/workspace".to_string(),
+    ];
+    if force_amd64_platform {
+        docker_args.push("--platform".to_string());
+        docker_args.push("linux/amd64".to_string());
+    }
+    docker_args.extend([
+        "trailofbits/eth-security-toolbox:nightly".to_string(),
+        "bash".to_string(),
+        "-c".to_string(),
+        clone_and_build_command,
+    ]);
+
     let status = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "--user",
-            "root",
-            "-v",
-            &format!("{}:/workspace", docker_volume),
-            "-w",
-            "/workspace",
-            "trailofbits/eth-security-toolbox:nightly",
-            "bash",
-            "-c",
-            &clone_and_build_command,
-        ])
+        .args(&docker_args)
         .status()
         .context("Failed to clone and build repository in Docker")?;
 
