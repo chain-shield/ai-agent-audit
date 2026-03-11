@@ -40,6 +40,10 @@ pub fn collect_library_calls(ir_text: &str) -> Vec<LibCall> {
     ir_text.lines().filter_map(parse_libcall_line).collect()
 }
 
+static FUNCTION_SIGNATURE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)").unwrap()
+});
+
 /* --------------------------
 #[cfg(test)]
 mod tests {
@@ -148,8 +152,7 @@ fn extract_functions(block: &str) -> Vec<LibFn> {
             let header = block[fn_start..h_end].to_string();
 
             // Name + params
-            let re_sig = Regex::new(r"function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)").unwrap();
-            if let Some(c) = re_sig.captures(&header) {
+            if let Some(c) = FUNCTION_SIGNATURE_RE.captures(&header) {
                 let fn_name = c.get(1).unwrap().as_str();
                 let params_raw = c.get(2).map(|m| m.as_str()).unwrap_or("");
                 let param_types = canonicalize_param_list(params_raw);
@@ -724,8 +727,9 @@ library Transfers {
             assert!(f.full_body.ends_with('}'));
 
             // Check header → canonical signature round-trip
-            let re = Regex::new(r"function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)").unwrap();
-            let caps = re.captures(&f.full_body).expect("header match");
+            let caps = FUNCTION_SIGNATURE_RE
+                .captures(&f.full_body)
+                .expect("header match");
             let name = caps.get(1).unwrap().as_str();
             let params_raw = caps.get(2).map(|m| m.as_str()).unwrap_or("");
             let canon_params = canonicalize_param_list(params_raw);
@@ -776,24 +780,25 @@ library Transfers {
             parsed.functions.len()
         );
         assert_eq!(parsed.name, "Transfers");
-        let sigs: HashSet<String> = parsed
+        let sigs: HashSet<&str> = parsed
             .functions
             .iter()
-            .map(|f| f.canonical_sig.clone())
+            .map(|f| f.canonical_sig.as_str())
             .collect();
         println!("[test] Transfers sigs: {:?}", sigs);
 
         // payable should be stripped from canonical param types
-        assert!(sigs.contains(&"transferNAT(address,uint256)".to_string()));
-        assert!(sigs.contains(&"depositWNat(IWNat,address,uint256)".to_string()));
+        assert!(sigs.contains("transferNAT(address,uint256)"));
+        assert!(sigs.contains("depositWNat(IWNat,address,uint256)"));
 
         for f in &parsed.functions {
             assert!(f.full_body.starts_with("function "));
             assert!(f.full_body.ends_with('}'));
 
             // Round-trip canonical sig check
-            let re = Regex::new(r"function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)").unwrap();
-            let caps = re.captures(&f.full_body).expect("header match");
+            let caps = FUNCTION_SIGNATURE_RE
+                .captures(&f.full_body)
+                .expect("header match");
             let name = caps.get(1).unwrap().as_str();
             let params_raw = caps.get(2).map(|m| m.as_str()).unwrap_or("");
             let canon_params = canonicalize_param_list(params_raw);

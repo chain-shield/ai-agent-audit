@@ -55,8 +55,8 @@ pub fn parse_slithir_ir_code(text: &str) -> Vec<SlithIRFn> {
     // info!("text in parse_slithir {}", text.len());
     for line in text.lines() {
         // Parse contract lines (format: "Contract ContractName:")
-        if line.starts_with("Contract ") {
-            current_contract = line["Contract ".len()..].trim_end_matches(':').to_owned();
+        if let Some(rest) = line.strip_prefix("Contract ") {
+            current_contract = rest.trim_end_matches(':').to_owned();
         }
         // Parse function lines (format: "\tFunction functionName:")
         else if line.starts_with("\tFunction ") {
@@ -211,7 +211,5 @@ fn split_str_by_period(input: &str) -> Option<(String, String)> {
 /// @return String with special characters replaced
 pub fn replace_special_character(text: &str) -> String {
     // Replace the Greek letter phi (ϕ) with "phi"
-    let cleaned_text = text.trim().replace("ϕ", "phi");
-
-    cleaned_text
+    text.trim().replace("ϕ", "phi")
 }

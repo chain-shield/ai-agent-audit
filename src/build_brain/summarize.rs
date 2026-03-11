@@ -253,8 +253,7 @@ pub async fn summarize_src_files_with_model(
 
         "#
     );
-    let preamble_deploy_script_summary = format!(
-        r#"
+    let preamble_deploy_script_summary = r#"
 You are a senior Web3 deploy engineer. Summarize the deployment script (TS/JS/Hardhat/Ignition/Foundry). Use markdown. Start with a 100-word summary: purpose, target networks/env, trust model (who holds keys/roles), major steps.
 Then sections:
 1) Inputs/Config: env vars, CLI args, constants/defaults, network logic, preconditions (≤20 chars each).
@@ -267,7 +266,7 @@ Then sections:
 8) Script Functions/Tasks: each full interface (name(params): returns; visibility/exported; async); 20-word (max) purpose/effects.
 Respond only with valid JSON matching the schema!
 "#
-    );
+    .to_string();
 
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(model)
@@ -310,11 +309,11 @@ Respond only with valid JSON matching the schema!
         }
 
         // check if file is in scope for summary (source or script) for foundry projects
-        if file.extension().map_or(false, |ext| ext == "sol")
+        if file.extension().is_some_and(|ext| ext == "sol")
             && !file
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with(".t.sol"))
+                .is_some_and(|n| n.ends_with(".t.sol"))
         {
             if is_script_file(file) {
                 current_file_summary_type = FileSummaryType::DeployScript;
@@ -328,7 +327,7 @@ Respond only with valid JSON matching the schema!
 
         // check file type for hardhat
         if current_file_summary_type == FileSummaryType::OutOfScope
-            && file.extension().map_or(false, |ext| ext == "ts")
+            && file.extension().is_some_and(|ext| ext == "ts")
             && is_script_file(file)
         {
             current_file_summary_type = FileSummaryType::DeployScript;
@@ -343,7 +342,7 @@ Respond only with valid JSON matching the schema!
             continue;
         }
 
-        let content = fs::read_to_string(&file)?;
+        let content = fs::read_to_string(file)?;
 
         // skip if content does not have have at least one line that start with contract and contract
         // name does NOT contain 'mock' (case insensative)
@@ -451,7 +450,7 @@ Respond only with valid JSON matching the schema!
         info!("filename: {}", summary.filename);
         info!(
             "contract category: {}",
-            summary.contract_category.unwrap_or_default().to_string()
+            summary.contract_category.unwrap_or_default()
         );
         info!("summary size: {}", summary.summary.len())
     }
@@ -489,7 +488,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
         ..Default::default()
     };
 
-    let summary = extractor_with_retry(&ai_summary_agent, &context, &metadata).await?;
+    let summary = extractor_with_retry(&ai_summary_agent, context, &metadata).await?;
 
     add_to_inference_cost_by_type(&summary.summary, &metadata, TokenType::Output).await;
 

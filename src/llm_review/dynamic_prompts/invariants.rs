@@ -212,8 +212,7 @@ pub fn get_pre_all_invariants_verify_json() -> String {
 }
 
 pub fn get_all_invariants_verify_json() -> String {
-    format!(
-        r#"
+    r#"
         {{
             "findings": [
                 {{
@@ -225,7 +224,7 @@ pub fn get_all_invariants_verify_json() -> String {
             ]
         }}
         "#
-    )
+    .to_string()
 }
 
 pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantType]) -> String {

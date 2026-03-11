@@ -139,7 +139,7 @@ pub fn generate_openai_agent(repo: &RepoPaths, reasoning_effort: &str) -> Result
     Ok(agent)
 }
 
-const INVARIANT_DISCOVERY_SYSTEM_PROMPT: &'static str = "You are a world-class expert at Solidity EVM smart contract auditing. You specialize in discovering invariants in complex solidity codebases.";
+const INVARIANT_DISCOVERY_SYSTEM_PROMPT: &str = "You are a world-class expert at Solidity EVM smart contract auditing. You specialize in discovering invariants in complex solidity codebases.";
 
 pub fn generate_invariant_openai_agent(
     repo: &RepoPaths,

@@ -66,7 +66,7 @@ impl VectorDbService {
             .map_err(|e| {
                 AuditError::vector_db(
                     "collection_check",
-                    &format!("Failed to check if collection '{}' exists", collection_name),
+                    format!("Failed to check if collection '{}' exists", collection_name),
                     e,
                 )
             })
@@ -101,7 +101,7 @@ impl VectorDbService {
         self.client.create_collection(req).await.map_err(|e| {
             AuditError::vector_db(
                 "collection_creation",
-                &format!("Failed to create collection '{}'", collection_name),
+                format!("Failed to create collection '{}'", collection_name),
                 e,
             )
         })?;
@@ -155,7 +155,7 @@ impl VectorDbService {
         self.client.upsert_points(req).await.map_err(|e| {
             AuditError::vector_db(
                 "upsert",
-                &format!(
+                format!(
                     "Failed to upsert embeddings to collection '{}'",
                     collection_name
                 ),
@@ -187,7 +187,7 @@ impl VectorDbService {
             .map_err(|e| {
                 AuditError::vector_db(
                     "collection_deletion",
-                    &format!("Failed to delete collection '{}'", collection_name),
+                    format!("Failed to delete collection '{}'", collection_name),
                     e,
                 )
             })?;

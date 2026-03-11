@@ -34,10 +34,12 @@ use crate::{
     utils::bpe::get_bpe,
 };
 
+type CodeIrMap = HashMap<(String, String), SlithIRFn>;
+type CodeIrCache = HashMap<String, CodeIrMap>;
+
 /// Global cache for get_code_ir_map results.
 /// Key: project_id, Value: IR map for that project
-static CODE_IR_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<(String, String), SlithIRFn>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static CODE_IR_MAP_CACHE: Lazy<Mutex<CodeIrCache>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Global cache for contracts_in_source_folder results.
 /// Key: project_id, Value: Vec of contract names
@@ -367,10 +369,10 @@ fn parse_import_map(content: &str) -> HashMap<String, String> {
         // Extract contract name from file path
         // "./EntropyEvents.sol" => "EntropyEvents"
         // "@openzeppelin/contracts/token/ERC20/IERC20.sol" => "IERC20"
-        if let Some(file_name) = import_path.split('/').last() {
-            if let Some(contract_name) = file_name.strip_suffix(".sol") {
-                import_map.insert(contract_name.to_string(), import_path.to_string());
-            }
+        if let Some(file_name) = import_path.split('/').next_back()
+            && let Some(contract_name) = file_name.strip_suffix(".sol")
+        {
+            import_map.insert(contract_name.to_string(), import_path.to_string());
         }
     }
 
@@ -601,11 +603,11 @@ async fn process_inheritance_relationships(
 
                                 // Check if this contract name matches the file name
                                 // e.g., ChainlinkOracle.sol should contain contract ChainlinkOracle
-                                if let Some(file_stem) = parent_file.file_stem() {
-                                    if file_stem.to_string_lossy() == contract_name {
-                                        found_name = Some(contract_name.to_string());
-                                        break; // Found exact match, use it
-                                    }
+                                if let Some(file_stem) = parent_file.file_stem()
+                                    && file_stem.to_string_lossy() == contract_name
+                                {
+                                    found_name = Some(contract_name.to_string());
+                                    break; // Found exact match, use it
                                 }
                             }
 
@@ -1448,7 +1450,7 @@ contract E is A, B {}
         let matches: Vec<_> = contract_decl_regex.captures_iter(source).collect();
         assert_eq!(matches.len(), 5);
 
-        let expected = vec![
+        let expected = [
             ("contract", "A"),
             ("library", "B"),
             ("interface", "C"),

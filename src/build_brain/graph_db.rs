@@ -27,6 +27,12 @@ pub struct SmartContractFunction {
     pub mutability: String,
 }
 
+impl SmartContractFunction {
+    fn modifiers_csv(&self) -> String {
+        self.modifiers.join(",")
+    }
+}
+
 /// SQLite-based graph database for semantic contract data
 pub struct GraphDb(Connection);
 
@@ -70,19 +76,9 @@ impl GraphDb {
         Ok(Self(conn))
     }
 
-    pub fn insert_function(
-        &self,
-        func_id: &str,
-        project_id: &str,
-        contract: &str,
-        name: &str,
-        ir: &str,
-        visibility: &str,
-        modifiers: &str,
-        mutability: &str,
-    ) -> Result<()> {
+    pub fn insert_function(&self, function: &SmartContractFunction) -> Result<()> {
         self.0.execute(
-        r#"
+            r#"
         INSERT INTO functions (func_id, project_id, contract, name, ir, visibility, modifiers, mutability)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         ON CONFLICT(func_id, contract, project_id) DO UPDATE SET
@@ -92,8 +88,17 @@ impl GraphDb {
             modifiers  = excluded.modifiers,
             mutability = excluded.mutability
         "#,
-        params![func_id, project_id, contract, name, ir, visibility, modifiers, mutability],
-    )?;
+            params![
+                function.id,
+                function.project_id,
+                function.contract,
+                function.name,
+                function.ir,
+                function.visibility,
+                function.modifiers_csv(),
+                function.mutability,
+            ],
+        )?;
         Ok(())
     }
 

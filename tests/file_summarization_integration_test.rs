@@ -188,10 +188,7 @@ async fn test_file_summarization_and_categorization() {
     println!("  - Source files: {}", source_files.len());
     println!("  - Total summaries: {}", summaries.len());
 
-    assert!(
-        source_files.len() > 0,
-        "Should have at least one source file summary"
-    );
+    assert!(!source_files.is_empty(), "Should have at least one source file summary");
 
     // Test 2: Verify each summary has required fields
     println!("{}", "\n".repeat(2));
@@ -246,10 +243,7 @@ async fn test_file_summarization_and_categorization() {
     for original in &summaries {
         let from_db = get_file_summary_from_db(&original.filename, &repo)
             .expect("Failed to get summary from database")
-            .expect(&format!(
-                "Summary not found in database: {}",
-                original.filename
-            ));
+            .unwrap_or_else(|| panic!("Summary not found in database: {}", original.filename));
 
         assert_eq!(original.filename, from_db.filename, "Filename mismatch");
         assert_eq!(

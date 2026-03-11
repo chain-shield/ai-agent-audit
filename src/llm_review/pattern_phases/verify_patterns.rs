@@ -187,9 +187,9 @@ where
                 Some(r) => {
                     if !r.is_legit() {
                         info!("{} is Invalid: {}", issue_title, r.get_justification());
-                        return false;
+                        false
                     } else {
-                        return true;
+                        true
                     }
                 }
                 None => {
@@ -199,7 +199,7 @@ where
                         p.title_str(),
                         p_id
                     );
-                    return false;
+                    false
                 }
             }
         })

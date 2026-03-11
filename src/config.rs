@@ -267,29 +267,29 @@ impl AuditConfig {
                 ));
             }
         }
-        if let Some(k) = &self.anthropic_api_key {
-            if is_placeholder_api_key(k) {
-                return Err(AuditError::configuration(
-                    "ANTHROPIC_API_KEY",
-                    "Appears to be a placeholder key",
-                ));
-            }
+        if let Some(k) = &self.anthropic_api_key
+            && is_placeholder_api_key(k)
+        {
+            return Err(AuditError::configuration(
+                "ANTHROPIC_API_KEY",
+                "Appears to be a placeholder key",
+            ));
         }
-        if let Some(k) = &self.gemini_ai_api_key {
-            if is_placeholder_api_key(k) {
-                return Err(AuditError::configuration(
-                    "GEMINI_API_KEY",
-                    "Appears to be a placeholder key",
-                ));
-            }
+        if let Some(k) = &self.gemini_ai_api_key
+            && is_placeholder_api_key(k)
+        {
+            return Err(AuditError::configuration(
+                "GEMINI_API_KEY",
+                "Appears to be a placeholder key",
+            ));
         }
-        if let Some(k) = &self.deepseek_api_key {
-            if is_placeholder_api_key(k) {
-                return Err(AuditError::configuration(
-                    "DEEPSEEK_API_KEY",
-                    "Appears to be a placeholder key",
-                ));
-            }
+        if let Some(k) = &self.deepseek_api_key
+            && is_placeholder_api_key(k)
+        {
+            return Err(AuditError::configuration(
+                "DEEPSEEK_API_KEY",
+                "Appears to be a placeholder key",
+            ));
         }
 
         Ok(())
@@ -409,10 +409,12 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = AuditConfig::default();
+        let mut config = AuditConfig {
+            openai_api_key: Some("sk-valid-12345".to_string()),
+            ..AuditConfig::default()
+        };
 
         // Set a realistic OpenAI-style key to make validation pass
-        config.openai_api_key = Some("sk-valid-12345".to_string());
         assert!(config.validate().is_ok());
 
         // Test invalid URL
@@ -427,9 +429,11 @@ mod tests {
 
     #[test]
     fn test_available_providers() {
-        let mut config = AuditConfig::default();
-        config.openai_api_key = Some("test".to_string());
-        config.anthropic_api_key = Some("test".to_string());
+        let config = AuditConfig {
+            openai_api_key: Some("test".to_string()),
+            anthropic_api_key: Some("test".to_string()),
+            ..AuditConfig::default()
+        };
 
         let providers = config.available_providers();
         assert_eq!(providers.len(), 2);

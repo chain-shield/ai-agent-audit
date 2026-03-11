@@ -194,10 +194,11 @@ pub fn clone_and_filter_git_repo(
 
             info!("doc path => {}", doc_path);
 
-            for e in glob(&format!("{}/*.md", doc_path)).expect("invalid doc folder") {
-                if let Ok(path) = e {
-                    docs.push(path)
-                }
+            for path in glob(&format!("{}/*.md", doc_path))
+                .expect("invalid doc folder")
+                .flatten()
+            {
+                docs.push(path)
             }
 
             true
@@ -205,10 +206,10 @@ pub fn clone_and_filter_git_repo(
         None => false,
     };
 
-    let monorepo_folders = match &cli.monorepo_folders {
-        Some(repos) => Some(Path::new(repos).to_path_buf()),
-        None => None,
-    };
+    let monorepo_folders = cli
+        .monorepo_folders
+        .as_ref()
+        .map(|repos| Path::new(repos).to_path_buf());
 
     // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
@@ -277,7 +278,7 @@ pub fn clone_and_filter_git_repo(
                 sol_files.push(path.to_path_buf())
             }
             Some("md")
-                if path.parent().map_or(false, |p| p == search_root)
+                if path.parent().is_some_and(|p| p == search_root)
                     && !has_doc_folder
                     && !has_custom_docs =>
             {
@@ -401,13 +402,13 @@ pub fn clone_and_filter_git_repo(
 /// Adds GitHub authentication token to URL if GITHUB_TOKEN env var is set.
 /// This enables cloning private repositories.
 fn add_github_auth(repo_url: &str) -> String {
-    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-        if repo_url.starts_with("https://github.com/") {
-            return repo_url.replace(
-                "https://github.com/",
-                &format!("https://{}@github.com/", token),
-            );
-        }
+    if let Ok(token) = std::env::var("GITHUB_TOKEN")
+        && repo_url.starts_with("https://github.com/")
+    {
+        return repo_url.replace(
+            "https://github.com/",
+            &format!("https://{}@github.com/", token),
+        );
     }
 
     repo_url.to_string()
@@ -640,13 +641,13 @@ impl RepoPaths {
         }
 
         // 4) last resort: check immediate subdirectories (cheap; avoids deep walking)
-        if roots.is_empty() && protocol_root.exists() {
-            if let Ok(entries) = std::fs::read_dir(&protocol_root) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() && contains_build_config(&path) {
-                        roots.push(path);
-                    }
+        if roots.is_empty() && protocol_root.exists()
+            && let Ok(entries) = std::fs::read_dir(&protocol_root)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && contains_build_config(&path) {
+                    roots.push(path);
                 }
             }
         }
@@ -669,8 +670,8 @@ impl RepoPaths {
                 .to_string_lossy()
                 .to_string()
         } else {
-            file.file_name() // Option<&OsStr>
-                .and_then(|f| Some(f.to_string_lossy().to_string())) // Option<&str>
+            file.file_name()
+                .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| file.to_string_lossy().to_string()) // fallback
         };
 
@@ -761,13 +762,13 @@ impl RepoPaths {
 
 // read a files that contains a list of files (with relative path) and return array with full
 // path for each file
-pub fn extract_list_of_files(files: &PathBuf, root_folder: &PathBuf) -> Result<Vec<PathBuf>> {
+pub fn extract_list_of_files(files: &Path, root_folder: &Path) -> Result<Vec<PathBuf>> {
     let file = File::open(files)?;
     let reader = io::BufReader::new(file);
 
     let paths: Vec<PathBuf> = reader
         .lines()
-        .filter_map(|line| line.ok()) // drop I/O errors
+        .map_while(Result::ok) // drop I/O errors
         .map(|line| line.trim().to_string())
         .filter(|line| !line.is_empty()) // skip blank lines
         .map(|p| {

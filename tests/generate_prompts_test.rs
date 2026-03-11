@@ -3,17 +3,16 @@
 use ai_agent_audit::{
     config::AuditType,
     llm_review::{
-        agent::agent_enums::EnumData,
         dynamic_prompts::{
-            findings_template as ft, inv_findings as inv_to_find, invariants as inv_prompts,
-            pattern_findings as pat_to_find, patterns as pat_prompts,
+            findings as findings_prompts, findings_template as ft, invariants as inv_prompts,
         },
         findings::findings::PrivilegeLevel,
         threat_models::{
-            invariants::{InvariantFinding, InvariantStatus, InvariantType},
+            invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
             pattern_category::PatternCategory,
             patterns::{Pattern, VulnerabilityPattern},
         },
+        utils::prompt_context,
     },
     prepare_code::git_clone::{PocConfig, RepoPaths},
 };
@@ -78,7 +77,7 @@ fn sample_pattern() -> Pattern {
 
 #[test]
 fn print_invariant_prompts() {
-    let inv_types = vec![
+    let inv_types = [
         InvariantType::Arithmetic,
         InvariantType::Balance,
         InvariantType::Permission,
@@ -87,95 +86,87 @@ fn print_invariant_prompts() {
     println!("\n===== Invariant Discovery Prompt =====\n{}\n", inv_prompt);
 
     let inv_finding = sample_invariant_finding();
-    let inv_verify_prompt = inv_prompts::generate_invariant_verify_prompt(&inv_finding);
+    let invariants = ContractInvariants {
+        invariants: vec![inv_finding.clone()],
+    };
+    let inv_verify_prompt = inv_prompts::generate_all_invariants_verify_prompt(&invariants);
     println!(
-        "\n===== Invariant Verify Prompt =====\n{}\n",
+        "\n===== All Invariants Verify Prompt =====\n{}\n",
         inv_verify_prompt
     );
 
     let inv_json = inv_prompts::get_invariant_json(&inv_types);
     println!("\n===== Invariant JSON Schema =====\n{}\n", inv_json);
 
-    let inv_verify_json = inv_prompts::get_invariant_verify_json();
+    let inv_verify_json = inv_prompts::get_all_invariants_verify_json();
     println!(
-        "\n===== Invariant Verify JSON Schema =====\n{}\n",
+        "\n===== All Invariants Verify JSON Schema =====\n{}\n",
         inv_verify_json
     );
 
-    let repo = mock_repo_paths();
-    let inv_to_findings = inv_to_find::generate_invariant_to_findings(&inv_finding, &repo);
+    let inv_to_findings = inv_prompts::generate_formatted_invariant_finding(&inv_finding);
     println!(
-        "\n===== Invariant -> Findings Prompt =====\n{}\n",
+        "\n===== Formatted Invariant Finding =====\n{}\n",
         inv_to_findings
     );
 }
 
 #[test]
 fn print_pattern_prompts() {
-    let category = PatternCategory::Top;
-    let cat_prompt = pat_prompts::generate_pattern_category_prompt(&category);
+    let category = PatternCategory::SignatureValidation;
+    let repo = mock_repo_paths();
+    let cat_prompt = findings_prompts::generate_pattern_category_to_findings_prompt(&category, &repo);
     println!(
-        "\n===== Pattern Category Prompt ({:?}) =====\n{}\n",
+        "\n===== Pattern Category To Findings Prompt ({:?}) =====\n{}\n",
         category, cat_prompt
     );
 
     let pattern = sample_pattern();
-    let verify_prompt = pat_prompts::generate_pattern_verify_prompt(&pattern);
-    println!("\n===== Pattern Verify Prompt =====\n{}\n", verify_prompt);
+    let formatted_pattern = prompt_context::generate_formatted_pattern(&pattern);
+    println!("\n===== Formatted Pattern =====\n{}\n", formatted_pattern);
 
-    // Minimal JSON schemas
     let issues = [
         VulnerabilityPattern::Reentrancy,
         VulnerabilityPattern::ExternalCallAfterStateChange,
     ];
-    let schema = pat_prompts::get_pattern_json_requirement(&issues);
-    println!("\n===== Pattern JSON Schema =====\n{}\n", schema);
-
-    let verify_schema = pat_prompts::get_pattern_verify_json();
-    println!(
-        "\n===== Pattern Verify JSON Schema =====\n{}\n",
-        verify_schema
+    let pre_schema = ft::get_pre_json_requirement_for_multipattern(
+        &issues,
+        "security vulnerability pattern",
+        &repo,
     );
+    println!("\n===== Pattern Pre-JSON Schema =====\n{}\n", pre_schema);
 
-    let repo = mock_repo_paths();
-    let pat_to_findings = pat_to_find::generate_pattern_to_findings_prompt(&pattern, &repo);
+    let post_schema = ft::get_post_json_requirement_for_multipattern(
+        &issues,
+        "security vulnerability pattern",
+        &repo,
+    );
     println!(
-        "\n===== Pattern -> Findings Prompt =====\n{}\n",
-        pat_to_findings
+        "\n===== Pattern Post-JSON Schema =====\n{}\n",
+        post_schema
     );
 }
 
 #[test]
 fn print_findings_template_prompts() {
-    // Use a vulnerability pattern spec to fill template
-    let issue_type = VulnerabilityPattern::Reentrancy;
-    let spec = issue_type.get_spec();
-
-    let issue_title = "Security Vulnerability Pattern";
-    let issue_definition = spec.definition;
-
-    // Reuse the full report from a sample Pattern
-    let pattern = sample_pattern();
-    let issue_full_spec =
-        ai_agent_audit::llm_review::utils::prompt_context::generate_formatted_pattern(&pattern);
-
     let repo = mock_repo_paths();
-    let templated = ft::generate_findings_prompt(
-        issue_title,
-        issue_definition,
-        &issue_full_spec,
-        &issue_type,
+    let issues = [
+        VulnerabilityPattern::Reentrancy,
+        VulnerabilityPattern::ExternalCallAfterStateChange,
+    ];
+    let templated = ft::get_pre_json_requirement_for_multipattern(
+        &issues,
+        "security vulnerability pattern",
         &repo,
     );
     println!(
-        "\n===== Findings Template with VulnerabilityPattern =====\n{}\n",
+        "\n===== Findings Template Pre-JSON Requirement =====\n{}\n",
         templated
     );
 
-    let findings_json =
-        ft::get_post_findings_json_requirement(&issue_type, issue_definition, &repo);
+    let findings_json = ft::get_json_requirement(&issues, "security vulnerability pattern", &repo);
     println!(
-        "\n===== Findings JSON (from VulnerabilityPattern) =====\n{}\n",
+        "\n===== Findings JSON Requirement =====\n{}\n",
         findings_json
     );
 }

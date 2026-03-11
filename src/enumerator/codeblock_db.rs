@@ -138,15 +138,7 @@ impl CodeBlocksDb {
     ///
     /// # Returns
     /// * `Result<()>` - Ok if successful, Error otherwise
-    // pub fn insert_seed_slice(&self, s: &SeedSlice) -> Result<()> {
-    //     let conn = Connection::open(&self.path)?;
-    //     conn.execute(
-    //         "INSERT INTO seed_slices VALUES (?1,?2,?3,?4);",
-    //         params![s.id, s.seed_id, s.codeblock_id, s.status],
-    //     )?;
-    //     Ok(())
-    // }
-    //
+    ///
     /// Inserts a new codeblock into the database if it doesn't already exist.
     ///
     /// This function checks if a codeblock with the same ID already exists in the database

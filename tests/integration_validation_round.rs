@@ -97,7 +97,6 @@ async fn test_validation_round_puppy_raffle() -> Result<()> {
     let validated_findings = verify_rounds::run_round_validation(
         findings.clone(),
         &code_with_context,
-        None,
         audit_scope,
         &repo,
     )

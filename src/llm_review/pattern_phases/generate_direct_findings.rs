@@ -126,7 +126,7 @@ where
                         );
                     let json_requirement_prompt =
                     dynamic_prompts::findings_template::get_post_json_requirement_for_multipattern(
-                        &category_spec.issues,
+                        category_spec.issues,
                         "security vulnerability pattern",
                         repo,
                     );
@@ -232,7 +232,7 @@ fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> 
 
     code_plus_context
         .push_str("\n\n ===================== # ADDITIONAL CONTEXT ===================== \n\n");
-    code_plus_context.push_str(&added_context);
+    code_plus_context.push_str(added_context);
     code_plus_context.push_str("\n\n");
 
     code_plus_context

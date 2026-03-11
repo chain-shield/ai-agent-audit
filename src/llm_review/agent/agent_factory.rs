@@ -20,7 +20,7 @@ use rig::{
 use serde_json::json;
 
 // use rig_qdrant::QdrantVectorStore;  // Temporarily disabled due to version conflicts
-use std::sync::OnceLock;
+use std::{str::FromStr, sync::OnceLock};
 
 /// Antrophic thinking
 const VALID_THINKING_SETTING: &[&str] = &["enabled", "disabled"];
@@ -32,8 +32,9 @@ const DEFAULT_OPENAI_MODEL: &str = OPENAI_MODEL;
 /// - "auto": Let OpenAI choose automatically
 /// - "default": Standard rates and speed
 /// - "flex": Half the cost, slower responses
+///
 /// Note: "priority" tier requires special account approval
-// rig-core 0.17.0 supports only: auto, default, flex
+/// rig-core 0.17.0 supports only: auto, default, flex
 const VALID_SERVICE_TIERS: &[&str] = &["auto", "default", "flex"];
 
 /// Valid OpenAI reasoning effort levels
@@ -89,15 +90,18 @@ impl LlmProvider {
     pub fn is_available(&self) -> bool {
         std::env::var(self.api_key_env_var()).is_ok()
     }
+}
 
-    /// Parse provider from string.
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for LlmProvider {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "openai" | "gpt" => Some(LlmProvider::OpenAI),
-            "anthropic" | "claude" => Some(LlmProvider::Anthropic),
-            "gemini" | "google" => Some(LlmProvider::Gemini),
-            "deepseek" => Some(LlmProvider::DeepSeek),
-            _ => None,
+            "openai" | "gpt" => Ok(LlmProvider::OpenAI),
+            "anthropic" | "claude" => Ok(LlmProvider::Anthropic),
+            "gemini" | "google" => Ok(LlmProvider::Gemini),
+            "deepseek" => Ok(LlmProvider::DeepSeek),
+            _ => Err(()),
         }
     }
 }
@@ -125,7 +129,7 @@ impl AnthropicConfig {
         } else {
             Err(AuditError::configuration(
                 "anthropic_thinking_setting",
-                &format!(
+                format!(
                     "Invalid thinking setting '{}'. Valid options: {}",
                     thinking_setting,
                     VALID_THINKING_SETTING.join(", ")
@@ -161,7 +165,7 @@ impl OpenAIConfig {
         } else {
             Err(AuditError::configuration(
                 "openai_service_tier",
-                &format!(
+                format!(
                     "Invalid service tier '{}'. Valid options: {}",
                     tier,
                     VALID_SERVICE_TIERS.join(", ")
@@ -177,7 +181,7 @@ impl OpenAIConfig {
         } else {
             Err(AuditError::configuration(
                 "openai_reasoning_effort",
-                &format!(
+                format!(
                     "Invalid reasoning effort '{}'. Valid options: {}",
                     effort,
                     VALID_REASONING_EFFORTS.join(", ")
@@ -213,7 +217,7 @@ impl GeminiConfig {
         } else {
             Err(AuditError::configuration(
                 "gemini_thinking_level",
-                &format!(
+                format!(
                     "Invalid thinking level '{}'. Valid options: {}",
                     level,
                     VALID_THINKING_LEVELS.join(", ")
@@ -229,7 +233,7 @@ impl GeminiConfig {
         } else {
             Err(AuditError::configuration(
                 "gemini_top_p",
-                &format!(
+                format!(
                     "Invalid top_p value '{}'. Must be between 0.0 and 1.0",
                     top_p
                 ),
@@ -377,7 +381,7 @@ impl AgentConfig {
         if let Err(e) = AnthropicConfig::validate_thinking(&think) {
             panic!("Invalid thinking in config builder: {}", e);
         }
-        self.anthropic_config.thinking = Some(think.into());
+        self.anthropic_config.thinking = Some(think);
         self.anthropic_config.thinking_token_budget = token_budget;
         self
     }
@@ -821,10 +825,10 @@ impl AgentFactory {
 
     /// Creates an agent from a string provider name.
     pub fn create_agent_from_str(provider: &str, config: &AgentConfig) -> Result<AIAgent> {
-        let provider_enum = LlmProvider::from_str(provider).ok_or_else(|| {
+        let provider_enum = provider.parse::<LlmProvider>().map_err(|_| {
             AuditError::configuration(
                 "llm_provider",
-                &format!("Unsupported LLM provider: {}", provider),
+                format!("Unsupported LLM provider: {}", provider),
             )
         })?;
         Self::create_agent(provider_enum, config)

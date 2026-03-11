@@ -74,10 +74,10 @@ pub fn get_secure_url(env_var: &str) -> Result<String> {
     }
 
     // Check for localhost/private IPs in production
-    if env::var("ENVIRONMENT").unwrap_or_default() == "production" {
-        if url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0") {
-            anyhow::bail!("Localhost URLs not allowed in production environment");
-        }
+    if env::var("ENVIRONMENT").unwrap_or_default() == "production"
+        && (url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0"))
+    {
+        anyhow::bail!("Localhost URLs not allowed in production environment");
     }
 
     Ok(url)

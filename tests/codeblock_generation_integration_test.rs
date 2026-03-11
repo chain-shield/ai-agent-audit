@@ -158,10 +158,10 @@ async fn test_codeblock_generation_with_contract_category() {
     let mut summaries_with_category = 0;
     for sol_file in &sol_files {
         let filename = sol_file.to_string_lossy().to_string();
-        if let Ok(Some(summary)) = get_file_summary_from_db(&filename, &repo) {
-            if summary.contract_category.is_some() {
-                summaries_with_category += 1;
-            }
+        if let Ok(Some(summary)) = get_file_summary_from_db(&filename, &repo)
+            && summary.contract_category.is_some()
+        {
+            summaries_with_category += 1;
         }
     }
 
@@ -210,8 +210,8 @@ async fn test_codeblock_generation_with_contract_category() {
 
     // Count contracts by category
     let mut category_counts = std::collections::HashMap::new();
-    for (_contract, (_, category)) in &all_contracts {
-        *category_counts.entry(category.clone()).or_insert(0) += 1;
+    for (_, category) in all_contracts.values() {
+        *category_counts.entry(*category).or_insert(0) += 1;
     }
 
     println!("\n📊 Contracts by category:");

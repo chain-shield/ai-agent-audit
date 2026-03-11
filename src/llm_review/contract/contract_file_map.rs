@@ -10,12 +10,16 @@ use tokio::sync::Mutex;
 
 use crate::prepare_code::git_clone::RepoPaths;
 
-/// Global metadata context shared across all AI agents
-static CONTRACT_TO_FILE: Lazy<Arc<Mutex<HashMap<String, (PathBuf, ContractType)>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::<String, (PathBuf, ContractType)>::new())));
+type ContractFileEntry = (PathBuf, ContractType);
+type ContractFileMap = HashMap<String, ContractFileEntry>;
+type SharedContractFileMap = Arc<Mutex<ContractFileMap>>;
 
-static LIB_CONTRACT_TO_FILE: Lazy<Arc<Mutex<HashMap<String, (PathBuf, ContractType)>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::<String, (PathBuf, ContractType)>::new())));
+/// Global metadata context shared across all AI agents
+static CONTRACT_TO_FILE: Lazy<SharedContractFileMap> =
+    Lazy::new(|| Arc::new(Mutex::new(ContractFileMap::new())));
+
+static LIB_CONTRACT_TO_FILE: Lazy<SharedContractFileMap> =
+    Lazy::new(|| Arc::new(Mutex::new(ContractFileMap::new())));
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, strum_macros::Display)]
 pub enum ContractType {
@@ -51,9 +55,7 @@ pub async fn get_file_from_contract(
     let key = format!("{}_{}", repo.project_id, contract);
 
     // log::info!("getting file for contract {}", contract);
-    let file_and_contract_type = contract_file_map.get(&key).cloned();
-
-    file_and_contract_type
+    contract_file_map.get(&key).cloned()
 }
 
 pub async fn insert_lib_contract_to_file_mapping(
@@ -82,7 +84,5 @@ pub async fn get_file_from_lib_contract(
     let key = format!("lib_{}_{}", repo.project_id, contract);
 
     // log::info!("getting file for contract {}", contract);
-    let file = contract_file_map.get(&key).cloned();
-
-    file
+    contract_file_map.get(&key).cloned()
 }

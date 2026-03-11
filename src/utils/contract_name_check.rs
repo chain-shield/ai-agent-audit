@@ -5,19 +5,16 @@ use regex::Regex;
 pub fn has_non_mock_contract(content: &str) -> bool {
     for line in content.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("contract ")
+        if (trimmed.starts_with("contract ")
             || trimmed.starts_with("abstract contract ")
-            || trimmed.starts_with("library ")
-        {
-            if let Some(name) = trimmed
+            || trimmed.starts_with("library "))
+            && let Some(name) = trimmed
                 .split_whitespace()
                 .nth(1)
                 .map(|s| s.trim_end_matches('{').to_ascii_lowercase())
-            {
-                if !name.contains("mock") {
-                    return true;
-                }
-            }
+            && !name.contains("mock")
+        {
+            return true;
         }
     }
     false

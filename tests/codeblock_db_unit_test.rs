@@ -159,7 +159,7 @@ fn test_batch_codeblocks_insert_and_retrieve() {
     for codeblock in &codeblocks {
         let (retrieved_content, retrieved_category) = all_contracts
             .get(&codeblock.contract)
-            .expect(&format!("Contract {} not found", codeblock.contract));
+            .unwrap_or_else(|| panic!("Contract {} not found", codeblock.contract));
 
         assert_eq!(&codeblock.content, retrieved_content);
         assert_eq!(&codeblock.contract_category, retrieved_category);
@@ -180,7 +180,7 @@ fn test_contract_category_serialization_in_db() {
     let db = CodeBlocksDb::open(&db_path).expect("Failed to create database");
 
     // Test all 26 contract categories
-    let categories = vec![
+    let categories = [
         ContractCategory::SignatureValidation,
         ContractCategory::OraclePriceFeed,
         ContractCategory::TokenTransferLibrary,
@@ -215,13 +215,13 @@ fn test_contract_category_serialization_in_db() {
             id: Uuid::new_v4().to_string(),
             project_id: repo.project_id.clone(),
             contract: format!("Contract{}", i),
-            contract_category: category.clone(),
+            contract_category: *category,
             tokens: 1000,
             content: format!("// Contract with category {:?}", category),
         };
 
         db.insert_codeblock(&codeblock)
-            .expect(&format!("Failed to insert codeblock for {:?}", category));
+            .unwrap_or_else(|_| panic!("Failed to insert codeblock for {:?}", category));
     }
 
     // Retrieve all and verify categories
@@ -235,7 +235,7 @@ fn test_contract_category_serialization_in_db() {
         let contract_name = format!("Contract{}", i);
         let (_, retrieved_category) = all_contracts
             .get(&contract_name)
-            .expect(&format!("Contract {} not found", contract_name));
+            .unwrap_or_else(|| panic!("Contract {} not found", contract_name));
 
         assert_eq!(
             expected_category, retrieved_category,

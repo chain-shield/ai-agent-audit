@@ -184,7 +184,7 @@ pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str)
 
     code_plus_context
         .push_str("\n\n ## ADDITIONAL CONTEXT TO ASSIST WITH SECURITY REVIEW OF ABOVE CODE \n\n");
-    code_plus_context.push_str(&added_context);
+    code_plus_context.push_str(added_context);
     code_plus_context.push_str("\n\n");
 
     code_plus_context

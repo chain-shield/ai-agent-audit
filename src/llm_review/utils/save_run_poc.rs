@@ -106,10 +106,9 @@ pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result
             let s = strip_ansi(&(stdout.clone() + "\n" + &stderr));
             let failed_word = Regex::new(r"(?i)\bfailed\b").unwrap().is_match(&s);
             let zero_failed = Regex::new(r"(?i)\b0\s+failed\b").unwrap().is_match(&s);
+            let has_failing_tests = failed_word && !zero_failed;
 
-            if exit_code != 0 && !(failed_word && !zero_failed) {
-                poc_test.poc_test_status = PocStatus::ErrorRunningTests;
-            } else if failed_word && !zero_failed {
+            if has_failing_tests {
                 poc_test.poc_test_status = PocStatus::FailingTests;
             } else {
                 poc_test.poc_test_status = PocStatus::ErrorRunningTests;

@@ -45,7 +45,7 @@ fn generate_pattern_full_report(patterns: &[Pattern]) -> String {
         .map(|p| p.issue_type)
         .collect::<HashSet<_>>()
         .into_iter()
-        .map(|i| format!("- {}\n", i.to_string()))
+        .map(|i| format!("- {i}\n"))
         .collect();
 
     report.push_str(&format!(

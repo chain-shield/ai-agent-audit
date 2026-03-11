@@ -33,6 +33,7 @@ pub struct Pattern {
     Hash,
     JsonSchema,
     EnumIter,
+    Default,
     Serialize,
     Deserialize,
     strum_macros::Display,
@@ -42,6 +43,7 @@ pub struct Pattern {
 // Access,Auth &,Governance
 pub enum VulnerabilityPattern {
     // auth bypass
+    #[default]
     AccessControlOrAuthByPass, // High
     GovernanceDelegationFlaw,
     DoubleExecutionOrReplay,
@@ -582,7 +584,7 @@ impl<'de> Deserialize<'de> for VulnerabilityPatternSpec {
             }
         }
 
-        const FIELDS: &'static [&'static str] = &[
+        const FIELDS: &[&str] = &[
             "key",
             "definition",
             "static_signals",
@@ -1783,12 +1785,6 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
         impact_hint: ImpactHint::Medium,
     },
 ];
-
-impl Default for VulnerabilityPattern {
-    fn default() -> Self {
-        VulnerabilityPattern::AccessControlOrAuthByPass
-    }
-}
 
 // No longer needed! strum's Display trait provides to_string() for free
 // Serialize and Deserialize are now handled by serde derives!

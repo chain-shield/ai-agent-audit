@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::prepare_code::git_clone::RepoPaths;
 
-pub fn display_file(file: &PathBuf, repo: &RepoPaths) -> String {
+pub fn display_file(file: &Path, repo: &RepoPaths) -> String {
     let search_root = repo.root.join(&repo.repo_name);
 
     match file.strip_prefix(&search_root) {

@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use ai_agent_audit::utils::check_folder_name::is_library_package_json;
@@ -92,7 +92,7 @@ fn test_path_has_one_segment_logic() {
     let root = PathBuf::from("/repo");
 
     // Simulate the path_has_one_segment logic
-    fn count_segments(file: &PathBuf, root: &PathBuf, segments: &[&str]) -> usize {
+    fn count_segments(file: &Path, root: &Path, segments: &[&str]) -> usize {
         let mut cursor = file.parent();
         let mut match_count = 0;
         while let Some(dir) = cursor {

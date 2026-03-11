@@ -39,7 +39,7 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     post_instructions: &str,
     report_type: FindingReportType,
 ) -> String {
-    let mut prompt = instructions.to_string();
+    let mut prompt = instructions.to_owned();
 
     prompt.push_str("\n\n");
     prompt.push_str("## **SECURITY FINDINGS TO EVALUATE**");
@@ -66,7 +66,7 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
 
     pattern_list.push_str(&format!(
         "\n\n ### Issue Type: {}\n",
-        &pattern.issue_type.to_string()
+        pattern.issue_type
     ));
 
     pattern_list.push_str(&format!(
@@ -75,10 +75,10 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     ));
 
     pattern_list.push_str("\n ### Title\n");
-    pattern_list.push_str(&pattern.title.to_string());
+    pattern_list.push_str(&pattern.title);
 
     pattern_list.push_str("\n ### Description/Code Snippet\n");
-    pattern_list.push_str(&pattern.description.to_string());
+    pattern_list.push_str(&pattern.description);
 
     pattern_list.push_str("\n ### Static Signals\n");
     pattern_list.push_str(&pattern.static_signals.join(", "));
@@ -88,7 +88,7 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
 
     pattern_list.push_str(&format!(
         "\n ### Minimum Privilege Required to Exploit Vulnerability: {}\n",
-        &pattern.privilege.to_string()
+        pattern.privilege
     ));
 
     // pattern_list.push_str(&format!(
@@ -105,7 +105,7 @@ pub fn generate_formatted_abbreviated_patterns(patterns: &[Pattern]) -> String {
     for pattern in patterns {
         pattern_list.push_str(&format!(
             "\n\n ### Issue Type: {}\n",
-            &pattern.issue_type.to_string()
+            pattern.issue_type
         ));
 
         pattern_list.push_str(&format!(
@@ -114,10 +114,10 @@ pub fn generate_formatted_abbreviated_patterns(patterns: &[Pattern]) -> String {
         ));
 
         pattern_list.push_str("\n ### Title\n");
-        pattern_list.push_str(&pattern.description.to_string());
+        pattern_list.push_str(&pattern.description);
 
         pattern_list.push_str("\n ### Description/Code Snippet\n");
-        pattern_list.push_str(&pattern.description.to_string());
+        pattern_list.push_str(&pattern.description);
     }
 
     pattern_list
@@ -129,9 +129,9 @@ pub fn generate_formatted_multiple_patterns(patterns: &[Pattern]) -> String {
     for pattern in patterns {
         let pattern_details = generate_formatted_pattern(pattern);
 
-        pattern_list.push_str("\n");
+        pattern_list.push('\n');
         pattern_list.push_str(&pattern_details);
-        pattern_list.push_str("\n");
+        pattern_list.push('\n');
     }
 
     pattern_list
@@ -160,12 +160,12 @@ pub fn get_finding_summary_report(finding: &Finding, index: usize) -> String {
         "Finding Status: {}\n",
         finding_status_to_string(finding)
     ));
-    findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
+    findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege));
 
     if CREATE_TESTS {
         findings_summary.push_str(&format!(
             "Poc Test Status: {}\n\n",
-            finding.poc_test_status.unwrap_or_default().to_string()
+            finding.poc_test_status.unwrap_or_default()
         ));
     }
 
@@ -191,14 +191,14 @@ pub fn get_finding_report(
         //title without index
         findings_report.push_str(&format!(
             "## [Severity-{}]. {}\n\n",
-            finding.severity.to_string(),
+            finding.severity,
             finding.title
         ));
     }
 
     findings_report.push_str(&format!(
         "## id: {}\n\n",
-        &finding.id.clone().unwrap_or_default()
+        finding.id.clone().unwrap_or_default()
     ));
 
     //derived from
@@ -206,9 +206,7 @@ pub fn get_finding_report(
     findings_report.push_str(&finding.derived_from.clone().unwrap_or_default());
     findings_report.push_str("\n\n");
     //type
-    findings_report.push_str("## Exploit Type\n");
-    findings_report.push_str(&finding.exploit_type.to_string());
-    findings_report.push_str("\n\n");
+    findings_report.push_str(&format!("## Exploit Type\n{}\n\n", finding.exploit_type));
 
     //location
     findings_report.push_str("## Location\n");
@@ -231,14 +229,14 @@ pub fn get_finding_report(
         ));
         findings_report.push_str(&format!(
             "### PoC Test Status: {}\n",
-            finding.poc_test_status.unwrap_or_default().to_string()
+            finding.poc_test_status.unwrap_or_default()
         ));
     }
 
     //privilege
     findings_report.push_str(&format!(
         "## Minimim Privilege Required:{}\n",
-        finding.privilege.to_string()
+        finding.privilege
     ));
     findings_report.push_str("\n\n");
 
@@ -275,6 +273,6 @@ pub fn get_finding_report(
     findings_report.push_str(&finding.mitigation.clone().unwrap_or_default());
     findings_report.push_str("\n\n");
 
-    findings_report.push_str("\n");
+    findings_report.push('\n');
     findings_report
 }

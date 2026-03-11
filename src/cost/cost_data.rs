@@ -188,7 +188,7 @@ pub async fn add_to_inference_cost_by_type(
     };
 
     // cost update
-    *inference_cost = *inference_cost + cost;
+    *inference_cost += cost;
 }
 
 pub async fn add_to_inference_cost_by_agent(
@@ -207,7 +207,7 @@ pub async fn add_to_inference_cost_by_agent(
 
     // Convert tokens to cost: (tokens * cost_per_million) / 1M for better precision
     let cost = (tokens as f64 * agent.get_cost_per_million_tokens(token_type)) / 1_000_000.0;
-    *inference_cost = *inference_cost + cost;
+    *inference_cost += cost;
 }
 
 pub async fn get_total_inference_cost() -> String {
@@ -443,7 +443,7 @@ mod tests {
         println!("=== OpenAI Token Count Verification ===");
         println!("Test prompt: '{}'", test_prompt);
         println!("Response: '{}'", response_text);
-        println!("");
+        println!();
         println!("📊 TOKEN COMPARISON:");
         println!("  OpenAI input tokens:     {}", prompt_tokens);
         println!("  Our input tokens (raw):  {}", our_input_tokens);
@@ -456,7 +456,7 @@ mod tests {
             "  Input difference (chat): {}",
             (prompt_tokens as i64 - our_chat_tokens as i64).abs()
         );
-        println!("");
+        println!();
         println!("  OpenAI output tokens: {}", completion_tokens);
         println!("  Our output tokens:    {}", our_output_tokens);
         println!(
@@ -474,7 +474,7 @@ mod tests {
                 completion_tokens - reasoning_tokens as f64
             );
         }
-        println!("");
+        println!();
         println!("💰 COST COMPARISON:");
         println!(
             "  Service tier: {} (${:.2} input, ${:.2} output per 1M tokens)",
@@ -539,7 +539,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_overhead_patterns() {
         // Test different prompt sizes to understand overhead patterns
-        let test_cases = vec![
+        let test_cases = [
             "Hi",
             "Hello world",
             "Hello, this is a test prompt to verify cost calculation accuracy.",

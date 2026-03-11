@@ -63,11 +63,13 @@ pub struct Findings {
     Deserialize,
     JsonSchema,
     EnumIter,
+    Default,
     strum_macros::Display,
     strum_macros::EnumString,
 )]
 #[serde(rename_all = "PascalCase")]
 pub enum PrivilegeLevel {
+    #[default]
     Permissionless,    // any EOA
     RequiresRole,      // specific role
     RequiresAdminRole, // admin or owner
@@ -82,9 +84,7 @@ pub fn generated_llm_prompt(
     let instruction_template = format!("{}{}{}", pre, main_instructions, post);
 
     // populate template
-    instruction_template
-        .replace("{contract_name}", contract_name)
-        .to_string()
+    instruction_template.replace("{contract_name}", contract_name)
 }
 
 impl Finding {
@@ -96,7 +96,7 @@ impl Finding {
             format!(
                 "{} issue found with {} severity",
                 self.exploit_type.as_fancy_str(),
-                self.severity.to_string()
+                self.severity
             )
         } else {
             format!(
@@ -122,7 +122,7 @@ impl Finding {
             format!(
                 "{}-{}-{}-{}",
                 self.title.replace(" ", "-"),
-                derived.to_string(),
+                derived,
                 self.contract,
                 fn_name
             )
@@ -130,7 +130,7 @@ impl Finding {
             format!(
                 "{}-{}-{}-{}",
                 self.title.replace(" ", "-"),
-                self.exploit_type.to_string(),
+                self.exploit_type,
                 self.contract,
                 fn_name
             )
@@ -141,10 +141,10 @@ impl Finding {
     pub fn get_fn_name(&self) -> String {
         let re = Regex::new(r"(^[a-zA-Z_][a-zA-Z0-9_]*)\s*\(").unwrap();
         if let Some(captures) = re.captures(&self.function) {
-            match captures.get(1) {
-                Some(name) => name.as_str().to_string(),
-                None => self.function.clone(),
-            }
+            captures
+                .get(1)
+                .map(|name| name.as_str().to_string())
+                .unwrap_or_else(|| self.function.clone())
         } else {
             self.function.clone()
         }
@@ -197,12 +197,6 @@ impl Finding {
     }
 }
 
-impl Default for PrivilegeLevel {
-    fn default() -> Self {
-        PrivilegeLevel::Permissionless
-    }
-}
-
 impl Findings {
     pub async fn dedup(self) -> anyhow::Result<Findings> {
         if self.findings.is_empty() {
@@ -221,7 +215,7 @@ impl Findings {
             let hash = finding.hash();
             findings_hash
                 .entry(hash)
-                .or_insert(Vec::new())
+                .or_default()
                 .push(finding.clone());
         }
 
@@ -235,7 +229,7 @@ impl Findings {
             let agent = Arc::clone(&openai_agent);
             let handle = tokio::spawn(async move {
                 if current_findings.len() > 1 {
-                    match get_deduped_finding_vec(&current_findings, &agent).await {
+                    match get_deduped_finding_vec(&current_findings, agent.as_ref()).await {
                         Ok(deduped) => {
                             let mut deduped_findings_lock = deduped_findings.lock().await;
                             deduped_findings_lock.extend(deduped);
@@ -293,7 +287,7 @@ impl Findings {
 
 async fn get_deduped_finding_vec(
     findings: &Arc<Vec<Finding>>,
-    agent: &Arc<crate::llm_review::agent::agent_enums::AIAgent>,
+    agent: &crate::llm_review::agent::agent_enums::AIAgent,
 ) -> anyhow::Result<Vec<Finding>> {
     // assigns bool to each finding index, is dup or not? assume not for initializing
     let size = findings.len();
@@ -307,7 +301,7 @@ async fn get_deduped_finding_vec(
             if is_dup_vec[j] {
                 continue;
             }
-            let is_dup = findings[i].is_duplicate_issue(&findings[j], &agent).await?;
+            let is_dup = findings[i].is_duplicate_issue(&findings[j], agent).await?;
             if is_dup {
                 is_dup_vec[j] = true;
                 continue;
@@ -431,7 +425,7 @@ where
                 '"' if !prev_was_backslash && in_string => {
                     // This could be end of string OR an unescaped quote inside the string
                     // Look ahead to see if this looks like end of string (followed by : or , or })
-                    let next_non_ws = chars.clone().skip_while(|c| c.is_whitespace()).next();
+                    let next_non_ws = chars.clone().find(|c| !c.is_whitespace());
                     if matches!(
                         next_non_ws,
                         Some(':') | Some(',') | Some('}') | Some(']') | None

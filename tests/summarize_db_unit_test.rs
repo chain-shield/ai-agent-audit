@@ -66,7 +66,8 @@ fn test_single_file_summary_insert_and_retrieve() {
     };
 
     // Insert the summary (using batch insert with single element)
-    insert_file_summaries_to_db(&[summary.clone()], &repo).expect("Failed to insert summary");
+    insert_file_summaries_to_db(std::slice::from_ref(&summary), &repo)
+        .expect("Failed to insert summary");
 
     // Retrieve the summary
     let retrieved = get_file_summary_from_db(&summary.filename, &repo)
@@ -138,7 +139,7 @@ fn test_batch_file_summaries_insert_and_retrieve() {
         let found = retrieved
             .iter()
             .find(|s| s.filename == original.filename)
-            .expect(&format!("Summary not found: {}", original.filename));
+            .unwrap_or_else(|| panic!("Summary not found: {}", original.filename));
 
         assert_eq!(original.filename, found.filename);
         assert_eq!(original.summary, found.summary);
@@ -154,7 +155,7 @@ fn test_contract_category_serialization() {
     let repo = create_test_repo_paths("test-category-serialization");
 
     // Test all contract categories
-    let categories = vec![
+    let categories = [
         ContractCategory::SignatureValidation,
         ContractCategory::VaultShareBased,
         ContractCategory::OraclePriceFeed,
@@ -193,7 +194,8 @@ fn test_contract_category_serialization() {
         };
 
         // Insert and retrieve
-        insert_file_summaries_to_db(&[summary.clone()], &repo).expect("Failed to insert summary");
+        insert_file_summaries_to_db(std::slice::from_ref(&summary), &repo)
+            .expect("Failed to insert summary");
         let retrieved = get_file_summary_from_db(&summary.filename, &repo)
             .expect("Failed to retrieve summary")
             .expect("Summary not found");
@@ -217,7 +219,7 @@ fn test_file_type_serialization() {
     let repo = create_test_repo_paths("test-file-type-serialization");
 
     // Test all file types
-    let file_types = vec![
+    let file_types = [
         FileSummaryType::Source,
         FileSummaryType::DeployScript,
         FileSummaryType::OutOfScope,
@@ -232,7 +234,8 @@ fn test_file_type_serialization() {
         };
 
         // Insert and retrieve
-        insert_file_summaries_to_db(&[summary.clone()], &repo).expect("Failed to insert summary");
+        insert_file_summaries_to_db(std::slice::from_ref(&summary), &repo)
+            .expect("Failed to insert summary");
         let retrieved = get_file_summary_from_db(&summary.filename, &repo)
             .expect("Failed to retrieve summary")
             .expect("Summary not found");
@@ -264,7 +267,7 @@ fn test_duplicate_insert_fails() {
         contract_category: Some(ContractCategory::Unknown),
         file_type: Some(FileSummaryType::Source),
     };
-    insert_file_summaries_to_db(&[initial.clone()], &repo)
+    insert_file_summaries_to_db(std::slice::from_ref(&initial), &repo)
         .expect("Failed to insert initial summary");
 
     // Try to insert again with same filename - should fail due to PRIMARY KEY constraint

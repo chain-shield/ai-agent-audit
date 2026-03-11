@@ -10,7 +10,7 @@ use ai_agent_audit::{
     prepare_code::git_clone::{PocConfig, RepoPaths},
     utils::remapping::parse_and_store_remappings,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[tokio::test]
 #[ignore] // Run manually with: cargo test --test inheritance_solidity_parsing_test -- --ignored --nocapture
@@ -93,10 +93,7 @@ async fn test_covenant_inheritance_parsing() {
     }
 
     // Should have 2 parents
-    assert!(
-        parents.len() >= 1,
-        "Covenant's BaseAdapter should have at least 1 parent"
-    );
+    assert!(!parents.is_empty(), "Covenant's BaseAdapter should have at least 1 parent");
 
     // Should inherit from EulerBaseAdapter (or BaseAdapter from lib)
     let has_euler_base = parents.iter().any(|(name, file)| {
@@ -201,7 +198,7 @@ async fn test_covenant_inheritance_parsing() {
 
     // Should have multiple children
     assert!(
-        iprice_children.len() >= 1,
+        !iprice_children.is_empty(),
         "IPriceOracle should have at least 1 child"
     );
 
@@ -299,13 +296,13 @@ async fn test_complete_inheritance_hierarchy() {
     // Helper function to recursively print children with indentation
     fn print_children_recursive<'a>(
         contract: &'a str,
-        file: &'a PathBuf,
+        file: &'a Path,
         repo: &'a RepoPaths,
         indent: usize,
         visited: &'a mut HashSet<(String, PathBuf)>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
         Box::pin(async move {
-            let key = (contract.to_string(), file.clone());
+            let key = (contract.to_string(), file.to_path_buf());
             if visited.contains(&key) {
                 return; // Avoid infinite loops
             }

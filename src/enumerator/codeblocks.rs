@@ -159,7 +159,7 @@ pub async fn generate_codeblock_from_codebase(
 
         // Check if codeblock already generated
         log::info!("contract => {:#?}", main_contract);
-        if let Some(_) = get_cached_codeblock(&main_contract).await {
+        if get_cached_codeblock(&main_contract).await.is_some() {
             // Save seed-to-codeblock mapping in the database
             continue;
         };
@@ -576,27 +576,27 @@ pub async fn generate_codeblock_from_codebase(
             }
 
             // Skip excluded libraries (OpenZeppelin, forge-std, etc.)
-            if let Some(file_str) = interface_file.to_str() {
-                if should_exclude_this_library(file_str) {
-                    info!(
-                        "⏭️ Skipping excluded library interface '{}' at {}",
-                        interface_name,
-                        display_file(&interface_file, repo)
-                    );
-                    continue;
-                }
+            if let Some(file_str) = interface_file.to_str()
+                && should_exclude_this_library(file_str)
+            {
+                info!(
+                    "⏭️ Skipping excluded library interface '{}' at {}",
+                    interface_name,
+                    display_file(interface_file, repo)
+                );
+                continue;
             }
 
             info!(
                 "Adding Interface (or root implimentation) File: {}....",
-                display_file(&interface_file, repo)
+                display_file(interface_file, repo)
             );
             let interface_content = match fs::read_to_string(interface_file).await {
                 Ok(content) => content,
                 Err(e) => {
                     info!(
                         "could not read file {} for lib dependency detection: {}",
-                        display_file(&interface_file, repo),
+                        display_file(interface_file, repo),
                         e
                     );
                     continue;
@@ -612,7 +612,7 @@ pub async fn generate_codeblock_from_codebase(
                 info!(
                     "⏭️ Skipping 'interface/child: {} : {}' ({} tokens) - would exceed budget ({}/{} tokens)",
                     interface_name,
-                    display_file(&interface_file, repo),
+                    display_file(interface_file, repo),
                     interface_tokens,
                     new_total,
                     token_budget
@@ -620,7 +620,7 @@ pub async fn generate_codeblock_from_codebase(
             } else {
                 info!(
                     "✅ Adding 'interface/child: {}' ({} tokens) - total: {}/{} tokens",
-                    display_file(&interface_file, repo),
+                    display_file(interface_file, repo),
                     interface_tokens,
                     new_total,
                     token_budget
@@ -714,14 +714,14 @@ pub async fn generate_codeblock_from_codebase(
 
             info!(
                 "Adding External Library File: {}....",
-                display_file(&lib_file, repo),
+                display_file(lib_file, repo),
             );
             let lib_content = match fs::read_to_string(lib_file).await {
                 Ok(content) => content,
                 Err(e) => {
                     info!(
                         "could not read file {} for lib dependency detection: {}",
-                        display_file(&lib_file, repo),
+                        display_file(lib_file, repo),
                         e
                     );
                     continue;
@@ -736,7 +736,7 @@ pub async fn generate_codeblock_from_codebase(
             if new_total > token_budget {
                 info!(
                     "⏭️ Skipping 'external lib: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
-                    display_file(&lib_file, repo),
+                    display_file(lib_file, repo),
                     lib_tokens,
                     new_total,
                     token_budget
@@ -744,7 +744,7 @@ pub async fn generate_codeblock_from_codebase(
             } else {
                 info!(
                     "✅ Adding 'external lib: {}' ({} tokens) - total: {}/{} tokens",
-                    display_file(&lib_file, repo),
+                    display_file(lib_file, repo),
                     lib_tokens,
                     new_total,
                     token_budget
@@ -770,7 +770,7 @@ pub async fn generate_codeblock_from_codebase(
                 Err(e) => {
                     info!(
                         "could not read file {} for dependency detection: {}",
-                        display_file(&script, repo),
+                        display_file(script, repo),
                         e
                     );
                     continue;
@@ -785,7 +785,7 @@ pub async fn generate_codeblock_from_codebase(
             if new_total > token_budget {
                 info!(
                     "⏭️ Skipping 'script: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
-                    display_file(&script, repo),
+                    display_file(script, repo),
                     script_tokens,
                     new_total,
                     token_budget
@@ -793,7 +793,7 @@ pub async fn generate_codeblock_from_codebase(
             } else {
                 info!(
                     "✅ Adding 'script: {}' ({} tokens) - total: {}/{} tokens",
-                    display_file(&script, repo),
+                    display_file(script, repo),
                     script_tokens,
                     new_total,
                     token_budget
@@ -847,17 +847,14 @@ pub async fn extract_contract_category_from_contract(
     repo: &RepoPaths,
 ) -> Result<Option<ContractCategory>> {
     // Try Standard (source) files first
-    let file = match resolve_contract_file(contract, SolFileType::Standard, repo).await? {
-        Some(f) => Some(f),
-        None => {
-            // If not found in source, try LibFolder
-            resolve_contract_file(contract, SolFileType::LibFolder, repo).await?
-        }
-    };
-
-    let file_path = match file {
+    let file_path = match resolve_contract_file(contract, SolFileType::Standard, repo).await? {
         Some(f) => f,
-        None => return Ok(None),
+        None => {
+            match resolve_contract_file(contract, SolFileType::LibFolder, repo).await? {
+                Some(f) => f,
+                None => return Ok(None),
+            }
+        }
     };
 
     // Convert absolute path to relative path (same format as stored in database)
@@ -879,22 +876,17 @@ pub async fn get_contract_file_content(
     option_file: Option<PathBuf>,
     repo: &RepoPaths,
 ) -> Result<(String, PathBuf)> {
-    let file_path = option_file.unwrap_or({
-        // Try source files first, then library files
-        let file = match get_file_from_contract(contract, repo).await {
-            Some((filename, _)) => filename,
-            None => {
-                // Try library files
-                match get_file_from_lib_contract(contract, repo).await {
-                    Some((filename, _)) => filename,
-                    None => {
-                        info!("could not find file for contract {}", contract);
-                        PathBuf::new()
-                    }
+    let file_path = option_file.unwrap_or(match get_file_from_contract(contract, repo).await {
+        Some((filename, _)) => filename,
+        None => {
+            match get_file_from_lib_contract(contract, repo).await {
+                Some((filename, _)) => filename,
+                None => {
+                    info!("could not find file for contract {}", contract);
+                    PathBuf::new()
                 }
             }
-        };
-        file
+        }
     });
 
     if file_path.as_os_str().is_empty() {

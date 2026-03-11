@@ -153,7 +153,7 @@ pub fn insert_file_summary_to_db(filename: &str, summary: &str, repo: &RepoPaths
         CHAINSHIELD_DB_FOLDER, SUMMARY_DB
     )))?;
 
-    summary_db.insert_summary(&filename, &summary, None, None, repo)?;
+    summary_db.insert_summary(filename, summary, None, None, repo)?;
     Ok(())
 }
 
@@ -163,7 +163,7 @@ pub fn get_summaries_from_db(repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
         CHAINSHIELD_DB_FOLDER, SUMMARY_DB
     )))?;
 
-    Ok(summary_db.get_summaries(repo)?)
+    summary_db.get_summaries(repo)
 }
 
 pub fn get_file_summary_from_db(
@@ -175,5 +175,5 @@ pub fn get_file_summary_from_db(
         CHAINSHIELD_DB_FOLDER, SUMMARY_DB
     )))?;
 
-    Ok(summary_db.get_summary_file(filename, repo)?)
+    summary_db.get_summary_file(filename, repo)
 }

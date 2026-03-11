@@ -66,7 +66,7 @@ fn contract_category_map() -> &'static HashMap<ContractCategory, &'static Contra
     CONTRACT_CATEGORY_MAP.get_or_init(|| {
         CONTRACT_CATEGORY_LIBRARY
             .iter()
-            .map(|spec| (spec.category.clone(), spec))
+            .map(|spec| (spec.category, spec))
             .collect::<HashMap<_, _>>()
     })
 }
@@ -92,7 +92,7 @@ pub fn generate_formated_list_of_contract_categories(
     for category_spec in category_specs {
         category_list.push_str(&format!("Category: {}\n", category_spec.category));
         category_list.push_str(&format!("Description: {}\n", category_spec.description));
-        category_list.push_str("\n");
+        category_list.push('\n');
     }
 
     category_list

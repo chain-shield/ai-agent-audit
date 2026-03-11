@@ -82,13 +82,15 @@ pub trait EnumData {
     // get predicate or defintion of patten
 }
 
+use std::fmt::Write;
+
 pub fn generate_enum_list<T: std::fmt::Display>(patterns: &[T]) -> String {
     let mut enum_list = String::new();
     let top_pattern_count = patterns.len();
     for (i, pattern) in patterns.iter().enumerate() {
-        enum_list.push_str(&pattern.to_string());
+        let _ = write!(enum_list, "{pattern}");
         if i < top_pattern_count - 1 {
-            enum_list.push_str("|");
+            enum_list.push('|');
         }
     }
     enum_list
@@ -96,10 +98,9 @@ pub fn generate_enum_list<T: std::fmt::Display>(patterns: &[T]) -> String {
 
 pub fn generate_enum_bulleted_list<T: std::fmt::Display>(patterns: &[T]) -> String {
     let mut enum_list = String::new();
-    enum_list.push_str("\n");
+    enum_list.push('\n');
     for pattern in patterns {
-        enum_list.push_str(&format!("- {}", pattern.to_string()));
-        enum_list.push_str("\n");
+        let _ = writeln!(enum_list, "- {pattern}");
     }
     enum_list
 }

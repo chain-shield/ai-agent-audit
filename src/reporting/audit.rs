@@ -19,7 +19,6 @@ use crate::{
 /// This module generates comprehensive security audit reports in Markdown format,
 /// supporting both paid (full details) and free (limited) report versions with
 /// severity-based finding organization and protocol overviews.
-
 /// Severity levels for organizing findings in reports
 const SEVERITIES: [Severity; 5] = [
     Severity::Critical,
@@ -78,21 +77,21 @@ pub async fn generated_audit_report(
     // audit_report.push_str(&protocol_overview);
 
     let summary = match report_type {
-        ReportType::Severity => get_finding_summary(&findings),
-        ReportType::Pattern => get_finding_summary_by_pattern(&findings, ReportDataType::Summary),
-        ReportType::Status => get_finding_summary_by_status(&findings, ReportDataType::Summary),
+        ReportType::Severity => get_finding_summary(findings),
+        ReportType::Pattern => get_finding_summary_by_pattern(findings, ReportDataType::Summary),
+        ReportType::Status => get_finding_summary_by_status(findings, ReportDataType::Summary),
     };
 
     audit_report.push_str(&summary);
 
-    let finding_count = get_list_of_issues_by_severity(&findings);
+    let finding_count = get_list_of_issues_by_severity(findings);
 
     audit_report.push_str(&finding_count);
 
     let findings_report = match report_type {
-        ReportType::Severity => get_full_finding_report(&findings),
-        ReportType::Pattern => get_finding_summary_by_pattern(&findings, ReportDataType::Full),
-        ReportType::Status => get_finding_summary_by_status(&findings, ReportDataType::Full),
+        ReportType::Severity => get_full_finding_report(findings),
+        ReportType::Pattern => get_finding_summary_by_pattern(findings, ReportDataType::Full),
+        ReportType::Status => get_finding_summary_by_status(findings, ReportDataType::Full),
     };
 
     audit_report.push_str(&findings_report);
@@ -103,12 +102,12 @@ pub async fn generated_audit_report(
 fn get_full_finding_report(findings: &Findings) -> String {
     let mut findings_report = String::new();
 
-    findings_report.push_str("\n");
+    findings_report.push('\n');
     for severity in SEVERITIES {
         let report_by_severity = get_finding_report_by_severity(findings, severity);
         findings_report.push_str(&report_by_severity);
     }
-    findings_report.push_str("\n");
+    findings_report.push('\n');
 
     findings_report
 }
@@ -117,8 +116,10 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
     let findings_by_severity = findings.filter_by_severity(severity);
     let mut findings_report = String::new();
 
-    if !findings_by_severity.is_empty() {
-        findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity.to_string()));
+    if findings_by_severity.is_empty() {
+        String::new()
+    } else {
+        findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
             findings_report.push_str(&prompt_context::get_finding_report(
@@ -127,22 +128,20 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
                 FindingReportType::Enhanced,
             ));
         }
-    } else {
-        return String::new();
+        findings_report.push('\n');
+        findings_report
     }
-    findings_report.push_str("\n");
-    findings_report
 }
 
 fn get_finding_summary(findings: &Findings) -> String {
     let mut findings_summary = String::new();
 
-    findings_summary.push_str("\n");
+    findings_summary.push('\n');
     for severity in SEVERITIES {
         let summary_for_severity = get_finding_summary_by_severity(findings, severity);
         findings_summary.push_str(&summary_for_severity);
     }
-    findings_summary.push_str("\n");
+    findings_summary.push('\n');
 
     findings_summary
 }
@@ -156,7 +155,7 @@ fn get_list_of_issues_by_severity(findings: &Findings) -> String {
         let count = severity_count_map.get(&s).copied().unwrap_or(0);
         list_severity_count.push_str(&format!("- {}: {}\n", s.as_initial(), count));
     }
-    list_severity_count.push_str("\n");
+    list_severity_count.push('\n');
     list_severity_count
 }
 
@@ -164,8 +163,10 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
     let findings_by_severity = findings.filter_by_severity(severity);
     let mut findings_summary = String::new();
 
-    if !findings_by_severity.is_empty() {
-        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity.to_string()));
+    if findings_by_severity.is_empty() {
+        String::new()
+    } else {
+        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
             findings_summary.push_str(&format!(
@@ -173,7 +174,7 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                 severity.as_initial(),
                 i + 1,
                 finding.title,
-                &finding.derived_from.clone().unwrap_or_default()
+                finding.derived_from.clone().unwrap_or_default()
             ));
             findings_summary.push_str(&format!(
                 "Finding Status: {}\n",
@@ -189,19 +190,17 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                     finding.status_justification.clone().unwrap_or_default()
                 ));
             }
-            findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
+            findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege));
 
             if CREATE_TESTS {
                 findings_summary.push_str(&format!(
                     "Poc Test Status: {}\n\n",
-                    finding.poc_test_status.unwrap_or_default().to_string()
+                    finding.poc_test_status.unwrap_or_default()
                 ));
             }
         }
-    } else {
-        return String::new();
+        findings_summary
     }
-    findings_summary
 }
 
 // Cache grouped findings by pattern once to ensure stable ordering across multiple calls
@@ -224,7 +223,7 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
             if !map.contains_key(&key) {
                 order.push(key.clone());
             }
-            map.entry(key).or_insert_with(Vec::new).push(f.clone());
+            map.entry(key).or_default().push(f.clone());
         }
 
         // Rehydrate into a Vec following first-seen key order to keep output stable
@@ -239,55 +238,55 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
     // ************************************************************************************
 
     if grouped_findings.is_empty() {
-        return String::new();
-    }
+        String::new()
+    } else {
+        findings_summary.push_str("##Findings by Pattern\n");
 
-    findings_summary.push_str("##Findings by Pattern\n");
-
-    let mut num = 1;
-    for (pattern, findings_vec) in grouped_findings.iter() {
-        findings_summary.push_str(&format!("\n\n **Derived From** : {}\n\n", pattern));
-        for f in findings_vec {
-            match report_type {
-                ReportDataType::Summary => {
-                    findings_summary.push_str(&format!(
-                        "[{}-{}]. {}\n",
-                        f.severity.as_initial(),
-                        num,
-                        f.title
-                    ));
-
-                    findings_summary.push_str(&format!(
-                        "Finding Status: {}\n",
-                        finding_status_to_string(f)
-                    ));
-                    findings_summary.push_str(&format!(
-                        "Finding Status Justification: {}\n",
-                        f.status_justification.clone().unwrap_or_default()
-                    ));
-                    findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.to_string()));
-
-                    if CREATE_TESTS {
+        let mut num = 1;
+        for (pattern, findings_vec) in grouped_findings.iter() {
+            findings_summary.push_str(&format!("\n\n **Derived From** : {}\n\n", pattern));
+            for f in findings_vec {
+                match report_type {
+                    ReportDataType::Summary => {
                         findings_summary.push_str(&format!(
-                            "Poc Test Status: {}\n\n",
-                            f.poc_test_status.unwrap_or_default().to_string()
+                            "[{}-{}]. {}\n",
+                            f.severity.as_initial(),
+                            num,
+                            f.title
+                        ));
+
+                        findings_summary.push_str(&format!(
+                            "Finding Status: {}\n",
+                            finding_status_to_string(f)
+                        ));
+                        findings_summary.push_str(&format!(
+                            "Finding Status Justification: {}\n",
+                            f.status_justification.clone().unwrap_or_default()
+                        ));
+                        findings_summary.push_str(&format!("Privilege: {}\n", f.privilege));
+
+                        if CREATE_TESTS {
+                            findings_summary.push_str(&format!(
+                                "Poc Test Status: {}\n\n",
+                                f.poc_test_status.unwrap_or_default()
+                            ));
+                        }
+                    }
+                    ReportDataType::Full => {
+                        findings_summary.push_str(&prompt_context::get_finding_report(
+                            f,
+                            Some(num - 1),
+                            FindingReportType::Enhanced,
                         ));
                     }
                 }
-                ReportDataType::Full => {
-                    findings_summary.push_str(&prompt_context::get_finding_report(
-                        f,
-                        Some(num - 1),
-                        FindingReportType::Enhanced,
-                    ));
-                }
+                num += 1;
             }
-            num += 1;
+            findings_summary.push('\n');
         }
-        findings_summary.push_str("\n");
-    }
 
-    findings_summary
+        findings_summary
+    }
 }
 
 // Cache grouped findings by pattern once to ensure stable ordering across multiple calls
@@ -311,7 +310,7 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
             if !map.contains_key(&key) {
                 order.push(key.clone());
             }
-            map.entry(key).or_insert_with(Vec::new).push(f.clone());
+            map.entry(key).or_default().push(f.clone());
         }
 
         // Rehydrate into a Vec with "Valid" first, then other statuses in first-seen order
@@ -324,10 +323,8 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
 
         // Then add all other statuses in their original order
         for k in order {
-            if k != "Valid" {
-                if let Some(v) = map.remove(&k) {
-                    grouped.push((k, v));
-                }
+            if k != "Valid" && let Some(v) = map.remove(&k) {
+                grouped.push((k, v));
             }
         }
         grouped
@@ -335,33 +332,33 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
     // ************************************************************************************
 
     if grouped_findings.is_empty() {
-        return String::new();
-    }
+        String::new()
+    } else {
+        findings_summary.push_str("##Findings by Status\n");
 
-    findings_summary.push_str("##Findings by Status\n");
+        let mut num = 1;
 
-    let mut num = 1;
-
-    // Iterate through all grouped findings (Valid is already first in the cache)
-    for (status, findings_vec) in grouped_findings.iter() {
-        findings_summary.push_str(&format!("\n\nFinding Status: {}\n", status));
-        for f in findings_vec {
-            match report_type {
-                ReportDataType::Summary => {
-                    findings_summary.push_str(&prompt_context::get_finding_summary_report(f, num));
+        // Iterate through all grouped findings (Valid is already first in the cache)
+        for (status, findings_vec) in grouped_findings.iter() {
+            findings_summary.push_str(&format!("\n\nFinding Status: {}\n", status));
+            for f in findings_vec {
+                match report_type {
+                    ReportDataType::Summary => {
+                        findings_summary.push_str(&prompt_context::get_finding_summary_report(f, num));
+                    }
+                    ReportDataType::Full => {
+                        findings_summary.push_str(&prompt_context::get_finding_report(
+                            f,
+                            Some(num - 1),
+                            FindingReportType::Enhanced,
+                        ));
+                    }
                 }
-                ReportDataType::Full => {
-                    findings_summary.push_str(&prompt_context::get_finding_report(
-                        f,
-                        Some(num - 1),
-                        FindingReportType::Enhanced,
-                    ));
-                }
+                num += 1;
             }
-            num += 1;
+            findings_summary.push('\n');
         }
-        findings_summary.push_str("\n");
-    }
 
-    findings_summary
+        findings_summary
+    }
 }
