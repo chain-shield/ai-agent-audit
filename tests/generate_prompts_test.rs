@@ -115,7 +115,8 @@ fn print_invariant_prompts() {
 fn print_pattern_prompts() {
     let category = PatternCategory::SignatureValidation;
     let repo = mock_repo_paths();
-    let cat_prompt = findings_prompts::generate_pattern_category_to_findings_prompt(&category, &repo);
+    let cat_prompt =
+        findings_prompts::generate_pattern_category_to_findings_prompt(&category, &repo);
     println!(
         "\n===== Pattern Category To Findings Prompt ({:?}) =====\n{}\n",
         category, cat_prompt
@@ -141,10 +142,7 @@ fn print_pattern_prompts() {
         "security vulnerability pattern",
         &repo,
     );
-    println!(
-        "\n===== Pattern Post-JSON Schema =====\n{}\n",
-        post_schema
-    );
+    println!("\n===== Pattern Post-JSON Schema =====\n{}\n", post_schema);
 }
 
 #[test]
