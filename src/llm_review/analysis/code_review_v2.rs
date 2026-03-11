@@ -26,7 +26,6 @@ use tokio::sync::Mutex;
 ///
 /// This module coordinates parallel security analysis across multiple LLM providers,
 /// implements verification and deduplication workflows, and manages cost tracking.
-
 /// Orchestrates comprehensive security analysis of smart contracts using multiple LLM providers.
 ///
 /// This function performs parallel vulnerability detection across multiple AI agents,
@@ -91,18 +90,18 @@ pub async fn review_codebase_for_security_issues_v2(
     for (contract, (codeblock, _)) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
-        if let Some(scoped_contracts) = &custom_scoped_contracts {
-            if !scoped_contracts.contains(&contract) {
-                info!("contract {} is NOT in custom scope", contract);
-                continue;
-            }
+        if let Some(scoped_contracts) = &custom_scoped_contracts
+            && !scoped_contracts.contains(&contract)
+        {
+            info!("contract {} is NOT in custom scope", contract);
+            continue;
         }
 
-        if let Some(out_of_scope) = &custom_out_of_scoped_contracts {
-            if out_of_scope.contains(&contract) {
-                info!("contract {} is NOT in custom scope", contract);
-                continue;
-            }
+        if let Some(out_of_scope) = &custom_out_of_scoped_contracts
+            && out_of_scope.contains(&contract)
+        {
+            info!("contract {} is NOT in custom scope", contract);
+            continue;
         }
 
         // check contract in inscope!
@@ -112,7 +111,7 @@ pub async fn review_codebase_for_security_issues_v2(
         let contract_type = contract_type_option.unwrap_or(ContractType::Contract);
 
         if !is_contract_in_scope {
-            info!("{} {} is NOT in scope", contract_type.to_string(), contract);
+            info!("{} {} is NOT in scope", contract_type, contract);
             continue;
         }
 
@@ -120,7 +119,7 @@ pub async fn review_codebase_for_security_issues_v2(
             continue;
         }
 
-        info!("{} {} is in scope", contract_type.to_string(), contract);
+        info!("{} {} is in scope", contract_type, contract);
 
         // generate list of potential bad actors for this contract and invariants
         // NOTE: below is needed to cache results
@@ -446,7 +445,7 @@ async fn process_combined_patterns(
         return Ok(Findings::default());
     }
 
-    let multi_modal_context = get_multi_modal_context(&contract, repo).await;
+    let multi_modal_context = get_multi_modal_context(contract, repo).await;
     let multimodal = multi_modal_context.expect("could not unwrap multimodal_context, generate_multi_modal_context(...) must be called first");
 
     let actors = if !multimodal.actors.actors.is_empty() {

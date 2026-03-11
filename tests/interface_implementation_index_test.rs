@@ -19,7 +19,7 @@ use ai_agent_audit::{
     prepare_code::git_clone::{PocConfig, RepoPaths},
     utils::remapping::parse_and_store_remappings,
 };
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::{Path, PathBuf}};
 
 /// Create RepoPaths for Covenant repository
 ///
@@ -65,7 +65,7 @@ fn create_covenant_repo_paths() -> RepoPaths {
 }
 
 /// Format file path relative to repository root for display
-fn display_file(file: &PathBuf, repo: &RepoPaths) -> String {
+fn display_file(file: &Path, repo: &RepoPaths) -> String {
     file.strip_prefix(&repo.root)
         .unwrap_or(file)
         .display()
@@ -144,7 +144,7 @@ fn generate_markdown_report(
                 };
                 md.push_str(&format!("  - Location: {}\n", location));
             }
-            md.push_str("\n");
+            md.push('\n');
         }
 
         md.push_str("---\n\n");

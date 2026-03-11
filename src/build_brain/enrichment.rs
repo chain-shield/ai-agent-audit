@@ -7,7 +7,7 @@ use crate::utils::get_fn_name::get_function_name_from_interface;
 
 use super::callgraph;
 use super::fn_summaries::get_function_summaries;
-use super::graph_db::GraphDb;
+use super::graph_db::{GraphDb, SmartContractFunction};
 /// Smart contract data enrichment using Slither static analysis.
 ///
 /// This module builds semantic databases containing call graphs, inheritance hierarchies,
@@ -95,25 +95,23 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
                     //     info!("node: {:#?} \n", node);
                     //     info!("IR: {}", slither_ir_fn.ir);
                     // }
-                    rows.push((
-                        node.full_id.clone(),
-                        &repo_func.project_id,
-                        f.contract.clone(),
-                        f.name.clone(),
-                        slither_ir_fn.ir,
-                        f.visibility.clone(),
-                        f.modifiers.join(","),
-                        f.mutability.clone(),
-                    ))
+                    rows.push(SmartContractFunction {
+                        id: node.full_id.clone(),
+                        project_id: repo_func.project_id.clone(),
+                        contract: f.contract.clone(),
+                        name: f.name.clone(),
+                        ir: slither_ir_fn.ir,
+                        visibility: f.visibility.clone(),
+                        modifiers: f.modifiers.clone(),
+                        mutability: f.mutability.clone(),
+                    })
                 }
             }
             // single lock, batch insert
             {
                 let db = db_func.lock().await;
                 for row in rows {
-                    db.insert_function(
-                        &row.0, &row.1, &row.2, &row.3, &row.4, &row.5, &row.6, &row.7,
-                    )?;
+                    db.insert_function(&row)?;
                 }
             }
             info!("done inserting function metadata into database");

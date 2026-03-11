@@ -10,7 +10,7 @@ use crate::{
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::{path::PathBuf, sync::Mutex};
+use std::{path::{Path, PathBuf}, sync::Mutex};
 use tokio::fs;
 
 use anyhow::Result;
@@ -102,7 +102,7 @@ pub struct ImportDependencies {
 /// ```
 pub async fn parse_all_import_dependencies(
     source_code: &str,
-    current_file: &PathBuf,
+    current_file: &Path,
     repo: &RepoPaths,
 ) -> Result<ImportDependencies> {
     let mut lib_files = HashSet::new();
@@ -141,14 +141,14 @@ pub async fn parse_all_import_dependencies(
 
             // Handle library imports (starting with '@')
             if import_path.starts_with('@') {
-                if let Some(resolved_path) = resolve_import_path(import_path, repo) {
-                    if !should_exclude_this_library(&resolved_path) {
-                        let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
-                        // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
-                        // and canonicalization resolves symlinks, causing path mismatches.
-                        if full_path.exists() {
-                            lib_files.insert(full_path);
-                        }
+                if let Some(resolved_path) = resolve_import_path(import_path, repo)
+                    && !should_exclude_this_library(&resolved_path)
+                {
+                    let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
+                    // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
+                    // and canonicalization resolves symlinks, causing path mismatches.
+                    if full_path.exists() {
+                        lib_files.insert(full_path);
                     }
                 }
                 // For library imports, also check if any imported names are interfaces
@@ -156,10 +156,9 @@ pub async fn parse_all_import_dependencies(
                     // Check in lib contracts
                     if let Some((file, contract_type)) =
                         get_file_from_lib_contract(&name, repo).await
+                        && contract_type == ContractType::Interface
                     {
-                        if contract_type == ContractType::Interface {
-                            interfaces.insert((name, file));
-                        }
+                        interfaces.insert((name, file));
                     }
                 }
             } else {
@@ -174,10 +173,9 @@ pub async fn parse_all_import_dependencies(
                         for name in &imported_names {
                             if let Some((name_file, contract_type)) =
                                 get_file_from_contract(name, repo).await
+                                && contract_type == ContractType::Interface
                             {
-                                if contract_type == ContractType::Interface {
-                                    interfaces.insert((name.clone(), name_file));
-                                }
+                                interfaces.insert((name.clone(), name_file));
                             }
                         }
                     } else {
@@ -210,14 +208,14 @@ pub async fn parse_all_import_dependencies(
 
         if import_path.starts_with('@') {
             // Library import
-            if let Some(resolved_path) = resolve_import_path(import_path, repo) {
-                if !should_exclude_this_library(&resolved_path) {
-                    let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
-                    // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
-                    // and canonicalization resolves symlinks, causing path mismatches.
-                    if full_path.exists() {
-                        lib_files.insert(full_path);
-                    }
+            if let Some(resolved_path) = resolve_import_path(import_path, repo)
+                && !should_exclude_this_library(&resolved_path)
+            {
+                let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
+                // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
+                // and canonicalization resolves symlinks, causing path mismatches.
+                if full_path.exists() {
+                    lib_files.insert(full_path);
                 }
             }
         } else {
@@ -261,14 +259,14 @@ pub async fn parse_all_import_dependencies(
 /// # Returns
 /// * `ImportDependencies` - The direct dependencies found in the file
 async fn detect_dependencies_from_file_internal(
-    file: &PathBuf,
+    file: &Path,
     repo: &RepoPaths,
 ) -> Result<ImportDependencies> {
     // Skip excluded libraries (OpenZeppelin, forge-std, etc.)
-    if let Some(file_str) = file.to_str() {
-        if should_exclude_this_library(file_str) {
-            return Ok(ImportDependencies::default());
-        }
+    if let Some(file_str) = file.to_str()
+        && should_exclude_this_library(file_str)
+    {
+        return Ok(ImportDependencies::default());
     }
 
     // Read the source code
@@ -335,18 +333,18 @@ pub async fn detect_source_code_dependencies(
     };
 
     // Skip excluded libraries (OpenZeppelin, forge-std, etc.)
-    if let Some(file_str) = file.to_str() {
-        if should_exclude_this_library(file_str) {
-            info!(
-                "skipping excluded library contract {} at {}",
-                contract,
-                file.display()
-            );
-            // Cache the empty result to avoid re-processing excluded libraries
-            let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
-            cache.insert(cache_key, ImportDependencies::default());
-            return Ok(ImportDependencies::default());
-        }
+    if let Some(file_str) = file.to_str()
+        && should_exclude_this_library(file_str)
+    {
+        info!(
+            "skipping excluded library contract {} at {}",
+            contract,
+            file.display()
+        );
+        // Cache the empty result to avoid re-processing excluded libraries
+        let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
+        cache.insert(cache_key, ImportDependencies::default());
+        return Ok(ImportDependencies::default());
     }
 
     // Read the source code
@@ -420,7 +418,7 @@ pub async fn detect_source_code_dependencies(
     );
 
     let mut implementation_interfaces = HashSet::new();
-    for (_, impl_file) in &implementations {
+    for impl_file in implementations.values() {
         let impl_deps = detect_dependencies_from_file_internal(impl_file, repo).await?;
         implementation_interfaces.extend(impl_deps.interfaces);
     }
@@ -470,7 +468,7 @@ pub async fn detect_source_code_dependencies(
 
 pub async fn get_contract_type(
     contract: &str,
-    file: &PathBuf,
+    file: &Path,
     repo: &RepoPaths,
 ) -> Option<ContractType> {
     let file_type = get_file_type(file, repo);
@@ -480,20 +478,15 @@ pub async fn get_contract_type(
         SolFileType::LibFolder => get_file_from_lib_contract(contract, repo).await,
     };
 
-    match contract_info_option {
-        Some((_, contract_type)) => Some(contract_type),
-        None => None,
-    }
+    contract_info_option.map(|(_, contract_type)| contract_type)
 }
 
-pub fn get_file_type(file: &PathBuf, repo: &RepoPaths) -> SolFileType {
-    let file_type = if is_library_file(file, repo) {
+pub fn get_file_type(file: &Path, repo: &RepoPaths) -> SolFileType {
+    if is_library_file(file, repo) {
         SolFileType::LibFolder
     } else {
         SolFileType::Standard
-    };
-
-    file_type
+    }
 }
 pub async fn detect_scripts_connected_to_contract(
     contract: &str,
@@ -653,7 +646,7 @@ pub fn should_exclude_this_library(file_path: &str) -> bool {
 /// # Arguments
 /// * `contract` - The contract name to analyze
 /// * `repo` - Repository paths
-
+///
 /// Heuristic: common library contracts (by name) that we never want to include as called contracts
 pub fn is_standard_library_contract_name(name: &str) -> bool {
     // Narrower than starts_with("ERC"): only match ERC followed by one or more digits (e.g., ERC20, ERC721, ERC1155, ERC4626, ERC165, etc.)
@@ -720,11 +713,11 @@ mod tests {
                     };
                     if name.starts_with('I')
                         && name.len() > 1
-                        && name.chars().nth(1).map_or(false, |c| c.is_uppercase())
+                        && name.chars().nth(1).is_some_and(|c| c.is_uppercase())
                     {
                         interfaces.insert(name.to_string());
                         contracts.insert(name.to_string());
-                    } else if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    } else if name.chars().next().is_some_and(|c| c.is_uppercase()) {
                         contracts.insert(name.to_string());
                     }
                 }

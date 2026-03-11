@@ -60,19 +60,19 @@ pub fn generate_pattern_category_to_findings_prompt(
     repo: &RepoPaths,
 ) -> String {
     let category_spec =
-        pattern_category::get_category_library_spec(&category).expect("could not find category");
-    let pattern_categories = generate_formated_list_from_pattern_data(&category_spec.issues);
+        pattern_category::get_category_library_spec(category).expect("could not find category");
+    let pattern_categories = generate_formated_list_from_pattern_data(category_spec.issues);
     let severity_rubic = severity_rubric_for_repo(repo);
 
     let pre_json = get_pre_json_requirement_for_multipattern(
-        &category_spec.issues,
+        category_spec.issues,
         "security vulnerability pattern",
         repo,
     );
 
     generate_shared_findings_prompt_body(
         &pre_json,
-        &category_spec.title,
+        category_spec.title,
         &pattern_categories,
         severity_rubic,
     )

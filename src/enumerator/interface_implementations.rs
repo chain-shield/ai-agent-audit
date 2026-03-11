@@ -31,10 +31,18 @@ use log::{info, warn};
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Mutex;
 use tokio::fs;
+
+type InterfaceImplementation = (String, PathBuf);
+type InterfaceImplementationKey = (String, PathBuf);
+type InterfaceImplementationsIndex =
+    HashMap<InterfaceImplementationKey, Vec<InterfaceImplementation>>;
+type InterfaceImplementationsCache = HashMap<String, InterfaceImplementationsIndex>;
+type InterfaceListFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<InterfaceImplementationKey>>> + Send + 'a>>;
 
 /// Global cache for interface → implementations mapping.
 /// Key: repo_hash
@@ -43,13 +51,13 @@ use tokio::fs;
 /// Using (interface_name, interface_file_path) as key prevents collisions when:
 /// - lib/openzeppelin/interfaces/IERC20.sol
 /// - src/interfaces/IERC20.sol
+///
 /// Both have the same interface name but different implementations!
 ///
 /// This is built ONCE per repository by scanning all contracts and extracting
 /// their interface parents. Then lookups are O(1).
-static INTERFACE_IMPLEMENTATIONS_CACHE: Lazy<
-    Mutex<HashMap<String, HashMap<(String, PathBuf), Vec<(String, PathBuf)>>>>,
-> = Lazy::new(|| Mutex::new(HashMap::new()));
+static INTERFACE_IMPLEMENTATIONS_CACHE: Lazy<Mutex<InterfaceImplementationsCache>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Recursively find all interfaces that a contract implements (direct and indirect).
 ///
@@ -69,10 +77,10 @@ static INTERFACE_IMPLEMENTATIONS_CACHE: Lazy<
 /// ```
 fn find_all_interfaces_recursive<'a>(
     contract_name: &'a str,
-    contract_file: &'a PathBuf,
+    contract_file: &'a Path,
     repo: &'a RepoPaths,
     visited: &'a mut HashSet<(String, PathBuf)>,
-) -> Pin<Box<dyn Future<Output = Result<Vec<(String, PathBuf)>>> + Send + 'a>> {
+) -> InterfaceListFuture<'a> {
     use crate::build_brain::inheritance_map::get_parents_with_file;
     use crate::enumerator::parse_solidity::get_contract_type;
     use crate::llm_review::contract::contract_file_map::ContractType;
@@ -81,10 +89,10 @@ fn find_all_interfaces_recursive<'a>(
         let mut interfaces = Vec::new();
 
         // Prevent infinite recursion
-        if visited.contains(&(contract_name.to_string(), contract_file.clone())) {
+        if visited.contains(&(contract_name.to_string(), contract_file.to_path_buf())) {
             return Ok(interfaces);
         }
-        visited.insert((contract_name.to_string(), contract_file.clone()));
+        visited.insert((contract_name.to_string(), contract_file.to_path_buf()));
 
         // Get direct parents
         let parents = get_parents_with_file(contract_name, contract_file, repo).await?;
@@ -107,11 +115,11 @@ fn find_all_interfaces_recursive<'a>(
 
         for (parent_name, parent_file) in parents {
             // Check if this parent is an interface
-            if let Some(contract_type) = get_contract_type(&parent_name, &parent_file, repo).await {
-                if contract_type == ContractType::Interface {
-                    // Found an interface!
-                    interfaces.push((parent_name.clone(), parent_file.clone()));
-                }
+            if let Some(contract_type) = get_contract_type(&parent_name, &parent_file, repo).await
+                && contract_type == ContractType::Interface
+            {
+                // Found an interface!
+                interfaces.push((parent_name.clone(), parent_file.clone()));
             }
 
             // Recursively check parent's parents (to find indirect interfaces)
@@ -235,7 +243,7 @@ pub async fn build_interface_implementation_index(
 
                 index
                     .entry((interface_name.clone(), interface_file.clone()))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((contract_name.clone(), canonical_sol_file.clone()));
                 total_implementations += 1;
             }
@@ -440,14 +448,12 @@ fn extracts_contract_implementing_interface(content: &str, interface_name: &str)
                 let parents: Vec<&str> = inheritance_part.split(',').map(|s| s.trim()).collect();
 
                 // Check if our interface is in the list
-                if parents.iter().any(|p| *p == interface_name) {
+                if parents.contains(&interface_name) {
                     // Extract the contract name
                     // Example: "contract CovenantCurator is ..." -> "CovenantCurator"
-                    let contract_part = if trimmed.starts_with("abstract contract ") {
-                        &trimmed[18..] // Skip "abstract contract "
-                    } else {
-                        &trimmed[9..] // Skip "contract "
-                    };
+                    let contract_part = trimmed
+                        .strip_prefix("abstract contract ")
+                        .or_else(|| trimmed.strip_prefix("contract "))?;
 
                     if let Some(space_pos) = contract_part.find(' ') {
                         let contract_name = contract_part[..space_pos].trim();
@@ -483,7 +489,7 @@ fn extracts_contract_implementing_interface(content: &str, interface_name: &str)
 /// 1. External libraries (e.g., @flarenetwork/flare-periphery-contracts) may contain implementations
 /// 2. The inheritance map scans node_modules/ via is_library_file()
 /// 3. We need consistency between inheritance map and interface implementation index
-fn should_skip_file(file: &PathBuf) -> bool {
+fn should_skip_file(file: &Path) -> bool {
     use crate::enumerator::parse_solidity::should_exclude_this_library;
 
     let file_str = file.to_string_lossy();

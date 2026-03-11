@@ -166,8 +166,8 @@ async fn diagnose_contract_category_issue() {
 
     // Count by category
     let mut category_counts = std::collections::HashMap::new();
-    for (_, (_, category)) in &all_contracts {
-        *category_counts.entry(category.clone()).or_insert(0) += 1;
+    for (_, category) in all_contracts.values() {
+        *category_counts.entry(*category).or_insert(0) += 1;
     }
 
     println!("\n📊 Contracts by category:");

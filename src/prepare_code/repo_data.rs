@@ -105,7 +105,7 @@ impl RepoDataDb {
         let excluded_folders = repo
             .excluded_folders
             .as_ref()
-            .map(|folders| serde_json::to_string(folders))
+            .map(serde_json::to_string)
             .transpose()?;
 
         self.0.execute(

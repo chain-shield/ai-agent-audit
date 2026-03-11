@@ -94,7 +94,7 @@ fn path_has_parent_segment(file: &Path, segments: &[&str]) -> bool {
     false
 }
 // check if folder contains build config
-pub fn contains_build_config(dir: &PathBuf) -> bool {
+pub fn contains_build_config(dir: &Path) -> bool {
     let foundry = dir.join("foundry.toml");
     let hardhat_js = dir.join("hardhat.config.js");
     let hardhat_ts = dir.join("hardhat.config.ts");
@@ -131,7 +131,7 @@ pub fn is_monorepo_config_file(
     monorepo_file: &Option<PathBuf>,
 ) -> Result<bool> {
     if let Some(repo_list_file) = monorepo_file {
-        let list_of_paths = extract_list_of_files(&repo_list_file, &root.to_path_buf())?;
+        let list_of_paths = extract_list_of_files(repo_list_file, root)?;
         let full_repo_list_paths: Vec<PathBuf> =
             list_of_paths.iter().map(|r| root.join(r)).collect();
         Ok(full_repo_list_paths.iter().any(|p| file.starts_with(p))
@@ -139,7 +139,7 @@ pub fn is_monorepo_config_file(
             && !file.to_string_lossy().contains("lib")
             && is_file_config(file))
     } else {
-        return Ok(false);
+        Ok(false)
     }
 }
 
@@ -155,7 +155,7 @@ pub fn is_file_config(file: &Path) -> bool {
     ];
 
     let filename_str = filename.as_ref();
-    config_files.iter().any(|f| *f == filename_str)
+    config_files.contains(&filename_str)
 }
 
 pub fn is_library_package_json(file: &Path, root: &Path) -> bool {

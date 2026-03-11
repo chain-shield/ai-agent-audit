@@ -147,8 +147,7 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(SourceChunk,
         let file_type = infer_file_type(file.as_ref()); // Infer file_type
         for (i, chunk) in tokenize(bpe, &content).into_iter().enumerate() {
             let clean = chunk
-                .replace('\0', "") // Remove null bytes
-                .replace('\u{FFFD}', ""); // Remove replacement chars
+                .replace(['\0', '\u{FFFD}'], ""); // Remove null bytes and replacement chars
             let clean = clean.trim();
 
             if clean.is_empty() {

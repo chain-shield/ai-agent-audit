@@ -78,28 +78,23 @@ impl IssueTrait for InvariantFinding {
     fn hash(&self) -> String {
         format!(
             "{}-{}-{}-{}",
-            self.inv_type.to_string(),
+            self.inv_type,
             self.contract,
             self.function,
-            self.status.to_string()
+            self.status
         )
     }
     async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
         is_duplicate_pattern(self, issue, ai_agent).await
     }
     fn get_issue_report(&self) -> String {
-        invariants::generate_formatted_invariant_finding(&self)
+        invariants::generate_formatted_invariant_finding(self)
     }
     fn description(&self) -> String {
         self.desc.clone()
     }
     fn title_str(&self) -> String {
-        format!(
-            "{} - {}.{}",
-            self.inv_type.to_string(),
-            self.contract,
-            self.function
-        )
+        format!("{} - {}.{}", self.inv_type, self.contract, self.function)
     }
     fn generate_verify_prompt(&self) -> String {
         unimplemented!("Not implimented for InvariantFinding");
@@ -118,13 +113,13 @@ impl IssueTrait for Actor {
         is_duplicate_pattern(self, issue, ai_agent).await
     }
     fn get_issue_report(&self) -> String {
-        actors::generate_formated_actor(&self)
+        actors::generate_formated_actor(self)
     }
     fn description(&self) -> String {
         self.description.clone()
     }
     fn title_str(&self) -> String {
-        format!("{} - role: {}", self.name, self.role_type.to_string())
+        format!("{} - role: {}", self.name, self.role_type)
     }
     fn generate_verify_prompt(&self) -> String {
         unimplemented!("Not implimented for InvariantFinding");
@@ -143,7 +138,7 @@ impl IssueTrait for Finding {
         self.is_duplicate_issue(issue, ai_agent).await
     }
     fn get_issue_report(&self) -> String {
-        prompt_context::get_finding_report(&self, None, FindingReportType::NoPoC)
+        prompt_context::get_finding_report(self, None, FindingReportType::NoPoC)
     }
     fn title_str(&self) -> String {
         self.title.clone()
@@ -160,7 +155,7 @@ impl IssueTrait for Finding {
 impl IssueStructTrait for ContractInvariants {
     type Spec = InvariantFinding;
     fn generate_verify_prompt(&self) -> String {
-        generate_all_invariants_verify_prompt(&self)
+        generate_all_invariants_verify_prompt(self)
     }
     fn verify_json_required_prompt() -> String {
         get_post_all_invariants_verify_json()
@@ -180,7 +175,7 @@ impl IssueStructTrait for ContractInvariants {
         dedup_pattern(self).await
     }
     fn issue_title(&self) -> String {
-        "invariant".to_string()
+        "invariant".to_owned()
     }
 }
 
@@ -188,7 +183,7 @@ impl IssueStructTrait for ContractInvariants {
 impl IssueStructTrait for Actors {
     type Spec = Actor;
     fn generate_verify_prompt(&self) -> String {
-        generate_all_actors_verify_prompt(&self)
+        generate_all_actors_verify_prompt(self)
     }
     fn verify_json_required_prompt() -> String {
         get_post_all_actors_verify_json()
@@ -208,7 +203,7 @@ impl IssueStructTrait for Actors {
         dedup_pattern(self).await
     }
     fn issue_title(&self) -> String {
-        "actor".to_string()
+        "actor".to_owned()
     }
 }
 
@@ -228,7 +223,7 @@ impl IssueStructTrait for Findings {
         self.dedup().await
     }
     fn issue_title(&self) -> String {
-        "finding".to_string()
+        "finding".to_owned()
     }
     // NOTE: not need for this case
     fn generate_verify_prompt(&self) -> String {
@@ -261,7 +256,7 @@ where
         let hash = pattern.hash();
         findings_hash
             .entry(hash)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(pattern.clone());
     }
 
@@ -277,7 +272,7 @@ where
         let agent = Arc::clone(&openai_agent);
         let handle = tokio::spawn(async move {
             if current_findings.len() > 1 {
-                match get_deduped_patterns_vec(&current_findings, &agent).await {
+                match get_deduped_patterns_vec(&current_findings, agent.as_ref()).await {
                     Ok(deduped) => {
                         let mut deduped_findings_lock = deduped_findings.lock().await;
                         deduped_findings_lock.extend(deduped);
@@ -308,7 +303,7 @@ where
 
 async fn get_deduped_patterns_vec<TSpec>(
     patterns: &Arc<Vec<TSpec>>,
-    agent: &Arc<AIAgent>,
+    agent: &AIAgent,
 ) -> anyhow::Result<Vec<TSpec>>
 where
     TSpec: 'static + Send + Sync + Clone + IssueTrait + DeserializeOwned,
@@ -325,7 +320,7 @@ where
             if is_dup_vec[j] {
                 continue;
             }
-            let is_dup = patterns[i].is_duplicate_issue(&patterns[j], &agent).await?;
+            let is_dup = patterns[i].is_duplicate_issue(&patterns[j], agent).await?;
             if is_dup {
                 is_dup_vec[j] = true;
                 continue;
@@ -377,11 +372,11 @@ where
         .replace("{report_b}", &issue.get_issue_report());
 
     log::info!("checking if is {} duplication", pattern.title_str());
-    add_to_inference_cost_by_type(&prompt, &ai_agent.get_metadata(), TokenType::Input).await;
+    add_to_inference_cost_by_type(&prompt, ai_agent.get_metadata(), TokenType::Input).await;
 
     let response = ai_agent.prompt(&prompt).await?;
 
-    add_to_inference_cost_by_type(&response, &ai_agent.get_metadata(), TokenType::Output).await;
+    add_to_inference_cost_by_type(&response, ai_agent.get_metadata(), TokenType::Output).await;
 
     Ok(response.trim().eq_ignore_ascii_case("YES"))
 }

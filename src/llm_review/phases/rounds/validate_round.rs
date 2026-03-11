@@ -287,12 +287,12 @@ impl ValidateLegitAnalysis {
 
             if !status.is_empty() {
                 status_list.push_str(&status);
-                status_list.push_str("\n");
+                status_list.push('\n');
             }
 
             if !field.is_empty() {
                 json_fields.push_str(&field);
-                json_fields.push_str("\n");
+                json_fields.push('\n');
             }
         }
 

@@ -44,7 +44,7 @@ where
         // NOTE: Input cost is tracked by caller before calling this function
         // Do NOT track input cost here to avoid double-counting
 
-        add_to_inference_cost_by_type(input, &metadata, TokenType::Input).await;
+        add_to_inference_cost_by_type(input, metadata, TokenType::Input).await;
         match extractor.extract(input).await {
             Ok(data) => return Ok(data),
             Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {

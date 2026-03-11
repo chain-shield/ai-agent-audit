@@ -15,14 +15,14 @@ pub fn generate_and_save_pro_reports(findings: &Findings, repo: &RepoPaths) -> a
     info!("saving professional finding to file");
 
     for finding in &findings.findings {
-        if let Some(report) = &finding.competition_report {
-            if !report.report.is_empty() {
-                let final_report = generate_final_pro_report(report, finding);
-                let raw_filename = sanitize_filename(&finding.title);
-                let mut filename: String = raw_filename.chars().take(40).collect();
-                filename = format!("{}.md", filename);
-                save_audit_report(&filename, &final_report, repo)?;
-            }
+        if let Some(report) = &finding.competition_report
+            && !report.report.is_empty()
+        {
+            let final_report = generate_final_pro_report(report, finding);
+            let raw_filename = sanitize_filename(&finding.title);
+            let mut filename: String = raw_filename.chars().take(40).collect();
+            filename = format!("{}.md", filename);
+            save_audit_report(&filename, &final_report, repo)?;
         }
     }
     Ok(())

@@ -99,11 +99,15 @@ pub async fn execute_rounds(
     info!("🔍 Phase 4: Deduplicating and verifying findings...");
 
     let deduped_findings = findings.dedup().await?;
-    let context = get_metadata_context(repo)
-        .await
-        .expect("could not extract context");
-
-    let code_and_context = generate_content_plus_context_block(code, &context);
+    let code_and_context = if let Some(context) = get_metadata_context(repo).await {
+        generate_content_plus_context_block(code, &context)
+    } else {
+        log::warn!(
+            "No cached metadata context found for {}; using provided verification context as-is",
+            repo.project_id
+        );
+        code.to_string()
+    };
 
     let dedup_finding_count = deduped_findings.findings.len();
 
@@ -230,7 +234,7 @@ where
     let post_verify_json = generate_post_round_verify_json_requirement(&verify_json);
 
     let instruction_prompt = generate_prompt_for_multi_finding_issue_check(
-        &code_and_context,
+        code_and_context,
         &clean_findings,
         &r_prompt,
         &post_verify_json,
@@ -286,12 +290,11 @@ where
                     })
             };
 
-            let enriched_finding = Finding {
+            Finding {
                 status: updated_status,
                 status_justification: justification,
                 ..f
-            };
-            enriched_finding
+            }
         })
         .collect();
 
@@ -364,7 +367,7 @@ pub async fn run_round_validation(
     instruction_prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");
     instruction_prompt.push_str("\n\n");
 
-    instruction_prompt.push_str(&code_and_context);
+    instruction_prompt.push_str(code_and_context);
     instruction_prompt.push_str("\n\n");
     instruction_prompt.push_str(&verify_json);
 
@@ -432,12 +435,11 @@ pub async fn run_round_validation(
                 confirmed_invalid_count += 1;
             }
 
-            let rectified_finding = Finding {
+            Finding {
                 status: final_status,
                 status_justification: updated_justification,
                 ..f
-            };
-            rectified_finding
+            }
         })
         .collect();
 

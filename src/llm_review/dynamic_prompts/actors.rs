@@ -242,23 +242,20 @@ pub fn generate_formated_list_from_actor_data(actors_slice: &[Actor]) -> String 
 
     for actor in actors {
         actor_list.push_str("\n\n");
-        actor_list.push_str(&format!("### Actor Name: {}\n", &actor.name));
-        actor_list.push_str("\n");
+        actor_list.push_str(&format!("### Actor Name: {}\n", actor.name));
+        actor_list.push('\n');
 
-        actor_list.push_str(&format!(
-            "### Role Type: {}\n",
-            &actor.role_type.to_string()
-        ));
-        actor_list.push_str("\n");
+        actor_list.push_str(&format!("### Role Type: {}\n", actor.role_type));
+        actor_list.push('\n');
 
-        actor_list.push_str(&format!("### Description: {}\n", &actor.description));
-        actor_list.push_str("\n");
+        actor_list.push_str(&format!("### Description: {}\n", actor.description));
+        actor_list.push('\n');
 
         actor_list.push_str("### Capabilities\n");
         for capability in &actor.capabilities {
             actor_list.push_str(&format!("- {}\n", capability));
         }
-        actor_list.push_str("\n");
+        actor_list.push('\n');
     }
 
     actor_list
@@ -330,8 +327,7 @@ pub fn get_pre_all_actors_verify_json() -> String {
 }
 
 pub fn get_all_actors_verify_json() -> String {
-    format!(
-        r#"
+    r#"
         {{
             "findings": [
                 {{
@@ -342,7 +338,7 @@ pub fn get_all_actors_verify_json() -> String {
             ]
         }}
         "#
-    )
+    .to_string()
 }
 
 pub fn generate_full_list_of_actors(actors: &Actors) -> String {
@@ -360,19 +356,16 @@ pub fn generate_full_list_of_actors(actors: &Actors) -> String {
 pub fn generate_formated_actor(actor: &Actor) -> String {
     let mut actor_desc = String::new();
 
-    actor_desc.push_str(&format!("\n\n### Actor Name: {}\n", &actor.name));
+    actor_desc.push_str(&format!("\n\n### Actor Name: {}\n", actor.name));
 
     if let Some(id) = &actor.id {
         actor_desc.push_str(&format!("\n\n### Actor Id: {}\n", id));
     }
 
-    actor_desc.push_str(&format!(
-        "\n\n### Actor Role: {}\n",
-        &actor.role_type.to_string()
-    ));
+    actor_desc.push_str(&format!("\n\n### Actor Role: {}\n", actor.role_type));
 
     actor_desc.push_str("\n### Actor Description\n");
-    actor_desc.push_str(&actor.description.to_string());
+    actor_desc.push_str(&actor.description);
 
     actor_desc.push_str("\n### Actor Capabilities\n");
     actor_desc.push_str(&actor.capabilities.join(", "));

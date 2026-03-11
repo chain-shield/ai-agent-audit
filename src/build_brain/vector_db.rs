@@ -37,7 +37,7 @@ pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     repo: &RepoPaths,
 ) -> Result<()> {
     // check if vector db for this repo already exists
-    if does_qdrant_vector_db_for_this_repo_already_exist(&repo).await? {
+    if does_qdrant_vector_db_for_this_repo_already_exist(repo).await? {
         return Ok(());
     }
     // 2b. Create a temp dir and ask slither_ffi to fill it with chunk files
@@ -68,7 +68,7 @@ pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     info!("all files => {:?}", all_files.len());
 
     //embed all files and upsert to qdrant vector db for later dynamic retrival
-    generate_enbeddings_and_save_to_qdrant_vector_db(&all_files, &repo).await?;
+    generate_enbeddings_and_save_to_qdrant_vector_db(&all_files, repo).await?;
     Ok(())
 }
 
@@ -100,7 +100,7 @@ pub async fn generate_enbeddings_and_save_to_qdrant_vector_db(
 
     // Generate vector embeddings for all files
     info!("generating vector embedding");
-    let embeddings = embed_files(&all_files).await?;
+    let embeddings = embed_files(all_files).await?;
     // ────────────────────────────────
     // 4. Upsert into Qdrant
     // ────────────────────────────────

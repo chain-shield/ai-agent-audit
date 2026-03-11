@@ -148,8 +148,8 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
         info!("is by design: {}\n", self.by_design);
         info!("is in scope: {}\n", self.in_scope);
         info!("is exploitable: {}\n", self.exploitable);
-        info!("Impact: {}\n", self.impact.to_string());
-        info!("Likelihood: {}\n", self.likelihood.to_string());
+        info!("Impact: {}\n", self.impact);
+        info!("Likelihood: {}\n", self.likelihood);
         info!("is user error or mistake: {}\n", self.user_error_or_mistake);
         info!("is governance_risk: {}\n", self.governance_risk);
         info!("is future speculation: {}\n", self.future_speculation);

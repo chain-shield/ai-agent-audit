@@ -11,12 +11,11 @@ fn detect_solidity_version(repo: &RepoPaths) -> Option<String> {
 
     // Check source files for pragma statements
     for sol_file in &repo.sol_files {
-        if let Ok(content) = fs::read_to_string(sol_file) {
-            if let Some(captures) = pragma_regex.captures(&content) {
-                if let Some(version) = captures.get(1) {
-                    return Some(version.as_str().trim().to_string());
-                }
-            }
+        if let Ok(content) = fs::read_to_string(sol_file)
+            && let Some(captures) = pragma_regex.captures(&content)
+            && let Some(version) = captures.get(1)
+        {
+            return Some(version.as_str().trim().to_string());
         }
     }
 

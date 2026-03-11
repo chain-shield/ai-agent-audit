@@ -25,7 +25,8 @@ use std::path::Path;
 /// ```
 pub fn cleanup_repo_volume(root: &Path) -> Result<()> {
     if root.exists() {
-        fs::remove_dir_all(root).expect(&format!("Failed to remove Docker volume at {:?}", root));
+        fs::remove_dir_all(root)
+            .map_err(|e| anyhow::anyhow!("Failed to remove Docker volume at {:?}: {}", root, e))?;
         println!("[INFO] Cleaned up Docker volume: {:?}", root);
     } else {
         println!("[WARN] No Docker volume found for cleanup at {:?}", root);

@@ -95,7 +95,7 @@ fn tokenize(s: &str) -> Vec<String> {
 
     s.split_whitespace()
         .filter(|t| !stop.contains(*t))
-        .map(|t| simple_stem(t))
+        .map(simple_stem)
         .collect()
 }
 

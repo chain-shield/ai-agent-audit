@@ -17,9 +17,12 @@ use log::info;
 use rusqlite::Connection;
 use std::collections::HashMap;
 
+type InternalCallEdgeMap = HashMap<String, (String, String)>;
+type InternalCallEdgeCache = HashMap<String, InternalCallEdgeMap>;
+
 /// Global cache for internal_call_edge_map results.
 /// Key format: "ir_block_hash:contract_name"
-static INTERNAL_CALL_EDGE_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, (String, String)>>>> =
+static INTERNAL_CALL_EDGE_CACHE: Lazy<Mutex<InternalCallEdgeCache>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub fn robust_extract_fn_metadata_from_func_id(
@@ -37,7 +40,7 @@ pub fn robust_extract_fn_metadata_from_func_id(
         // info!("could not find caller to {}", &func_id);
 
         let (new_contract, fn_sig) =
-            check_internal_calls_to_find_contract_of_fn_call(func_id, &contract, &parent_func.ir)
+            check_internal_calls_to_find_contract_of_fn_call(func_id, contract, &parent_func.ir)
                 .unwrap_or_default();
 
         if new_contract.is_empty() || is_standard_library_contract_name(&new_contract) {

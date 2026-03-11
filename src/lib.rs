@@ -1,8 +1,8 @@
-/// AI Agent Audit - Comprehensive Smart Contract Security Analysis Tool
-///
-/// This library provides advanced AI-powered smart contract auditing capabilities,
-/// combining static analysis, multiple LLM providers, and vector embeddings for
-/// professional-grade security assessments.
+//! AI Agent Audit - Comprehensive Smart Contract Security Analysis Tool
+//!
+//! This library provides advanced AI-powered smart contract auditing capabilities,
+//! combining static analysis, multiple LLM providers, and vector embeddings for
+//! professional-grade security assessments.
 
 /// Centralized error handling and types
 pub mod error;
@@ -76,6 +76,7 @@ pub mod enumerator {
 
 /// AI-powered security analysis and LLM integration
 pub mod llm_review {
+    #[allow(clippy::module_inception)]
     pub mod findings {
         pub mod finding_enums;
         /// LLM configuration and models

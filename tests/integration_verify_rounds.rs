@@ -139,7 +139,7 @@ async fn test_verify_rounds_puppy_raffle() -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     let verified_findings =
-        verify_rounds::execute_rounds(findings, &code_with_context, None, &agent, &repo).await?;
+        verify_rounds::execute_rounds(findings, &code_with_context, &agent, &repo).await?;
 
     // Display results
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

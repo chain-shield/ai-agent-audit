@@ -27,16 +27,18 @@ pub fn canonicalize_path(path: &Path) -> PathBuf {
 /// Child → Parents mapping
 /// Key: project_id
 /// Value: HashMap of (child_contract, child_file) → Vec<(parent_contract, parent_file)>
-static INHERITANCE_MAP: Lazy<
-    Arc<Mutex<HashMap<String, HashMap<(String, PathBuf), Vec<(String, PathBuf)>>>>>,
-> = Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+type ContractFile = (String, PathBuf);
+type InheritanceEdges = HashMap<ContractFile, Vec<ContractFile>>;
+type ProjectInheritanceMap = HashMap<String, InheritanceEdges>;
+
+static INHERITANCE_MAP: Lazy<Arc<Mutex<ProjectInheritanceMap>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// Parent → Children mapping (inverted)
 /// Key: project_id
 /// Value: HashMap of (parent_contract, parent_file) → Vec<(child_contract, child_file)>
-static INVERTED_INHERITANCE_MAP: Lazy<
-    Arc<Mutex<HashMap<String, HashMap<(String, PathBuf), Vec<(String, PathBuf)>>>>>,
-> = Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+static INVERTED_INHERITANCE_MAP: Lazy<Arc<Mutex<ProjectInheritanceMap>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// Insert an inheritance edge: child inherits from parent
 ///

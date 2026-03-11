@@ -351,19 +351,18 @@ pub async fn execute(
             if matches!(
                 poc_test.poc_test_status,
                 PocStatus::ErrorRunningTests | PocStatus::FindingIsInvalid
-            ) {
-                if poc_test.poc_test_file.exists() {
-                    log::warn!(
-                        "🗑️  Deleting PoC test file with compilation errors to prevent cross-contamination: {}",
-                        poc_test.poc_test_file.display()
+            ) && poc_test.poc_test_file.exists()
+            {
+                log::warn!(
+                    "🗑️  Deleting PoC test file with compilation errors to prevent cross-contamination: {}",
+                    poc_test.poc_test_file.display()
+                );
+                if let Err(e) = std::fs::remove_file(&poc_test.poc_test_file) {
+                    log::error!(
+                        "Failed to delete PoC test file {}: {:?}",
+                        poc_test.poc_test_file.display(),
+                        e
                     );
-                    if let Err(e) = std::fs::remove_file(&poc_test.poc_test_file) {
-                        log::error!(
-                            "Failed to delete PoC test file {}: {:?}",
-                            poc_test.poc_test_file.display(),
-                            e
-                        );
-                    }
                 }
             }
 

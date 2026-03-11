@@ -1,4 +1,4 @@
-use ai_agent_audit::llm_review::findings::findings::{Finding, Findings, FromLLMJson};
+use ai_agent_audit::llm_review::findings::findings::{Findings, FromLLMJson};
 
 #[test]
 fn test_kimi_response_with_leading_space() {

@@ -14,6 +14,7 @@ use strum_macros::EnumIter;
     Hash,
     JsonSchema,
     EnumIter,
+    Default,
     Serialize,
     Deserialize, // ✅ Use serde's derive - LLMs return exact PascalCase
     strum_macros::EnumString,
@@ -26,14 +27,9 @@ pub enum Severity {
     High,
     Medium,
     Low,
+    #[default]
     Info,
     Invalid,
-}
-
-impl Default for Severity {
-    fn default() -> Self {
-        Severity::Info
-    }
 }
 
 impl Severity {
@@ -58,6 +54,7 @@ impl Severity {
     Hash,
     JsonSchema,
     EnumIter,
+    Default,
     Serialize,
     Deserialize, // ✅ Use serde's derive - LLMs return exact PascalCase
     strum_macros::EnumString,
@@ -70,6 +67,7 @@ pub enum VulnerabilityType {
     ArrayLimits,
     ConfidentialData,
     DefaultVisibility,
+    #[default]
     Dos,
     Inheritance,
     IntegerMath,
@@ -143,12 +141,6 @@ pub enum VulnerabilityType {
     ExternalProtocolKeyCollision,   // external protocol ID/key collision when config changes
     EmergencyModeStateStuck,        // emergency mode blocks settlement while allowing state changes
     IncentiveMisalignmentOrGameTheory, // rational actors profit by harming others or blocking protocol
-}
-
-impl Default for VulnerabilityType {
-    fn default() -> Self {
-        VulnerabilityType::Dos
-    }
 }
 
 impl VulnerabilityType {

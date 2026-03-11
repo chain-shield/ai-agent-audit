@@ -69,7 +69,7 @@ pub async fn execute(
         let arc_findings = Arc::clone(&arc_findings);
         let arc_professional_reports = Arc::clone(&professional_reports);
         let repo_clone = Arc::clone(&arc_repo);
-        let arc_agent = Arc::clone(&agent);
+        let arc_agent = Arc::clone(agent);
         let sem = Arc::clone(&VERIFY_SEM);
 
         if arc_findings.findings[i]
@@ -120,11 +120,10 @@ pub async fn execute(
         .enumerate()
         .map(|(idx, f)| {
             if !reports[idx].report.is_empty() {
-                let enriched_finding = Finding {
+                Finding {
                     competition_report: Some(reports[idx].clone()),
                     ..f.clone()
-                };
-                enriched_finding
+                }
             } else {
                 f.clone()
             }
@@ -154,7 +153,7 @@ fn generate_code_content_block(codeblock: &str, added_context: &str) -> String {
     code_plus_context.push_str(codeblock);
 
     code_plus_context.push_str("\n\n ## ADDITIONAL CONTEXT \n\n");
-    code_plus_context.push_str(&added_context);
+    code_plus_context.push_str(added_context);
     code_plus_context.push_str("\n\n");
 
     code_plus_context

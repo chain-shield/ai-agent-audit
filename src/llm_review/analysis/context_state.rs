@@ -64,7 +64,6 @@ pub struct MultiModalContext {
 }
 
 /// Global metadata context shared across all AI agents
-
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
@@ -106,7 +105,7 @@ pub async fn generate_and_save_metadata_context(repo: &RepoPaths) -> anyhow::Res
         if file_type == FileSummaryType::Source {
             full_context_plus_summaries.push_str(&format!("### Summary of {}\n", summary.filename));
             full_context_plus_summaries.push_str(&summary.summary);
-            full_context_plus_summaries.push_str("\n");
+            full_context_plus_summaries.push('\n');
         }
     }
 
@@ -287,9 +286,5 @@ pub async fn get_multi_modal_context(
     let multimodal = Arc::clone(&MULTI_MODAL_CONTEXT);
     let multimodal_cache = multimodal.lock().await;
 
-    if let Some(multimodal_context) = multimodal_cache.get(&key) {
-        Some(multimodal_context.clone())
-    } else {
-        None
-    }
+    multimodal_cache.get(&key).cloned()
 }
