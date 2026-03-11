@@ -4,7 +4,7 @@ use ai_agent_audit::{
         agent::agent_factory::{AgentConfig, AgentFactory, init_llm_clients},
         findings::{
             finding_enums::{Severity, VulnerabilityType},
-            findings::{Finding, Findings, PrivilegeLevel},
+            findings::{CLAUDE_4_5_SONNET, Finding, Findings, PrivilegeLevel},
         },
         phases::{add_poc_findings::PocStatus, create_report, verify_rounds::FindingStatus},
     },
@@ -49,7 +49,7 @@ async fn test_report_generation_with_valid_findings() {
 
     // Create agent for report generation
     let agent_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("claude-3-7-sonnet-20250219")
+        .with_model(CLAUDE_4_5_SONNET)
         .with_temperature(0.3);
 
     let report_agent = Arc::new(
