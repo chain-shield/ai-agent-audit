@@ -12,7 +12,7 @@ use thiserror::Error;
 /// failure scenarios with descriptive messages and error chaining.
 #[derive(Debug, Error)]
 pub enum AuditError {
-    /// Database operation failures (SQLite, Qdrant)
+    /// Database operation failures (SQLite)
     #[error("Database operation failed: {message}")]
     Database {
         message: String,
@@ -50,15 +50,6 @@ pub enum AuditError {
     #[error("LLM processing failed: {provider} - {message}")]
     LlmProcessing {
         provider: String,
-        message: String,
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
-    },
-
-    /// Vector database operations failures
-    #[error("Vector database operation failed: {operation} - {message}")]
-    VectorDb {
-        operation: String,
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -177,18 +168,6 @@ impl AuditError {
         }
     }
 
-    /// Creates a new vector database error with context.
-    pub fn vector_db<E>(operation: impl Into<String>, message: impl Into<String>, source: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        Self::VectorDb {
-            operation: operation.into(),
-            message: message.into(),
-            source: Some(Box::new(source)),
-        }
-    }
-
     /// Creates a new file system error with context.
     pub fn file_system<E>(path: impl Into<String>, message: impl Into<String>, source: E) -> Self
     where
@@ -299,16 +278,6 @@ impl From<reqwest::Error> for AuditError {
                 .url()
                 .map(|u| u.to_string())
                 .unwrap_or_else(|| "unknown".to_string()),
-            message: err.to_string(),
-            source: Some(Box::new(err)),
-        }
-    }
-}
-
-impl From<qdrant_client::QdrantError> for AuditError {
-    fn from(err: qdrant_client::QdrantError) -> Self {
-        Self::VectorDb {
-            operation: "unknown".to_string(),
             message: err.to_string(),
             source: Some(Box::new(err)),
         }

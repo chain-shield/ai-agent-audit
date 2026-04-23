@@ -1,16 +1,14 @@
-use anyhow::Result;
-use rusqlite::{Connection, params};
-use serde::Serialize;
-use std::path::Path;
-
 use crate::{
-    config::{CHAINSHIELD_DB_FOLDER, FINDINGS_DB},
+    config::{FINDINGS_DB, app_db_path},
     llm_review::findings::{
         finding_enums::{Severity, VulnerabilityType},
         findings::{Finding, Findings, PrivilegeLevel},
     },
     prepare_code::git_clone::RepoPaths,
 };
+use anyhow::Result;
+use rusqlite::{Connection, params};
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct FindingDb {
@@ -30,7 +28,10 @@ pub struct FindingsDb(Connection);
 
 impl FindingsDb {
     pub fn open() -> Result<Self> {
-        let p = Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, FINDINGS_DB)).to_path_buf();
+        let p = app_db_path(FINDINGS_DB);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         let conn = Connection::open(p)?;
         conn.execute_batch(

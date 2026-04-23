@@ -1,6 +1,6 @@
 use crate::error::{AuditError, Result};
 use serde::{Deserialize, Serialize};
-use std::env;
+use std::{env, path::PathBuf};
 
 /// Configuration management for the AI Agent Audit application.
 ///
@@ -32,7 +32,9 @@ pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
 pub const INVARIANT_DISCOVERY_RUNS: usize = 3; // old value 5
 pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
-pub const OPENAI_MODEL: &str = "gpt-5.2";
+pub const OPENAI_MODEL: &str = "gpt-5.4";
+pub const OPENAI_REASONING_EFFORT: &str = "xhigh";
+pub const OPENAI_SUMMARY_REASONING_EFFORT: &str = "low";
 pub const SKIP_LIBRARIES: bool = true;
 pub const SKIP_INVARIANT_RUNS: bool = false;
 
@@ -59,17 +61,31 @@ pub const MAX_PATTERN_GENERAL: usize = 4; // 2 for large protocol, default: 4
 
 pub const MAX_FILE_RUNS: usize = 1;
 
-pub const MAX_RAG_QUERY_CONTENT_LENGTH: usize = 8192; // 8192 token limit for embedding
-
 /// Docker volume path for repository analysis
 pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
-pub const CHAINSHIELD_DB_FOLDER: &str = "/Users/apmfree/chainshield_db";
+/// Default local directory for SQLite caches and analysis state.
+pub const DEFAULT_APP_DATA_DIR: &str = ".ai-agent-audit";
 pub const REPO_DATA_DB: &str = "repo_data.db";
 pub const SUMMARY_DB: &str = "summary.db";
 pub const SEMANTIC_DB: &str = "semantic.db";
 pub const CODEBLOCK_DB: &str = "codeblock.db";
 pub const FINDINGS_DB: &str = "findings.db";
+
+/// Returns the local application data directory.
+///
+/// The location can be overridden with `AI_AGENT_AUDIT_DATA_DIR`. By default,
+/// the tool stores local cache state in a repo-local `.ai-agent-audit/` folder.
+pub fn app_data_dir() -> PathBuf {
+    env::var("AI_AGENT_AUDIT_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_APP_DATA_DIR))
+}
+
+/// Returns a path inside the application data directory.
+pub fn app_db_path(filename: &str) -> PathBuf {
+    app_data_dir().join(filename)
+}
 
 /// Maximum repository URL length for security validation
 pub const MAX_REPO_URL_LENGTH: usize = 2048;
@@ -82,15 +98,6 @@ pub const DEFAULT_TEMPERATURE: f64 = 1.0;
 
 /// Maximum tokens for LLM responses
 pub const MAX_RESPONSE_TOKENS: u64 = 100_000;
-
-/// Vector database collection dimension
-pub const VECTOR_DIMENSION: u64 = 1536;
-
-/// Number of similar chunks to retrieve for context
-pub const CONTEXT_CHUNKS: usize = 5;
-
-/// Similarity threshold for vector search
-pub const SIMILARITY_THRESHOLD: f64 = 0.7;
 
 /// Main configuration structure for the AI Agent Audit application.
 ///
@@ -107,10 +114,7 @@ pub struct AuditConfig {
     /// Number of discovery rounds per contract during analysis
     pub runs: usize,
 
-    /// Qdrant vector database URL for semantic search
-    pub qdrant_url: String,
-
-    /// OpenAI API key for GPT models and embeddings
+    /// OpenAI API key for GPT models
     pub openai_api_key: Option<String>,
 
     /// Anthropic API key for Claude models
@@ -139,15 +143,6 @@ pub struct AuditConfig {
 
     /// Maximum tokens for LLM responses
     pub max_response_tokens: u64,
-
-    /// Vector database collection dimension
-    pub vector_dimension: u64,
-
-    /// Number of similar chunks to retrieve for context
-    pub context_chunks: usize,
-
-    /// Similarity threshold for vector search
-    pub similarity_threshold: f64,
 }
 
 impl Default for AuditConfig {
@@ -156,7 +151,6 @@ impl Default for AuditConfig {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
             runs: PATTERN_DISCOVERY_RUNS,
-            qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: None,
             anthropic_api_key: None,
             gemini_ai_api_key: None,
@@ -167,9 +161,6 @@ impl Default for AuditConfig {
             llm_timeout_seconds: LLM_TIMEOUT_SECONDS,
             default_temperature: DEFAULT_TEMPERATURE,
             max_response_tokens: MAX_RESPONSE_TOKENS,
-            vector_dimension: VECTOR_DIMENSION,
-            context_chunks: CONTEXT_CHUNKS,
-            similarity_threshold: SIMILARITY_THRESHOLD,
         }
     }
 }
@@ -184,43 +175,22 @@ impl AuditConfig {
     /// * `Result<AuditConfig>` - Configuration loaded from environment
     ///
     /// # Environment Variables
-    /// * `QDRANT_URL` - Vector database URL (default: http://localhost:6334)
-    /// * `OPENAI_API_KEY` - OpenAI API key (optional)
+    /// * `OPENAI_API_KEY` - Legacy OpenAI API key (optional, not used by the default Codex path)
     /// * `ANTHROPIC_API_KEY` - Anthropic API key (optional)
     /// * `GEMINI_API_KEY` - Gemini AI API key (optional)
+    /// * `GOOGLE_AI_API_KEY` - Legacy Gemini env var alias (optional)
     /// * `DEEPSEEK_API_KEY` - DeepSeek API key (optional)
     /// * `RUST_LOG` - Logging level (default: info)
     pub fn from_env() -> Result<Self> {
         let mut config = Self::default();
 
-        // Load Qdrant URL
-        if let Ok(qdrant_url) = env::var("QDRANT_URL") {
-            if !qdrant_url.starts_with("http://") && !qdrant_url.starts_with("https://") {
-                return Err(AuditError::configuration(
-                    "QDRANT_URL",
-                    "Must start with http:// or https://",
-                ));
-            }
-            config.qdrant_url = qdrant_url;
-        }
-
         // Load API keys (optional)
         config.openai_api_key = env::var("OPENAI_API_KEY").ok();
         config.anthropic_api_key = env::var("ANTHROPIC_API_KEY").ok();
-        config.gemini_ai_api_key = env::var("GEMINI_API_KEY").ok();
+        config.gemini_ai_api_key = env::var("GEMINI_API_KEY")
+            .or_else(|_| env::var("GOOGLE_AI_API_KEY"))
+            .ok();
         config.deepseek_api_key = env::var("DEEPSEEK_API_KEY").ok();
-
-        // Validate at least one API key is provided
-        if config.openai_api_key.is_none()
-            && config.anthropic_api_key.is_none()
-            && config.gemini_ai_api_key.is_none()
-            && config.deepseek_api_key.is_none()
-        {
-            return Err(AuditError::configuration(
-                "API_KEYS",
-                "At least one LLM API key must be provided",
-            ));
-        }
 
         // Load logging level
         config.log_level = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
@@ -230,41 +200,15 @@ impl AuditConfig {
 
     /// Validates the configuration and returns any errors found.
     pub fn validate(&self) -> Result<()> {
-        // Validate qdrant_url
-        if !self.qdrant_url.starts_with("http://") && !self.qdrant_url.starts_with("https://") {
-            return Err(AuditError::configuration(
-                "qdrant_url",
-                "Must start with http:// or https://",
-            ));
-        }
-
-        // Validate at least one API key is provided
-        if self.openai_api_key.is_none()
-            && self.anthropic_api_key.is_none()
-            && self.gemini_ai_api_key.is_none()
-            && self.deepseek_api_key.is_none()
-        {
-            return Err(AuditError::configuration(
-                "API_KEYS",
-                "At least one LLM API key must be provided",
-            ));
-        }
-
         // Stronger API key validation: reject placeholders and obviously invalid keys
+        // for active API-key based providers. OPENAI_API_KEY is legacy-only, so an
+        // invalid leftover value should not block the default OAuth startup path.
         use crate::utils::env_security::is_placeholder_api_key;
         if let Some(k) = &self.openai_api_key {
-            if is_placeholder_api_key(k) {
-                return Err(AuditError::configuration(
-                    "OPENAI_API_KEY",
-                    "Appears to be a placeholder key (e.g., 'your-key-here'). Provide a real API key.",
-                ));
-            }
-            // Basic OpenAI format check
-            if !k.starts_with("sk-") {
-                return Err(AuditError::configuration(
-                    "OPENAI_API_KEY",
-                    "OpenAI key should start with 'sk-'. Provide a real API key.",
-                ));
+            if is_placeholder_api_key(k) || !k.starts_with("sk-") {
+                log::warn!(
+                    "Ignoring legacy OPENAI_API_KEY because it does not look like a real API key; default OpenAI path uses ChatGPT/Codex OAuth."
+                );
             }
         }
         if let Some(k) = &self.anthropic_api_key
@@ -297,7 +241,11 @@ impl AuditConfig {
 
     /// Returns true if OpenAI API key is configured.
     pub fn has_openai_key(&self) -> bool {
-        self.openai_api_key.is_some()
+        use crate::utils::env_security::is_placeholder_api_key;
+
+        self.openai_api_key
+            .as_deref()
+            .is_some_and(|key| key.starts_with("sk-") && !is_placeholder_api_key(key))
     }
 
     /// Returns true if Anthropic API key is configured.
@@ -317,10 +265,7 @@ impl AuditConfig {
 
     /// Returns a list of configured LLM providers.
     pub fn available_providers(&self) -> Vec<String> {
-        let mut providers = Vec::new();
-        if self.has_openai_key() {
-            providers.push("OpenAI".to_string());
-        }
+        let mut providers = vec!["OpenAI".to_string()];
         if self.has_anthropic_key() {
             providers.push("Anthropic".to_string());
         }
@@ -340,8 +285,7 @@ impl AuditConfig {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
             runs: PATTERN_DISCOVERY_RUNS,
-            qdrant_url: "http://localhost:6334".to_string(),
-            openai_api_key: Some("test-key".to_string()),
+            openai_api_key: Some("sk-test-key".to_string()),
             anthropic_api_key: None,
             gemini_ai_api_key: None,
             deepseek_api_key: None,
@@ -351,9 +295,6 @@ impl AuditConfig {
             llm_timeout_seconds: LLM_TIMEOUT_SECONDS,
             default_temperature: DEFAULT_TEMPERATURE,
             max_response_tokens: MAX_RESPONSE_TOKENS,
-            vector_dimension: VECTOR_DIMENSION,
-            context_chunks: CONTEXT_CHUNKS,
-            similarity_threshold: SIMILARITY_THRESHOLD,
         }
     }
 }
@@ -417,20 +358,23 @@ mod tests {
         // Set a realistic OpenAI-style key to make validation pass
         assert!(config.validate().is_ok());
 
-        // Test invalid URL
-        config.qdrant_url = "invalid-url".to_string();
-        assert!(config.validate().is_err());
-
         // Test no API keys
-        config.qdrant_url = "http://localhost:6334".to_string();
         config.openai_api_key = None;
-        assert!(config.validate().is_err());
+        assert!(config.validate().is_ok());
+
+        // Legacy placeholder/invalid OpenAI keys should not block OAuth startup.
+        config.openai_api_key = Some("your_openai_api_key".to_string());
+        assert!(config.validate().is_ok());
+        assert!(!config.has_openai_key());
+
+        config.openai_api_key = Some("not-a-real-openai-key".to_string());
+        assert!(config.validate().is_ok());
+        assert!(!config.has_openai_key());
     }
 
     #[test]
     fn test_available_providers() {
         let config = AuditConfig {
-            openai_api_key: Some("test".to_string()),
             anthropic_api_key: Some("test".to_string()),
             ..AuditConfig::default()
         };
@@ -444,12 +388,10 @@ mod tests {
     #[test]
     fn test_from_env() {
         unsafe {
-            env::set_var("QDRANT_URL", "http://test:6334");
             env::set_var("OPENAI_API_KEY", "sk-valid-12345");
         }
 
         let config = AuditConfig::from_env().unwrap();
-        assert_eq!(config.qdrant_url, "http://test:6334");
         assert!(config.has_openai_key());
         // Constants should be used for other values
         assert_eq!(config.max_depth, MAX_DEPTH);
@@ -457,7 +399,6 @@ mod tests {
 
         // Clean up
         unsafe {
-            env::remove_var("QDRANT_URL");
             env::remove_var("OPENAI_API_KEY");
         }
     }
