@@ -76,6 +76,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // OpenAI models
             "gpt-4o" => 2.50,
             "gpt-5" => 1.25,
+            "gpt-5.4" => 1.25,
             "gpt-5-mini" => 0.25,
             "gpt-5.1" => 1.25,
             "gpt-5.2" => 1.75,
@@ -110,6 +111,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // OpenAI models
             "gpt-4o" => 10.00,
             "gpt-5" => 25.00, // set to 2.5X actual value to account for reasoning tokens
+            "gpt-5.4" => 25.00, // approximate GPT-5 family cost for local usage estimates
             "gpt-5-mini" => 2.00,
             "gpt-5.1" => 25.00,
             "gpt-5.2" => 30.00,
@@ -170,7 +172,7 @@ pub async fn add_to_inference_cost_by_type(
     let mut inference_cost = cost_data.lock().await;
 
     // Use improved token counting for input tokens
-    let tokens = if metadata.model == "gpt-5" {
+    let tokens = if metadata.model.starts_with("gpt-5") {
         estimate_chat_completion_tokens(content)
     } else {
         get_token_count(content)

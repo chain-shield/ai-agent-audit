@@ -1,13 +1,13 @@
 use ai_agent_audit::{
     // test_rig,
-    build_brain::{enrichment, vector_db},
+    build_brain::enrichment,
     cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
     enumerator::{self, codeblocks, interface_implementations},
     error::Result,
     llm_review::{
-        agent::agent_factory::init_llm_clients,
+        agent::agent_factory::{ensure_codex_chatgpt_auth, init_llm_clients},
         analysis::{code_review_v2, context_state},
     },
     prepare_code::{self},
@@ -17,22 +17,7 @@ use ai_agent_audit::{
     },
 };
 use dotenvy::dotenv;
-use log::{info, warn};
-use std::path::Path;
-
-/// Check if Slither analysis succeeded by querying the semantic database.
-///
-/// Returns `true` if Slither successfully populated function data, `false` otherwise.
-fn check_slither_succeeded(semantics_db: &Path, project_id: &str) -> Result<bool> {
-    use rusqlite::Connection;
-    let conn = Connection::open(semantics_db)?;
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM functions WHERE project_id = ?1",
-        [project_id],
-        |row| row.get(0),
-    )?;
-    Ok(count > 0)
-}
+use log::info;
 
 /// The main entry point for the AI Agent Audit tool.
 ///
@@ -40,8 +25,7 @@ fn check_slither_succeeded(semantics_db: &Path, project_id: &str) -> Result<bool
 /// 1. Cloning and building repositories (Foundry/Hardhat) in Docker containers
 /// 2. Extracting call graphs, IR, and storage layouts using Slither
 /// 3. Generating contextual code slices for focused AI analysis
-/// 5. Running multi-LLM security analysis across 19+ vulnerability categories
-/// 5. Creating vector embeddings and storing in Qdrant for semantic search
+/// 4. Running multi-LLM security analysis across 19+ vulnerability categories
 /// 6. Generating professional audit reports with findings and cost tracking
 /// The main async function that orchestrates the entire process.
 #[tokio::main]
@@ -55,8 +39,11 @@ async fn main() -> Result<()> {
     // Initialize the logger
     env_logger::init();
 
-    // Initialize LLM clients
+    // Initialize API-key-backed LLM clients
     init_llm_clients()?;
+
+    // Verify and cache ChatGPT/Codex OAuth once at startup for the default OpenAI path
+    ensure_codex_chatgpt_auth()?;
 
     // parse command line args
     // Cli struct contains all info we need to execute audit
@@ -125,36 +112,21 @@ async fn main() -> Result<()> {
     contract_data::save_codeblocks_locally(&codeblocks_db, &repo).await?;
 
     // ────────────────────────────────
-    // 4. Vector Database Population
-    // ────────────────────────────────
-    // Check if Slither succeeded by checking if semantic DB has function data
-    let slither_succeeded = check_slither_succeeded(&semantics_db, &repo.project_id)?;
-
-    if slither_succeeded {
-        // Create embeddings and store in Qdrant for semantic search
-        // This also saves contract IR and metadata via save_code_metadata_and_analysis_to_txt_files
-        vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo).await?;
-    } else {
-        warn!("⚠️  Slither analysis failed. Skipping vector database generation and IR metadata.");
-        warn!("The audit will continue using import-only traversal for code discovery.");
-    }
-
-    // ────────────────────────────────
-    // 5. AI Security Analysis
+    // 4. AI Security Analysis
     // ────────────────────────────────
     // Run multi-LLM security analysis across vulnerability categories
     let security_findings =
         code_review_v2::review_codebase_for_security_issues_v2(&codeblocks_db, &repo).await?;
 
     // ────────────────────────────────
-    // 6. Report Generation
+    // 5. Report Generation
     // ────────────────────────────────
     // Generate comprehensive audit report (paid version)
     let audit_report =
         audit::generated_audit_report(&security_findings, &repo, audit::ReportType::Status).await?;
 
     // ────────────────────────────────
-    // 7. File Export
+    // 6. File Export
     // ────────────────────────────────
     // Save all reports and analysis data to markdown files
     save_file::save_audit_report("audit-report.md", &audit_report, &repo)?;

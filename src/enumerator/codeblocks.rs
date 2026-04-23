@@ -1,7 +1,7 @@
 use crate::build_brain::graph_db::SmartContractFunction;
 use crate::build_brain::inheritance_map::{self, resolve_contract_file};
 use crate::build_brain::summarize_db::get_file_summary_from_db;
-use crate::config::{CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB};
+use crate::config::{CODEBLOCK_DB, app_db_path};
 use crate::cost::cost_data::get_token_count;
 /// Intelligent code slicing for focused AI analysis.
 ///
@@ -63,8 +63,7 @@ pub async fn generate_and_save_codeblocks_for_each_contract(
     let semantic_conn = Connection::open(semantics_db)?;
 
     // Create codeblock database path
-    let codeblock_path =
-        Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB)).to_path_buf();
+    let codeblock_path = app_db_path(CODEBLOCK_DB);
 
     // Delete the codeblock database from previous run to ensure fresh data
     if codeblock_path.exists() {
@@ -849,12 +848,10 @@ pub async fn extract_contract_category_from_contract(
     // Try Standard (source) files first
     let file_path = match resolve_contract_file(contract, SolFileType::Standard, repo).await? {
         Some(f) => f,
-        None => {
-            match resolve_contract_file(contract, SolFileType::LibFolder, repo).await? {
-                Some(f) => f,
-                None => return Ok(None),
-            }
-        }
+        None => match resolve_contract_file(contract, SolFileType::LibFolder, repo).await? {
+            Some(f) => f,
+            None => return Ok(None),
+        },
     };
 
     // Convert absolute path to relative path (same format as stored in database)
@@ -878,15 +875,13 @@ pub async fn get_contract_file_content(
 ) -> Result<(String, PathBuf)> {
     let file_path = option_file.unwrap_or(match get_file_from_contract(contract, repo).await {
         Some((filename, _)) => filename,
-        None => {
-            match get_file_from_lib_contract(contract, repo).await {
-                Some((filename, _)) => filename,
-                None => {
-                    info!("could not find file for contract {}", contract);
-                    PathBuf::new()
-                }
+        None => match get_file_from_lib_contract(contract, repo).await {
+            Some((filename, _)) => filename,
+            None => {
+                info!("could not find file for contract {}", contract);
+                PathBuf::new()
             }
-        }
+        },
     });
 
     if file_path.as_os_str().is_empty() {

@@ -1,4 +1,5 @@
 use crate::{
+    config::{OPENAI_MODEL, OPENAI_REASONING_EFFORT},
     llm_review::{
         agent::{
             agent_enums::AIAgent,
@@ -126,13 +127,13 @@ pub async fn generate_invariants(codeblock: &str, repo: &RepoPaths) -> Result<Co
     Ok(verified_invariants)
 }
 
-pub fn generate_openai_agent(repo: &RepoPaths, reasoning_effort: &str) -> Result<Arc<AIAgent>> {
+pub fn generate_openai_agent(repo: &RepoPaths, _reasoning_effort: &str) -> Result<Arc<AIAgent>> {
     // custom agent for digging up list of actors
     let config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.2")
+        .with_model(OPENAI_MODEL)
         .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
         .with_file_retrieval(false)
-        .with_openai_reasoning_effort(reasoning_effort);
+        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
 
     let agent = Arc::new(AgentFactory::create_openai_agent(&config)?);
 
@@ -143,40 +144,16 @@ const INVARIANT_DISCOVERY_SYSTEM_PROMPT: &str = "You are a world-class expert at
 
 pub fn generate_invariant_openai_agent(
     repo: &RepoPaths,
-    reasoning_effort: &str,
+    _reasoning_effort: &str,
 ) -> Result<Arc<AIAgent>> {
     // custom agent for digging up list of actors
     let config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.2")
+        .with_model(OPENAI_MODEL)
         .with_preamble(INVARIANT_DISCOVERY_SYSTEM_PROMPT)
         .with_file_retrieval(false)
-        .with_openai_reasoning_effort(reasoning_effort);
+        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
 
     let agent = Arc::new(AgentFactory::create_openai_agent(&config)?);
-
-    Ok(agent)
-}
-
-pub fn generate_invariant_gemini_agent(repo: &RepoPaths) -> Result<Arc<AIAgent>> {
-    // custom agent for digging up list of actors
-    let config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gemini-3-pro-preview")
-        .with_preamble(INVARIANT_DISCOVERY_SYSTEM_PROMPT)
-        .with_file_retrieval(false);
-
-    let agent = Arc::new(AgentFactory::create_gemini_agent(&config)?);
-
-    Ok(agent)
-}
-
-pub fn generate_gemini_agent(repo: &RepoPaths) -> Result<Arc<AIAgent>> {
-    // custom agent for digging up list of actors
-    let config = AgentConfig::new(Some(repo.clone()))
-        .with_temperature(1.0)
-        .with_model("gemini-3-pro-preview")
-        .with_preamble("You are a world-class Solidity EVM security researcher.");
-
-    let agent = Arc::new(AgentFactory::create_gemini_agent(&config)?);
 
     Ok(agent)
 }

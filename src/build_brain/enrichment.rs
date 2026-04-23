@@ -1,5 +1,5 @@
 use crate::build_brain::callgraph::DotFunc;
-use crate::config::{CHAINSHIELD_DB_FOLDER, SEMANTIC_DB};
+use crate::config::{SEMANTIC_DB, app_db_path};
 use crate::enumerator::utils::get_code_ir_map;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
@@ -14,7 +14,7 @@ use super::graph_db::{GraphDb, SmartContractFunction};
 /// and function metadata extracted from Solidity contracts using Slither analysis.
 use log::info;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -31,7 +31,7 @@ use tokio::sync::Mutex;
 pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathBuf> {
     // Patch foundry.toml to remove custom solc paths before running Slither
     // Create database file in cache directory
-    let db_path = Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, SEMANTIC_DB)).to_path_buf();
+    let db_path = app_db_path(SEMANTIC_DB);
     let cache_dir = db_path.parent().ok_or_else(|| {
         AuditError::file_system(
             db_path.to_string_lossy().to_string(),

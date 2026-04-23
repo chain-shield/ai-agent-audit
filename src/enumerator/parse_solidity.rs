@@ -10,7 +10,10 @@ use crate::{
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::{path::{Path, PathBuf}, sync::Mutex};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use tokio::fs;
 
 use anyhow::Result;
