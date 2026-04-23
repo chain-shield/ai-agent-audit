@@ -13,6 +13,7 @@ use rig::providers::anthropic::CLAUDE_4_SONNET;
 use std::{path::PathBuf, sync::Arc};
 
 #[tokio::test]
+#[ignore = "requires live Anthropic credentials and prepared local findings/code artifacts"]
 async fn test_verify_rounds_puppy_raffle() -> Result<()> {
     // Load .env file
     dotenvy::dotenv().ok();
@@ -161,7 +162,7 @@ async fn test_verify_rounds_puppy_raffle() -> Result<()> {
 
             if status.iter().any(|s| matches!(s, ai_agent_audit::llm_review::phases::verify_rounds::FindingStatus::Valid)) {
                 valid_count += 1;
-            } else if status.iter().any(|s| matches!(s, 
+            } else if status.iter().any(|s| matches!(s,
                 ai_agent_audit::llm_review::phases::verify_rounds::FindingStatus::LowSeverityDueToLowImpact |
                 ai_agent_audit::llm_review::phases::verify_rounds::FindingStatus::LowSeverityDueToRareLikelihood
             )) {

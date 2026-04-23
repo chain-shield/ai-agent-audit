@@ -35,6 +35,10 @@ pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 pub const OPENAI_MODEL: &str = "gpt-5.4";
 pub const OPENAI_REASONING_EFFORT: &str = "xhigh";
 pub const OPENAI_SUMMARY_REASONING_EFFORT: &str = "low";
+pub const OPENAI_DEDUP_REASONING_EFFORT: &str = "low";
+pub const DEFAULT_DISCOVERY_PROVIDER: &str = "openai";
+pub const DEFAULT_GEMINI_DISCOVERY_MODEL: &str = "gemini-3-pro-preview";
+pub const DEFAULT_DISCOVERY_GEMINI_THINKING_LEVEL: &str = "high";
 pub const SKIP_LIBRARIES: bool = true;
 pub const SKIP_INVARIANT_RUNS: bool = false;
 
@@ -126,6 +130,15 @@ pub struct AuditConfig {
     /// DeepSeek API key for DeepSeek models
     pub deepseek_api_key: Option<String>,
 
+    /// Provider to use for discovery-style runs (patterns, actors, invariants)
+    pub discovery_provider: String,
+
+    /// Optional model override for the configured discovery provider
+    pub discovery_model: Option<String>,
+
+    /// Gemini thinking level for discovery when `discovery_provider=gemini`
+    pub discovery_gemini_thinking_level: String,
+
     /// Logging level for the application
     pub log_level: String,
 
@@ -155,6 +168,9 @@ impl Default for AuditConfig {
             anthropic_api_key: None,
             gemini_ai_api_key: None,
             deepseek_api_key: None,
+            discovery_provider: DEFAULT_DISCOVERY_PROVIDER.to_string(),
+            discovery_model: None,
+            discovery_gemini_thinking_level: DEFAULT_DISCOVERY_GEMINI_THINKING_LEVEL.to_string(),
             log_level: "info".to_string(),
             docker_volume: DOCKER_VOLUME.to_string(),
             max_repo_url_length: MAX_REPO_URL_LENGTH,
@@ -191,6 +207,12 @@ impl AuditConfig {
             .or_else(|_| env::var("GOOGLE_AI_API_KEY"))
             .ok();
         config.deepseek_api_key = env::var("DEEPSEEK_API_KEY").ok();
+        config.discovery_provider = env::var("AI_AGENT_AUDIT_DISCOVERY_PROVIDER")
+            .unwrap_or_else(|_| DEFAULT_DISCOVERY_PROVIDER.to_string());
+        config.discovery_model = env::var("AI_AGENT_AUDIT_DISCOVERY_MODEL").ok();
+        config.discovery_gemini_thinking_level =
+            env::var("AI_AGENT_AUDIT_DISCOVERY_GEMINI_THINKING_LEVEL")
+                .unwrap_or_else(|_| DEFAULT_DISCOVERY_GEMINI_THINKING_LEVEL.to_string());
 
         // Load logging level
         config.log_level = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
@@ -236,6 +258,35 @@ impl AuditConfig {
             ));
         }
 
+        let discovery_provider = self.discovery_provider.to_ascii_lowercase();
+        if !matches!(discovery_provider.as_str(), "openai" | "gemini") {
+            return Err(AuditError::configuration(
+                "AI_AGENT_AUDIT_DISCOVERY_PROVIDER",
+                format!(
+                    "Unsupported discovery provider '{}'. Valid options: openai, gemini",
+                    self.discovery_provider
+                ),
+            ));
+        }
+
+        let gemini_thinking = self.discovery_gemini_thinking_level.to_ascii_lowercase();
+        if !matches!(gemini_thinking.as_str(), "low" | "high") {
+            return Err(AuditError::configuration(
+                "AI_AGENT_AUDIT_DISCOVERY_GEMINI_THINKING_LEVEL",
+                format!(
+                    "Unsupported Gemini discovery thinking level '{}'. Valid options: low, high",
+                    self.discovery_gemini_thinking_level
+                ),
+            ));
+        }
+
+        if discovery_provider == "gemini" && !self.has_google_ai_key() {
+            return Err(AuditError::configuration(
+                "AI_AGENT_AUDIT_DISCOVERY_PROVIDER",
+                "Discovery provider is set to gemini, but GEMINI_API_KEY / GOOGLE_AI_API_KEY is not configured",
+            ));
+        }
+
         Ok(())
     }
 
@@ -261,6 +312,27 @@ impl AuditConfig {
     /// Returns true if DeepSeek API key is configured.
     pub fn has_deepseek_key(&self) -> bool {
         self.deepseek_api_key.is_some()
+    }
+
+    /// Returns the normalized provider used for discovery-style runs.
+    pub fn discovery_provider_name(&self) -> &str {
+        &self.discovery_provider
+    }
+
+    /// Returns the effective model name used for discovery-style runs.
+    pub fn discovery_model_name(&self) -> &str {
+        if self.discovery_provider.eq_ignore_ascii_case("gemini") {
+            return self
+                .discovery_model
+                .as_deref()
+                .filter(|model| model.to_ascii_lowercase().contains("gemini"))
+                .unwrap_or(DEFAULT_GEMINI_DISCOVERY_MODEL);
+        }
+
+        self.discovery_model
+            .as_deref()
+            .filter(|model| !model.to_ascii_lowercase().contains("gemini"))
+            .unwrap_or(OPENAI_MODEL)
     }
 
     /// Returns a list of configured LLM providers.
@@ -289,6 +361,9 @@ impl AuditConfig {
             anthropic_api_key: None,
             gemini_ai_api_key: None,
             deepseek_api_key: None,
+            discovery_provider: DEFAULT_DISCOVERY_PROVIDER.to_string(),
+            discovery_model: None,
+            discovery_gemini_thinking_level: DEFAULT_DISCOVERY_GEMINI_THINKING_LEVEL.to_string(),
             log_level: "debug".to_string(),
             docker_volume: DOCKER_VOLUME.to_string(),
             max_repo_url_length: MAX_REPO_URL_LENGTH,
@@ -386,13 +461,45 @@ mod tests {
     }
 
     #[test]
+    fn test_discovery_model_override_is_scoped_to_provider() {
+        let mut config = AuditConfig {
+            discovery_provider: "openai".to_string(),
+            discovery_model: Some(DEFAULT_GEMINI_DISCOVERY_MODEL.to_string()),
+            ..AuditConfig::default()
+        };
+
+        assert_eq!(config.discovery_model_name(), OPENAI_MODEL);
+
+        config.discovery_provider = "gemini".to_string();
+        config.gemini_ai_api_key = Some("test-gemini-key".to_string());
+        assert_eq!(
+            config.discovery_model_name(),
+            DEFAULT_GEMINI_DISCOVERY_MODEL
+        );
+
+        config.discovery_model = Some("gpt-5.4".to_string());
+        assert_eq!(
+            config.discovery_model_name(),
+            DEFAULT_GEMINI_DISCOVERY_MODEL
+        );
+    }
+
+    #[test]
     fn test_from_env() {
         unsafe {
             env::set_var("OPENAI_API_KEY", "sk-valid-12345");
+            env::set_var("GEMINI_API_KEY", "test-gemini-key");
+            env::set_var("AI_AGENT_AUDIT_DISCOVERY_PROVIDER", "gemini");
+            env::set_var("AI_AGENT_AUDIT_DISCOVERY_MODEL", "gemini-3-pro-preview");
+            env::set_var("AI_AGENT_AUDIT_DISCOVERY_GEMINI_THINKING_LEVEL", "low");
         }
 
         let config = AuditConfig::from_env().unwrap();
         assert!(config.has_openai_key());
+        assert!(config.has_google_ai_key());
+        assert_eq!(config.discovery_provider_name(), "gemini");
+        assert_eq!(config.discovery_model_name(), "gemini-3-pro-preview");
+        assert_eq!(config.discovery_gemini_thinking_level, "low");
         // Constants should be used for other values
         assert_eq!(config.max_depth, MAX_DEPTH);
         assert_eq!(config.token_budget, TOKEN_BUDGET);
@@ -400,6 +507,10 @@ mod tests {
         // Clean up
         unsafe {
             env::remove_var("OPENAI_API_KEY");
+            env::remove_var("GEMINI_API_KEY");
+            env::remove_var("AI_AGENT_AUDIT_DISCOVERY_PROVIDER");
+            env::remove_var("AI_AGENT_AUDIT_DISCOVERY_MODEL");
+            env::remove_var("AI_AGENT_AUDIT_DISCOVERY_GEMINI_THINKING_LEVEL");
         }
     }
 }

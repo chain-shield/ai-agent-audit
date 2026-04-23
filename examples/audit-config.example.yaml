@@ -1,0 +1,21 @@
+# Example AI Agent Audit configuration
+
+repo: "https://github.com/example/solidity-project.git"
+audit_type: "Code4rena"
+
+# Optional
+# subfolder: "contracts"
+# code_folders:
+#   - "src"
+#   - "contracts"
+# custom_doc: "audit-docs/protocol-docs.md"
+# scoped_files: "audit-docs/scope.txt"
+# audit_scope: "audit-docs/scope.md"
+# builder: "Custom"
+# build_cmd: "pnpm install && pnpm build"
+# poc_instructions: "audit-docs/poc-guide.md"
+# poc_template: "audit-docs/poc-template.sol"
+# test_folder: "test"
+# exclude_folders:
+#   - "test"
+#   - "script"

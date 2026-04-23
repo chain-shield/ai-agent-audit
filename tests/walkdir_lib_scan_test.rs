@@ -5,6 +5,7 @@ use walkdir::WalkDir;
 /// Test WalkDir scanning on actual local repository
 /// This test uses a local copy of the repo to verify lib folder scanning works
 #[test]
+#[ignore = "diagnostic test for a prepared local repository"]
 fn test_walkdir_scans_lib_folders_in_local_repo() {
     // Path to your local repo copy
     let local_repo = PathBuf::from(

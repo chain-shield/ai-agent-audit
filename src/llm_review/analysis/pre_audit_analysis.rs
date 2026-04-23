@@ -1,5 +1,5 @@
 use crate::{
-    config::{OPENAI_MODEL, OPENAI_REASONING_EFFORT},
+    config::{OPENAI_MODEL, OPENAI_REASONING_EFFORT, audit_config},
     llm_review::{
         agent::{
             agent_enums::AIAgent,
@@ -19,9 +19,43 @@ use nanoid::nanoid;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 
+const DEFAULT_DISCOVERY_SYSTEM_PROMPT: &str =
+    "You are a world-class expert at Solidity EVM smart contract auditing.";
+const INVARIANT_DISCOVERY_SYSTEM_PROMPT: &str = "You are a world-class expert at Solidity EVM smart contract auditing. You specialize in discovering invariants in complex solidity codebases.";
+
+pub fn generate_discovery_agent(repo: &RepoPaths, preamble: &str) -> Result<Arc<AIAgent>> {
+    let provider = audit_config()
+        .discovery_provider_name()
+        .to_ascii_lowercase();
+    let model = audit_config().discovery_model_name().to_string();
+
+    let base_config = AgentConfig::new(Some(repo.clone()))
+        .with_model(model)
+        .with_preamble(preamble)
+        .with_file_retrieval(false);
+
+    log::info!(
+        "Initializing discovery agent with provider={} model={}",
+        provider,
+        audit_config().discovery_model_name()
+    );
+
+    let agent = match provider.as_str() {
+        "openai" => AgentFactory::create_openai_agent(
+            &base_config.with_openai_reasoning_effort(OPENAI_REASONING_EFFORT),
+        )?,
+        "gemini" => AgentFactory::create_gemini_agent(
+            &base_config
+                .with_gemini_thinking_level(&audit_config().discovery_gemini_thinking_level),
+        )?,
+        other => anyhow::bail!("unsupported discovery provider: {other}"),
+    };
+
+    Ok(Arc::new(agent))
+}
+
 pub async fn generate_actors(codeblock: &str, repo: &RepoPaths) -> Result<Actors> {
-    // let actor_discovery_agent = generate_gemini_agent(repo)?;
-    let actor_discovery_agent = generate_openai_agent(repo, "medium")?;
+    let actor_discovery_agent = generate_discovery_agent(repo, DEFAULT_DISCOVERY_SYSTEM_PROMPT)?;
     let actor_verify_agent = generate_openai_agent(repo, "high")?;
 
     // Phase 1: Generate actors and their capabilities
@@ -72,8 +106,8 @@ pub async fn generate_actors(codeblock: &str, repo: &RepoPaths) -> Result<Actors
 pub async fn generate_invariants(codeblock: &str, repo: &RepoPaths) -> Result<ContractInvariants> {
     let invariant_prompt = IssuePrompt::Invariant(InvariantType::iter().collect());
 
-    // let invariant_discovery_agent = generate_invariant_gemini_agent(repo)?;
-    let invariant_discovery_agent = generate_invariant_openai_agent(repo, "medium")?;
+    let invariant_discovery_agent =
+        generate_discovery_agent(repo, INVARIANT_DISCOVERY_SYSTEM_PROMPT)?;
     let invariant_verify_agent = generate_openai_agent(repo, "high")?;
 
     // Phase 1: Generate actors and their capabilities
@@ -132,24 +166,6 @@ pub fn generate_openai_agent(repo: &RepoPaths, _reasoning_effort: &str) -> Resul
     let config = AgentConfig::new(Some(repo.clone()))
         .with_model(OPENAI_MODEL)
         .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
-        .with_file_retrieval(false)
-        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
-
-    let agent = Arc::new(AgentFactory::create_openai_agent(&config)?);
-
-    Ok(agent)
-}
-
-const INVARIANT_DISCOVERY_SYSTEM_PROMPT: &str = "You are a world-class expert at Solidity EVM smart contract auditing. You specialize in discovering invariants in complex solidity codebases.";
-
-pub fn generate_invariant_openai_agent(
-    repo: &RepoPaths,
-    _reasoning_effort: &str,
-) -> Result<Arc<AIAgent>> {
-    // custom agent for digging up list of actors
-    let config = AgentConfig::new(Some(repo.clone()))
-        .with_model(OPENAI_MODEL)
-        .with_preamble(INVARIANT_DISCOVERY_SYSTEM_PROMPT)
         .with_file_retrieval(false)
         .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
 

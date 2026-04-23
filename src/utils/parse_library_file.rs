@@ -40,9 +40,8 @@ pub fn collect_library_calls(ir_text: &str) -> Vec<LibCall> {
     ir_text.lines().filter_map(parse_libcall_line).collect()
 }
 
-static FUNCTION_SIGNATURE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)").unwrap()
-});
+static FUNCTION_SIGNATURE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)").unwrap());
 
 /* --------------------------
 #[cfg(test)]

@@ -1,6 +1,7 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
+    config::{OPENAI_DEDUP_REASONING_EFFORT, OPENAI_MODEL},
     cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
         agent::{
@@ -78,10 +79,7 @@ impl IssueTrait for InvariantFinding {
     fn hash(&self) -> String {
         format!(
             "{}-{}-{}-{}",
-            self.inv_type,
-            self.contract,
-            self.function,
-            self.status
+            self.inv_type, self.contract, self.function, self.status
         )
     }
     async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
@@ -246,7 +244,9 @@ where
     // // Build a lightweight OpenAI agent just for deduping comparisons
     // let openai_client = openai::Client::from_env();
     // let openai_agent = Arc::new(openai_client.agent("gpt-5").build());
-    let openai_config = AgentConfig::new(None).with_model("gpt-5-mini");
+    let openai_config = AgentConfig::new(None)
+        .with_model(OPENAI_MODEL)
+        .with_openai_reasoning_effort(OPENAI_DEDUP_REASONING_EFFORT);
 
     let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 
@@ -254,10 +254,7 @@ where
 
     for pattern in patterns.issues() {
         let hash = pattern.hash();
-        findings_hash
-            .entry(hash)
-            .or_default()
-            .push(pattern.clone());
+        findings_hash.entry(hash).or_default().push(pattern.clone());
     }
 
     let arc_dedup_findings = Arc::new(Mutex::new(Vec::<T::Spec>::with_capacity(

@@ -5,6 +5,7 @@ use crate::llm_review::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
+    config::{OPENAI_DEDUP_REASONING_EFFORT, OPENAI_MODEL},
     cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::phases::{add_poc_findings::PocStatus, create_report::CompetitionReport},
     utils::semantic_compare,
@@ -70,7 +71,7 @@ pub struct Findings {
 #[serde(rename_all = "PascalCase")]
 pub enum PrivilegeLevel {
     #[default]
-    Permissionless,    // any EOA
+    Permissionless, // any EOA
     RequiresRole,      // specific role
     RequiresAdminRole, // admin or owner
 }
@@ -205,7 +206,9 @@ impl Findings {
             });
         }
 
-        let openai_config = AgentConfig::new(None).with_model("gpt-5-mini");
+        let openai_config = AgentConfig::new(None)
+            .with_model(OPENAI_MODEL)
+            .with_openai_reasoning_effort(OPENAI_DEDUP_REASONING_EFFORT);
 
         let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 
@@ -213,10 +216,7 @@ impl Findings {
 
         for finding in &self.findings {
             let hash = finding.hash();
-            findings_hash
-                .entry(hash)
-                .or_default()
-                .push(finding.clone());
+            findings_hash.entry(hash).or_default().push(finding.clone());
         }
 
         let arc_dedup_findings = Arc::new(Mutex::new(Vec::with_capacity(self.findings.len())));

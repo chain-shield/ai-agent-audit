@@ -93,7 +93,10 @@ async fn test_covenant_inheritance_parsing() {
     }
 
     // Should have 2 parents
-    assert!(!parents.is_empty(), "Covenant's BaseAdapter should have at least 1 parent");
+    assert!(
+        !parents.is_empty(),
+        "Covenant's BaseAdapter should have at least 1 parent"
+    );
 
     // Should inherit from EulerBaseAdapter (or BaseAdapter from lib)
     let has_euler_base = parents.iter().any(|(name, file)| {
