@@ -6,6 +6,7 @@ use crate::error::{AuditError, Result};
 use crate::llm_review::analysis::context_state::{
     generate_multi_modal_context, get_multi_modal_context,
 };
+use crate::llm_review::analysis::pre_audit_analysis::generate_discovery_agent;
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::findings::findings::{CLAUDE_4_5_SONNET, Finding};
@@ -398,16 +399,7 @@ pub async fn generate_ai_agents(
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_file_retrieval(false);
 
-    let pattern_discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model(OPENAI_MODEL)
-        .with_preamble(solidity_auditor_preamble)
-        .with_file_retrieval(false)
-        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
-        .with_file_picker(false);
-
-    let pattern_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
-        &pattern_discovery_config,
-    )?);
+    let pattern_discovery_agent = generate_discovery_agent(repo, solidity_auditor_preamble)?;
 
     // let pattern_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
     //     &pattern_discovery_config_claude,

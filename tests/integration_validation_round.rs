@@ -27,6 +27,7 @@ fn anthropic_key_present() -> bool {
 }
 
 #[tokio::test]
+#[ignore = "requires live Anthropic credentials"]
 async fn test_validation_round_puppy_raffle() -> Result<()> {
     // Load .env file
     dotenvy::dotenv().ok();

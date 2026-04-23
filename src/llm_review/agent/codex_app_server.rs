@@ -5,6 +5,7 @@ use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -12,10 +13,14 @@ const MAX_PROMPT_ATTEMPTS: usize = 10;
 const INITIAL_RETRY_DELAY_MS: u64 = 1_000;
 const RATE_LIMIT_FALLBACK_WAIT_SECS: u64 = 5 * 60 * 60;
 const CODEX_BIN_ENV_VARS: &[&str] = &["AI_AGENT_AUDIT_CODEX_BIN", "CODEX_BIN"];
+const DEFAULT_CODEX_SESSION_POOL_SIZE: usize = 12;
+const CODEX_SESSION_POOL_SIZE_ENV: &str = "AI_AGENT_AUDIT_CODEX_SESSION_POOL_SIZE";
 #[cfg(target_os = "macos")]
 const PLATFORM_CODEX_FALLBACKS: &[&str] = &["/Applications/Codex.app/Contents/Resources/codex"];
 #[cfg(not(target_os = "macos"))]
 const PLATFORM_CODEX_FALLBACKS: &[&str] = &[];
+
+static CODEX_SESSION_POOL: OnceLock<CodexSessionPool> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct CodexAgentConfig {
@@ -80,12 +85,22 @@ impl CodexAgentConfig {
     }
 
     fn prompt_once(&self, prompt: &str, output_schema: Option<Value>) -> PromptAttemptResult {
-        let mut session = CodexSession::start().map_err(PromptFailure::Fatal)?;
-        session.initialize().map_err(PromptFailure::Fatal)?;
-        session
-            .ensure_chatgpt_auth()
+        let mut session = codex_session_pool()
+            .acquire()
             .map_err(PromptFailure::Fatal)?;
-        session.run_turn(self, prompt, output_schema)
+
+        if let Err(err) = session.session_mut().ensure_chatgpt_auth_cached() {
+            session.mark_broken();
+            return Err(PromptFailure::Fatal(err));
+        }
+
+        let result = session.session_mut().run_turn(self, prompt, output_schema);
+        if result.is_err() {
+            session.mark_broken();
+        } else {
+            session.mark_broken_if_not_running();
+        }
+        result
     }
 }
 
@@ -102,15 +117,174 @@ enum PromptFailure {
 type PromptAttemptResult = std::result::Result<String, PromptFailure>;
 
 pub fn ensure_chatgpt_auth() -> Result<()> {
-    let mut session = CodexSession::start()?;
-    session.initialize()?;
-    session.ensure_chatgpt_auth()
+    let mut session = codex_session_pool().acquire()?;
+    session.session_mut().ensure_chatgpt_auth_cached()
 }
 
 pub fn cached_chatgpt_account() -> Result<Option<ChatGptAccount>> {
-    let mut session = CodexSession::start()?;
-    session.initialize()?;
-    session.cached_chatgpt_account()
+    let mut session = codex_session_pool().acquire()?;
+    session.session_mut().cached_chatgpt_account()
+}
+
+fn codex_session_pool() -> &'static CodexSessionPool {
+    CODEX_SESSION_POOL.get_or_init(|| {
+        let max_sessions = resolve_codex_session_pool_size();
+        log::info!(
+            "Initializing Codex app-server session pool with capacity {}",
+            max_sessions
+        );
+        CodexSessionPool::new(max_sessions)
+    })
+}
+
+fn resolve_codex_session_pool_size() -> usize {
+    env::var(CODEX_SESSION_POOL_SIZE_ENV)
+        .ok()
+        .and_then(|value| {
+            let trimmed = value.trim();
+            match trimmed.parse::<usize>() {
+                Ok(parsed) if parsed > 0 => Some(parsed),
+                _ => {
+                    log::warn!(
+                        "Ignoring {}='{}' because it is not a positive integer",
+                        CODEX_SESSION_POOL_SIZE_ENV,
+                        trimmed
+                    );
+                    None
+                }
+            }
+        })
+        .unwrap_or(DEFAULT_CODEX_SESSION_POOL_SIZE)
+}
+
+struct CodexSessionPool {
+    state: Mutex<CodexSessionPoolState>,
+    available: Condvar,
+    max_sessions: usize,
+}
+
+struct CodexSessionPoolState {
+    idle: Vec<CodexSession>,
+    total_sessions: usize,
+}
+
+impl CodexSessionPool {
+    fn new(max_sessions: usize) -> Self {
+        Self {
+            state: Mutex::new(CodexSessionPoolState {
+                idle: Vec::new(),
+                total_sessions: 0,
+            }),
+            available: Condvar::new(),
+            max_sessions,
+        }
+    }
+
+    fn acquire(&'static self) -> Result<PooledCodexSession> {
+        loop {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+            while let Some(mut session) = state.idle.pop() {
+                if session.is_running() {
+                    return Ok(PooledCodexSession::new(self, session));
+                }
+                state.total_sessions = state.total_sessions.saturating_sub(1);
+            }
+
+            if state.total_sessions < self.max_sessions {
+                state.total_sessions += 1;
+                drop(state);
+
+                match CodexSession::start_initialized() {
+                    Ok(session) => return Ok(PooledCodexSession::new(self, session)),
+                    Err(err) => {
+                        self.release_failed_slot();
+                        return Err(err);
+                    }
+                }
+            }
+
+            drop(
+                self.available
+                    .wait(state)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            );
+        }
+    }
+
+    fn return_session(&self, session: CodexSession) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.idle.push(session);
+        self.available.notify_one();
+    }
+
+    fn discard_session(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.total_sessions = state.total_sessions.saturating_sub(1);
+        self.available.notify_one();
+    }
+
+    fn release_failed_slot(&self) {
+        self.discard_session();
+    }
+}
+
+struct PooledCodexSession {
+    pool: &'static CodexSessionPool,
+    session: Option<CodexSession>,
+    broken: bool,
+}
+
+impl PooledCodexSession {
+    fn new(pool: &'static CodexSessionPool, session: CodexSession) -> Self {
+        Self {
+            pool,
+            session: Some(session),
+            broken: false,
+        }
+    }
+
+    fn session_mut(&mut self) -> &mut CodexSession {
+        self.session
+            .as_mut()
+            .expect("pooled Codex session should always be present while checked out")
+    }
+
+    fn mark_broken_if_not_running(&mut self) {
+        if let Some(session) = self.session.as_mut()
+            && !session.is_running()
+        {
+            self.broken = true;
+        }
+    }
+
+    fn mark_broken(&mut self) {
+        self.broken = true;
+    }
+}
+
+impl Drop for PooledCodexSession {
+    fn drop(&mut self) {
+        let Some(mut session) = self.session.take() else {
+            return;
+        };
+
+        if self.broken || !session.is_running() {
+            self.pool.discard_session();
+            return;
+        }
+
+        self.pool.return_session(session);
+    }
 }
 
 struct CodexSession {
@@ -118,6 +292,7 @@ struct CodexSession {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    auth_verified: bool,
 }
 
 impl CodexSession {
@@ -150,7 +325,14 @@ impl CodexSession {
             stdin,
             stdout: BufReader::new(stdout),
             next_id: 1,
+            auth_verified: false,
         })
+    }
+
+    fn start_initialized() -> Result<Self> {
+        let mut session = Self::start()?;
+        session.initialize()?;
+        Ok(session)
     }
 
     fn initialize(&mut self) -> Result<()> {
@@ -168,6 +350,16 @@ impl CodexSession {
         Ok(())
     }
 
+    fn ensure_chatgpt_auth_cached(&mut self) -> Result<()> {
+        if self.auth_verified {
+            return Ok(());
+        }
+
+        self.ensure_chatgpt_auth()?;
+        self.auth_verified = true;
+        Ok(())
+    }
+
     fn ensure_chatgpt_auth(&mut self) -> Result<()> {
         let account = self.read_account(true)?;
         let account_type = account
@@ -176,6 +368,7 @@ impl CodexSession {
             .and_then(Value::as_str);
 
         if account_type == Some("chatgpt") {
+            self.auth_verified = true;
             return Ok(());
         }
 
@@ -248,6 +441,7 @@ impl CodexSession {
             bail!("Codex did not return a ChatGPT-authenticated account after login");
         }
 
+        self.auth_verified = true;
         Ok(())
     }
 
@@ -259,6 +453,8 @@ impl CodexSession {
         if account.get("type").and_then(Value::as_str) != Some("chatgpt") {
             return Ok(None);
         }
+
+        self.auth_verified = true;
 
         Ok(Some(ChatGptAccount {
             email: account
@@ -285,13 +481,7 @@ impl CodexSession {
             config.preamble
         );
 
-        let thread_params = json!({
-            "model": config.model,
-            "ephemeral": true,
-            "serviceName": "ai-agent-audit",
-            "developerInstructions": developer_instructions,
-            "serviceTier": config.service_tier,
-        });
+        let thread_params = build_thread_start_params(config, &developer_instructions);
 
         let thread_result = self.request("thread/start", Some(thread_params));
         let thread_id = match thread_result {
@@ -540,6 +730,10 @@ impl CodexSession {
         )?;
         Ok(account.get("account").cloned())
     }
+
+    fn is_running(&mut self) -> bool {
+        self.child.try_wait().ok().flatten().is_none()
+    }
 }
 
 fn resolve_codex_cli_path() -> Result<PathBuf> {
@@ -610,6 +804,16 @@ fn compose_input(prompt: &str, context: Option<&str>) -> String {
     }
 }
 
+fn build_thread_start_params(config: &CodexAgentConfig, developer_instructions: &str) -> Value {
+    json!({
+        "model": config.model,
+        "ephemeral": true,
+        "serviceName": "ai-agent-audit",
+        "developerInstructions": developer_instructions,
+        "serviceTier": config.service_tier,
+    })
+}
+
 fn classify_error(err: anyhow::Error) -> PromptFailure {
     let message = err.to_string();
     if is_rate_limit_message(&message) {
@@ -653,6 +857,11 @@ fn classify_turn_error(error: Value, session: &mut CodexSession) -> PromptFailur
         };
     }
 
+    if is_auth_message(&message) || codex_error.to_ascii_lowercase().contains("auth") {
+        session.auth_verified = false;
+        return PromptFailure::Retryable(message);
+    }
+
     if codex_error.contains("serverOverloaded")
         || codex_error.contains("internalServerError")
         || codex_error.contains("responseStreamDisconnected")
@@ -683,6 +892,16 @@ fn is_retryable_message(message: &str) -> bool {
         || message.contains("connection failed")
         || message.contains("stream disconnected")
         || message.contains("timed out")
+}
+
+fn is_auth_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("unauthorized")
+        || message.contains("authentication")
+        || message.contains("login required")
+        || message.contains("sign in")
+        || message.contains("token expired")
+        || message.contains("not authenticated")
 }
 
 fn extract_reset_at(response: &Value) -> Option<u64> {
@@ -1030,6 +1249,29 @@ mod tests {
         assert!(
             !schema_contains_key(&schema, "oneOf"),
             "sanitized Codex schemas should not contain oneOf"
+        );
+    }
+
+    #[test]
+    fn test_build_thread_start_params_keeps_each_turn_ephemeral() {
+        let config = CodexAgentConfig {
+            model: "gpt-5.4".to_string(),
+            preamble: "Test".to_string(),
+            context: None,
+            reasoning_effort: Some("xhigh".to_string()),
+            service_tier: None,
+        };
+
+        let params = build_thread_start_params(&config, "Developer instructions");
+
+        assert_eq!(
+            params.get("ephemeral").and_then(Value::as_bool),
+            Some(true),
+            "Codex turns should always use ephemeral threads so prior call context is cleared"
+        );
+        assert_eq!(
+            params.get("serviceName").and_then(Value::as_str),
+            Some("ai-agent-audit")
         );
     }
 

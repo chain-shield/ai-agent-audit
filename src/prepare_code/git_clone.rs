@@ -507,8 +507,8 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     // On Apple Silicon (arm64 host), the `linux/arm64` toolbox image + SVM-provided `solc`
     // can fail to execute due to glibc/libstdc++ version mismatches. Forcing `linux/amd64`
     // makes `forge build` reliable (via emulation) and avoids `Broken pipe (os error 32)`.
-    let force_amd64_platform = std::env::consts::OS == "macos"
-        && matches!(std::env::consts::ARCH, "aarch64" | "arm64");
+    let force_amd64_platform =
+        std::env::consts::OS == "macos" && matches!(std::env::consts::ARCH, "aarch64" | "arm64");
     if force_amd64_platform {
         log::warn!(
             "Host is {}-{}; forcing docker platform linux/amd64 to avoid solc runtime incompatibilities on arm64 images",
@@ -641,7 +641,8 @@ impl RepoPaths {
         }
 
         // 4) last resort: check immediate subdirectories (cheap; avoids deep walking)
-        if roots.is_empty() && protocol_root.exists()
+        if roots.is_empty()
+            && protocol_root.exists()
             && let Ok(entries) = std::fs::read_dir(&protocol_root)
         {
             for entry in entries.flatten() {

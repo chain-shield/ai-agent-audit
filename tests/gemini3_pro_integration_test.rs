@@ -39,6 +39,7 @@ fn gemini_key_present() -> bool {
 }
 
 #[tokio::test]
+#[ignore = "requires live Gemini credentials"]
 async fn test_gemini3_pro_simple_prompt() {
     // Load environment variables
     dotenv().ok();
@@ -100,6 +101,7 @@ async fn test_gemini3_pro_simple_prompt() {
 }
 
 #[tokio::test]
+#[ignore = "requires live Gemini credentials"]
 async fn test_gemini3_pro_json_extraction() {
     // Load environment variables
     dotenv().ok();
@@ -185,6 +187,7 @@ Provide your analysis in JSON format with:
 }
 
 #[tokio::test]
+#[ignore = "requires live Gemini credentials"]
 async fn test_gemini3_pro_thinking_level_low() {
     // Load environment variables
     dotenv().ok();

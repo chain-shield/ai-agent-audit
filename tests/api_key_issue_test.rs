@@ -27,6 +27,7 @@ fn ensure_runtime_initialized() {
 /// 4. Agent creation works
 /// 5. API calls use the correct API key (not placeholder)
 #[tokio::test]
+#[ignore = "requires live OpenAI credentials"]
 async fn test_api_key_loading_issue() {
     // Load environment variables
     dotenv().ok();
@@ -118,6 +119,7 @@ async fn test_api_key_loading_issue() {
 /// Test to reproduce the issue with extract_with_retry specifically
 /// This tests the path where the "your-key*here" error was most likely occurring
 #[tokio::test]
+#[ignore = "requires live OpenAI credentials"]
 async fn test_extract_with_retry_api_key_issue() {
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -191,6 +193,7 @@ async fn test_extract_with_retry_api_key_issue() {
 
 /// Test to verify the client singleton is working correctly
 #[tokio::test]
+#[ignore = "requires live OpenAI credentials"]
 async fn test_client_singleton_consistency() {
     // Setup
     ensure_runtime_initialized();
@@ -276,6 +279,7 @@ async fn test_client_singleton_consistency() {
 
 /// Test to check if the issue occurs with direct client creation vs factory
 #[tokio::test]
+#[ignore = "requires live OpenAI credentials"]
 async fn test_direct_vs_factory_client_creation() {
     use rig::providers::openai;
 

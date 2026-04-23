@@ -22,14 +22,14 @@ use crate::{
             insert_file_summary_to_db,
         },
     },
-    config::{OPENAI_MODEL, OPENAI_REASONING_EFFORT},
+    config::OPENAI_MODEL,
     llm_review::{
         agent::{
             agent_enums::{all_enum_variants, generate_enum_list},
             agent_factory::{AgentConfig, AgentFactory},
         },
         contract::contract_category::{
-            generate_formated_list_of_contract_categories, ContractCategory,
+            ContractCategory, generate_formated_list_of_contract_categories,
         },
     },
     prepare_code::git_clone::RepoPaths,
@@ -465,7 +465,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
         &AgentConfig::new(Some(repo.clone()))
             .with_model(OPENAI_MODEL)
             .with_preamble(preamble)
-            .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT),
+            .with_openai_reasoning_effort(OPENAI_SUMMARY_REASONING_EFFORT),
     )?;
 
     log::info!("extracting protocol summary");

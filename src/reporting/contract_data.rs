@@ -48,10 +48,7 @@ pub async fn save_codeblocks_locally(
         let token_count = get_token_count(&codeblock);
         let filename = format!(
             "{}-{}-{}-size-{}.md",
-            contract_type,
-            contract,
-            contract_category,
-            token_count
+            contract_type, contract, contract_category, token_count
         );
         let full_path = output_dir.join(filename);
         save_file_locally(&codeblock, &full_path)?;

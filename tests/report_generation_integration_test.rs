@@ -29,6 +29,7 @@ fn anthropic_key_present() -> bool {
 /// 3. Verifies the reports are generated correctly
 /// 4. Validates the workflow completes without crashing
 #[tokio::test]
+#[ignore = "requires live Anthropic credentials"]
 async fn test_report_generation_with_valid_findings() {
     // Load environment variables first
     dotenv().ok();

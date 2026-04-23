@@ -14,7 +14,7 @@ use ai_agent_audit::{
         summarize::{FileSummaryType, summarize_src_files_with_model},
         summarize_db::{get_file_summary_from_db, get_summaries_from_db},
     },
-    config::AuditType,
+    config::{AuditType, OPENAI_MODEL},
     llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::{PocConfig, RepoPaths},
     utils::remapping::parse_and_store_remappings,
@@ -157,10 +157,10 @@ async fn test_file_summarization_and_categorization() {
 
     // Generate summaries and categorizations
     println!("\n📝 Generating file summaries and categorizations...");
-    println!("   Using model: gpt-5-mini");
+    println!("   Using model: {}", OPENAI_MODEL);
     println!("   This will take several minutes as each file is analyzed by the LLM...");
 
-    let summaries = summarize_src_files_with_model(&repo, "gpt-5-mini")
+    let summaries = summarize_src_files_with_model(&repo, OPENAI_MODEL)
         .await
         .expect("Failed to generate summaries");
 
@@ -188,7 +188,10 @@ async fn test_file_summarization_and_categorization() {
     println!("  - Source files: {}", source_files.len());
     println!("  - Total summaries: {}", summaries.len());
 
-    assert!(!source_files.is_empty(), "Should have at least one source file summary");
+    assert!(
+        !source_files.is_empty(),
+        "Should have at least one source file summary"
+    );
 
     // Test 2: Verify each summary has required fields
     println!("{}", "\n".repeat(2));
@@ -343,10 +346,10 @@ async fn test_file_summarization_and_categorization() {
 
 /// Helper function to clear summaries from database for testing
 fn clear_summaries_from_db(repo: &RepoPaths) {
-    use ai_agent_audit::config::{CHAINSHIELD_DB_FOLDER, SUMMARY_DB};
+    use ai_agent_audit::config::{SUMMARY_DB, app_db_path};
     use rusqlite::Connection;
 
-    let db_path = format!("{}/{}", CHAINSHIELD_DB_FOLDER, SUMMARY_DB);
+    let db_path = app_db_path(SUMMARY_DB);
     if let Ok(conn) = Connection::open(&db_path) {
         let _ = conn.execute(
             "DELETE FROM summaries WHERE project_id = ?1",

@@ -23,6 +23,7 @@ use crate::{
     reporting::save_file,
 };
 use log::info;
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
@@ -38,7 +39,7 @@ pub async fn execute<T>(
     repo: &RepoPaths,
 ) -> Result<T>
 where
-    T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
+    T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned + JsonSchema,
 {
     let issue_title = match issue_prompt {
         IssuePrompt::Combined(_) => "vulnerability patterns",
@@ -201,7 +202,7 @@ pub async fn run_security_prompt<T>(
     shared_patterns: Arc<Mutex<T>>,
 ) -> Result<()>
 where
-    T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
+    T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned + JsonSchema,
 {
     // 2. Send to the right provider
     let patterns: T = agent.extract_with_retry(&prompt).await?;

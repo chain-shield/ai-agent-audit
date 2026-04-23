@@ -19,7 +19,11 @@ use ai_agent_audit::{
     prepare_code::git_clone::{PocConfig, RepoPaths},
     utils::remapping::parse_and_store_remappings,
 };
-use std::{collections::HashMap, fs, path::{Path, PathBuf}};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// Create RepoPaths for Covenant repository
 ///

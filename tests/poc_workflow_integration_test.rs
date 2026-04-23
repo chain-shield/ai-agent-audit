@@ -29,6 +29,7 @@ fn anthropic_key_present() -> bool {
 /// 3. Saves and runs the PoC tests in Docker
 /// 4. Verifies the workflow completes without crashing
 #[tokio::test]
+#[ignore = "requires live Anthropic credentials and a prepared local repo workspace"]
 async fn test_poc_workflow_with_puppy_raffle() {
     // Load env
     dotenv().ok();
