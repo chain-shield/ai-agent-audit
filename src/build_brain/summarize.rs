@@ -12,7 +12,7 @@ use std::sync::Arc;
 use strum_macros::EnumString;
 use tokio::sync::Semaphore;
 
-use crate::config::OPENAI_SUMMARY_REASONING_EFFORT;
+use crate::config::{OPENAI_SUMMARY_REASONING_EFFORT, SUMMARY_MAX_PARALLEL};
 use crate::utils::check_folder_name::is_script_file;
 use crate::{
     build_brain::{
@@ -371,8 +371,7 @@ Respond only with valid JSON matching the schema!
         panic!("over 200 files are going to be summarized, please check if this is correct!");
     }
 
-    let max_parallel = 50;
-    let sem = Arc::new(Semaphore::new(max_parallel));
+    let sem = Arc::new(Semaphore::new(SUMMARY_MAX_PARALLEL));
     let agent = Arc::new(ai_summary_agent);
     let deploy_agent = Arc::new(ai_deploy_summary_agent);
     let mut handles = Vec::new();

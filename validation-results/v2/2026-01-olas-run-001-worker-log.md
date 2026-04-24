@@ -248,3 +248,129 @@ This file records orchestrator-visible worker lifecycle events and the exact raw
 
 ## 2026-04-24T21:54:13Z `completed` `raw-finding`
 - Summary: H-67 invalid: Solidity cleans uint32 payloadLength before allocation, so the bridge verifier OOG claim does not hold
+
+## 2026-04-24T21:55:14Z `completed` `raw-finding`
+- Summary: M-68 valid low/QA: IdentityRegistryBridger can retain stale multisig authorization until public sync updates the cache
+
+## 2026-04-24T21:56:08Z `completed` `raw-finding`
+- Summary: H-69 valid low/QA: duplicate V3 buyback min-out-disabled / sandwichable execution-price bug
+
+## 2026-04-24T21:56:59Z `completed` `raw-finding`
+- Summary: H-70 invalid: the repo intentionally uses the 7-field router interface against the configured 0x68b346 router variant
+
+## 2026-04-24T21:59:46Z `completed` `raw-finding`
+- Summary: M-71 valid low/QA: overbroad report, but its actionable substance is the same V3 buyback min-out-disabled bug family
+
+## 2026-04-24T22:00:22Z `completed` `raw-finding`
+- Summary: H-72 valid low/QA: duplicate V3 buyback slippage / missing min-out enforcement bug family
+
+## 2026-04-24T22:01:12Z `completed` `raw-finding`
+- Summary: H-73 invalid: oracle quote orientation may be counterintuitive, but downstream code only uses relative comparisons so no H/M impact is shown
+
+## 2026-04-24T22:04:45Z `completed` `raw-finding`
+- Summary: M-74 valid low/QA: BalancerPriceOracle lacks decimals normalization, but the benchmark only wires this oracle to WETH so the issue remains configuration-scoped
+
+## 2026-04-24T22:05:32Z `completed` `raw-finding`
+- Summary: H-75 valid low/QA: decimals bug is real, but the inversion claim is non-impactful and the benchmark only wires BalancerPriceOracle to WETH
+
+## 2026-04-24T22:07:43Z `completed` `raw-finding`
+- Summary: H-76 valid low/QA: stale or failed TWAP checks do fall back to spot, but this is a duplicate slice of the broader liquidity-manager slippage bug
+
+## 2026-04-24T22:08:24Z `completed` `raw-finding`
+- Summary: M-77 invalid: natural market movement before inclusion is stale-intent risk, not a standalone security exploit
+
+## 2026-04-24T22:08:51Z `completed` `raw-finding`
+- Summary: M-78 invalid: block.timestamp deadline is a stale-intent design choice, not a distinct security exploit
+
+## 2026-04-24T22:12:12Z `completed` `raw-finding`
+- Summary: H-79 invalid: BridgeMessenger parsing offsets are intentional and Solidity cleans uint96/uint32 before the claimed balance and allocation uses
+
+## 2026-04-24T22:14:50Z `completed` `raw-finding`
+- Summary: M-80 invalid: the L2 dispenser only deposits into factory-verified staking instances, and the report does not establish an attacker-controlled reverting target path
+
+## 2026-04-24T22:21:28Z `completed` `raw-finding`
+- Summary: M-81 invalid: batch-wide deposit revert is only theoretical here because invalid targets are already isolated and the report does not show a verified OLAS staking instance that can realistically revert on deposit()
+
+## 2026-04-24T22:22:48Z `completed` `raw-finding`
+- Summary: H-82 invalid: the Polygon verifier follows the claimed assembly pattern, but the benchmark’s own valid polygonPayload passes through processBridgeData(), so the alleged dirty-bits OOG brick is not real
+
+## 2026-04-24T22:23:52Z `completed` `raw-finding`
+- Summary: H-83 invalid: the Polygon verifier uses GuardCM storage via delegatecall, and GuardCM already exposes setTargetSelectorChainIds() to populate the allowlist before bridge verification runs
+
+## 2026-04-24T22:27:45Z `completed` `raw-finding`
+- Summary: H-84 valid low/QA: same-block donation front-running can grief checkpoint() attempts, but it is an intentional flash-loan guard with per-attempt donation cost, not a permanent H/M protocol freeze
+
+## 2026-04-24T22:28:47Z `completed` `raw-finding`
+- Summary: H-85 invalid: this is another framing of the same V3 buyback slippage bug already captured earlier, not a root-cause-independent new H/M finding
+
+## 2026-04-24T22:29:35Z `completed` `raw-finding`
+- Summary: H-86 invalid: this fresh-pool fail-open framing still collapses into the same V3 buyback slippage root cause already captured earlier rather than creating a new independent H/M issue
+
+## 2026-04-24T22:33:59Z `completed` `raw-finding`
+- Summary: M-87 valid medium: V2 buyback stacks its pre-swap oracle tolerance and post-swap spot-relative bound, while the Balancer execution path still swaps with limit=0, leaving a distinct sandwichable value-extraction surface on protocol inventory
+
+## 2026-04-24T22:34:54Z `completed` `raw-finding`
+- Summary: H-88 valid low/QA: the fresh-pool observe() fail-open path in checkPoolAndGetCenterPrice() is real, but it is the same already-counted liquidity-manager spot-price slippage family rather than a root-cause-independent new H/M issue
+
+## 2026-04-24T22:35:26Z `completed` `raw-finding`
+- Summary: H-89 valid low/QA: the explicit staticcall fail-open in checkPoolAndGetCenterPrice() is real, but it is the same already-counted liquidity-manager spot-price slippage family rather than a distinct H/M bug
+
+## 2026-04-24T22:36:31Z `completed` `raw-finding`
+- Summary: H-90 valid low/QA: the report points at the same already-counted V2 buyback sandwichable slippage family, but its post-swap TWAP explanation is imprecise because getPrice() reads live spot rather than a frozen TWAP
+
+## 2026-04-24T22:41:33Z `completed` `raw-finding`
+- Summary: H-91 valid low/QA: the strict bool-returning approve/transfer incompatibility with USDT-style tokens is real, but it is the same already-counted unsupported-token compatibility family rather than a new H/M bug
+
+## 2026-04-24T22:42:25Z `completed` `raw-finding`
+- Summary: M-92 valid low/QA: this is another duplicate of the same strict bool-returning USDT/non-compliant-token compatibility family already counted earlier in the buyback burner
+
+## 2026-04-24T22:52:32Z `completed` `raw-finding`
+- Summary: H-93 valid low/QA: this is the same already-counted V3 buyback min-out-disabled / execution-price family, restated as an MEV theft scenario rather than a new H/M root cause
+
+## 2026-04-24T22:53:08Z `completed` `raw-finding`
+- Summary: M-94 invalid: this is the same permissionless protocol-routing overclaim already rejected earlier, since transfer() only routes funds between treasury and bridge2Burner while buyBack() itself is permissionless
+
+## 2026-04-24T22:53:38Z `completed` `raw-finding`
+- Summary: H-95 valid low/QA: this is another duplicate of the same already-counted V3 buyback min-out-disabled / execution-price family, framed through low-liquidity pool conditions
+
+## 2026-04-24T22:54:19Z `completed` `raw-finding`
+- Summary: M-96 valid low/QA: this is another duplicate of the same strict bool-returning USDT/non-standard-token compatibility family already counted in the buyback burner
+
+## 2026-04-24T22:56:35Z `completed` `raw-finding`
+- Summary: M-97 valid low/QA: this bundled the already-counted V2 and V3 buyback execution-bound weaknesses into one composite slippage narrative rather than adding a new independent root cause
+
+## 2026-04-24T22:57:16Z `completed` `raw-finding`
+- Summary: M-98 valid low/QA: this is another duplicate of the strict-ABI USDT/non-standard-token approval family, with the usual zero-first allowance nuance but no new benchmarked H/M path
+
+## 2026-04-24T22:57:51Z `completed` `raw-finding`
+- Summary: M-99 valid low/QA: this is another duplicate of the same USDT/non-standard-token strict-ABI compatibility family already counted in the Balancer buyback burner
+
+## 2026-04-24T23:00:11Z `completed` `raw-finding`
+- Summary: M-100 valid low/QA: this bundled the already-counted Uniswap V2 and V3 buyback execution-bound weaknesses into one composite sandwich/slippage narrative rather than a new independent root cause
+
+## 2026-04-24T23:02:07Z `completed` `raw-finding`
+- Summary: M-101 invalid: the automation cursor only gets stuck if an external registry call consistently reverts, and the report does not show a realistic benchmark-valid service path that creates that permanent failure
+
+## 2026-04-24T23:02:46Z `completed` `raw-finding`
+- Summary: M-102 valid low/QA: this is the same already-counted stale multisig/agent mapping desync, framed as the new multisig being blocked rather than the old multisig staying authorized
+
+## 2026-04-24T23:07:09Z `completed` `raw-finding`
+- Summary: H-103 invalid: GuardCM intentionally allows direct non-timelock calls, and the benchmark tests explicitly exercise guarded token and ETH transfers so this behavior is disclosed and out of scope
+
+## 2026-04-24T23:07:58Z `completed` `raw-finding`
+- Summary: M-104 invalid: the CM is intentionally given timelock proposer, executor, and canceller roles, and the GuardCM tests rely on guarded timelock.execute calls as normal behavior
+
+## 2026-04-24T23:08:29Z `completed` `raw-finding`
+- Summary: H-105 invalid: this just combines the two already-disclosed GuardCM behaviors that the benchmark tests and deployment docs treat as intended CM authority
+
+## 2026-04-24T23:11:53Z `completed` `raw-finding`
+- Summary: H-106 valid low/QA: the unmasked payloadLength read is a real VerifyBridgedData dirty-bits parser bug, but it is part of the already-repeated/disclosed bridge-verifier assembly cluster rather than a fresh High
+
+## 2026-04-24T23:13:34Z `completed` `raw-finding`
+- Summary: H-107 valid low/QA: registerAgentsWithSignature really skips the operator whitelist, but exploiting it still requires both the service owner and an operator signature for the exact registration payload
+
+## 2026-04-24T23:14:03Z `completed` `raw-finding`
+- Summary: M-108 valid low/QA: operator signatures and approvals really have no deadline or revocation path, but the risk depends on the operator having already authorized the exact action and often still leaving allowance or balance available
+
+## 2026-04-24T23:15:15Z `completed` `raw-finding`
+- Summary: H-109 valid medium: registerAgentsWithSignature does not bind bond terms, so a service owner can update service bond requirements before consuming an old operator signature and charge the now-higher current bond

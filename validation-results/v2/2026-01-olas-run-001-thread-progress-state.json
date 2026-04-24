@@ -1,0 +1,17 @@
+{
+  "completed_findings": 20,
+  "latest_completed_finding": {
+    "bug_exists": "Yes",
+    "confidence": "High",
+    "decision": "Valid",
+    "finding_id": "M-20",
+    "report_id": "jYEv6OQfADRnQlFLeHda6",
+    "root_cause_family": "`unsupported-token-approval`",
+    "severity": "Low / QA",
+    "timestamp": "2026-04-24T20:14:27Z",
+    "title": "Incompatibility with USDT due to strict ERC20 interface return check causing DOS"
+  },
+  "phase": "raw-validation",
+  "token": "raw:20:M-20",
+  "updated_at": "2026-04-24T22:35:26Z"
+}
