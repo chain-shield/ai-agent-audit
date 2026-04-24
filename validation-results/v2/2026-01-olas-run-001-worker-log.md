@@ -191,3 +191,60 @@ This file records orchestrator-visible worker lifecycle events and the exact raw
 
 ## 2026-04-24T21:16:54Z `completed` `raw-finding`
 - Summary: M-48 invalid: scanner branch selection matches documented token0-vs-token1-limited search design
+
+## 2026-04-24T21:19:53Z `completed` `raw-finding`
+- Summary: H-49 valid medium: permissionless collectFees can sweep prefunded balances via full-balance utility handling
+
+## 2026-04-24T21:20:54Z `completed` `raw-finding`
+- Summary: M-50 invalid: second collectFees revert lacks proven protocol harm beyond off-chain batch assumptions
+
+## 2026-04-24T21:22:11Z `completed` `raw-finding`
+- Summary: M-51 valid medium: slippage mins are spot-based and TWAP deviation check is neutralized by overwritten sqrt price
+
+## 2026-04-24T21:26:49Z `completed` `raw-finding`
+- Summary: M-52 invalid: early permissionless fee realization changes strategy timing but does not divert protocol-owned fees
+
+## 2026-04-24T21:29:56Z `completed` `raw-finding`
+- Summary: H-53 appended as Invalid (wrong-slashing-entrypoint); token services are slashable via ServiceRegistryTokenUtility and utility refunds honor reduced balances.
+
+## 2026-04-24T21:31:16Z `completed` `raw-finding`
+- Summary: M-54 appended as Valid Low/QA; real spot-price slippage issue, but not root-cause independent from the broader liquidity slippage flaw.
+
+## 2026-04-24T21:32:03Z `completed` `raw-finding`
+- Summary: H-55 appended as Invalid; ServiceRegistry.registerAgents is manager-gated, so operators cannot bypass ServiceManager and register with only the 1 wei wrapper.
+
+## 2026-04-24T21:35:47Z `completed` `raw-finding`
+- Summary: H-56 appended as Invalid; compiler cleanup of uint32/uint96 after assembly prevents the claimed dirty-bits DoS in _verifyBridgedData.
+
+## 2026-04-24T21:36:59Z `completed` `raw-finding`
+- Summary: M-57 appended as Valid Low/QA; deterministic Safe CREATE2 deployment can be frontrun for gas griefing, but the Safe remains configured for the same owners and the service owner can retry with a new nonce.
+
+## 2026-04-24T21:37:49Z `completed` `raw-finding`
+- Summary: H-58 appended as Invalid; token changes during update are blocked to PreRegistration, so the owner cannot swap bond tokens while operator bonds still exist.
+
+## 2026-04-24T21:40:23Z `completed` `raw-finding`
+- Summary: H-59 appended as Valid Medium; the V3 buyback path spends protocol inventory with amountOutMinimum=1 and no post-swap validation, allowing sandwich-driven value extraction.
+
+## 2026-04-24T21:41:13Z `completed` `raw-finding`
+- Summary: M-60 appended as Invalid; block.timestamp deadline and execution-time pricing describe stale-intent UX, not a distinct H/M exploit without adversarial manipulation.
+
+## 2026-04-24T21:41:51Z `completed` `raw-finding`
+- Summary: H-61 appended as Valid Low/QA; the Uniswap V3 buyback path repeats the same near-zero minOut sandwich issue already captured for the other V3 buyback implementation.
+
+## 2026-04-24T21:44:06Z `completed` `raw-finding`
+- Summary: M-62 appended as Invalid; buyback maxSlippage and the paired V2 oracles consistently use percent-style units, so the reported WAD-vs-percent underflow mismatch does not exist.
+
+## 2026-04-24T21:48:02Z `completed` `raw-finding`
+- Summary: M-63 invalid: no demonstrated non-canonical token-order DoS in benchmarked convertToV3 paths
+
+## 2026-04-24T21:49:10Z `completed` `raw-finding`
+- Summary: H-64 valid: UniswapPriceOracle TWAP check collapses to spot price and bypasses slippage validation
+
+## 2026-04-24T21:49:47Z `completed` `raw-finding`
+- Summary: M-65 valid low/QA: same-block pair updates can grief UniswapPriceOracle consumers for one block
+
+## 2026-04-24T21:53:14Z `completed` `raw-finding`
+- Summary: H-66 invalid: recovery module binds decoded serviceId to current agent set, and recoverable services have zero instances
+
+## 2026-04-24T21:54:13Z `completed` `raw-finding`
+- Summary: H-67 invalid: Solidity cleans uint32 payloadLength before allocation, so the bridge verifier OOG claim does not hold
