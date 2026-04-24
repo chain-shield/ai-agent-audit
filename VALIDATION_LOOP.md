@@ -175,7 +175,7 @@ Use isolated contexts for each phase:
 
    - fresh context;
 
-   - sees the previous prompt, the scored results, the raw validation run, the benchmark report, the benchmark source root, relevant Solidity code, relevant benchmark docs, and the canonical truth artifacts such as approved findings;
+   - sees the previous prompt, the scored results, the raw validation run, the worker log, the benchmark report, the benchmark source root, relevant Solidity code, relevant benchmark docs, and the canonical truth artifacts such as approved findings;
 
    - proposes the next prompt version using only protocol-agnostic rules.
 
@@ -333,13 +333,23 @@ Example:
 
 - `validation-runs/v1/2026-01-olas-run-001.jsonl`
 
-For scored results:
+For iteration results:
 
 - `validation-results/<prompt-version>/<benchmark>-<run-id>.md`
 
 Example:
 
 - `validation-results/v1/2026-01-olas-run-001.md`
+
+This file should exist during raw validation as a live dashboard, not only after scoring finishes.
+
+It should be updated incrementally with:
+
+- current raw-validation progress
+
+- the per-finding decision table for all completed findings so far
+
+- a dedicated scoring section that remains pending until the scoring worker fills it in
 
 For truth files:
 
@@ -421,7 +431,7 @@ Within a single automation wakeup, the orchestrator must run a tight controller 
 
 2. spawn exactly the worker required for that unit;
 
-3. wait for that worker to finish or hit the guardrail;
+3. wait for that worker to finish, fail, or be explicitly shut down;
 
 4. close the worker immediately after completion;
 
@@ -438,8 +448,6 @@ The wakeup should stop only when one of these is true:
 - no unfinished work remains;
 
 - the current worker is blocked or failed;
-
-- the 45-minute no-progress guardrail is reached;
 
 - the raw run completes and all immediately unlocked scoring / prompt-revision work for that chain also completes.
 
@@ -485,15 +493,89 @@ Resume order:
 
 This keeps the loop deterministic even if the thread is paused and resumed later.
 
-### Heartbeat Guardrail
+### Heartbeat Liveness Rule
 
-For heartbeat-driven runs, allow up to **45 minutes** between progress signals.
+Do **not** stop a run only because a fixed wall-clock threshold has elapsed.
 
-If a raw-validation pass is working through a large benchmark, prefer creating the target artifact early and updating it incrementally rather than waiting until the entire benchmark is complete before writing anything to disk.
+For heartbeat-driven runs:
 
-If `45` minutes pass without a new artifact, meaningful artifact update, spawned worker, completed worker, or other clear progress signal, stop the run, report the blocker in the thread, and close any active worker instead of letting a stale context linger.
+- treat spawned workers, worker-completed notifications, worker-shutdown notifications, new worker-log entries, and new raw/scored artifacts as valid progress signals;
 
-During a long raw-validation phase, a completed per-finding append counts as a valid progress signal.
+- prefer writing artifacts early and updating them incrementally rather than waiting for a whole benchmark phase to finish before anything hits disk;
+
+- only treat a worker as stalled when there is no observable worker or artifact progress and the orchestrator has a concrete reason to conclude that the worker is no longer advancing;
+
+- if a worker later completes and writes its artifact, that completion should win over any earlier suspicion of stalling.
+
+- do **not** stop a run merely because the remaining workload is large or because finishing the benchmark would take many hours; long duration by itself is not a blocker.
+
+- if the orchestrator hits an external limit such as rate limiting, model quota, temporary worker unavailability, or scheduler/runtime interruption, it should log that condition as a pause point and exit cleanly so the next wakeup can resume the oldest unfinished unit from disk.
+
+If the orchestrator does choose to stop a worker, it should log the reason in the worker log before closing the worker context.
+
+### Worker Logging
+
+Every orchestrator-visible worker event should be logged under [validation-results](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/validation-results).
+
+Each run should maintain two complementary artifacts in that folder:
+
+- the main run results file, which acts as the live human-readable iteration dashboard;
+
+- the worker log, which acts as the detailed lifecycle event stream.
+
+Canonical paths:
+
+- `validation-results/<prompt-version>/<benchmark>-<run-id>-worker-log.md`
+
+- `validation-results/<prompt-version>/<benchmark>-<run-id>-worker-log.jsonl`
+
+At minimum, log:
+
+- worker spawned
+
+- worker completed
+
+- worker failed
+
+- worker shut down / closed
+
+- orchestrator notes such as retries or manual interruption
+
+For a completed raw-validation worker, the log entry should also include the **exact finding block** that was appended to the raw run file, so a reviewer can see the new row/block without separately diffing the raw artifact.
+
+### Thread Progress Monitoring
+
+If you want short thread-visible progress updates while a background orchestrator is working, use:
+
+```bash
+python3 scripts/validation_loop.py progress-heartbeat --prompt-version vN --benchmark <benchmark> --run-id run-001 --write-state
+```
+
+This command emits:
+
+- current completed / total findings
+
+- the most recent completed finding and its decision
+
+- the next finding when raw validation is still in progress
+
+- a deduplicated `should_notify` flag based on a persisted state file in `validation-results/`
+
+It is intended for heartbeat automations or other thread-notification monitors, not for deciding benchmark truth.
+
+### Worker Model Policy
+
+Use fixed model overrides per worker phase.
+
+- raw-validation workers: `gpt-5.4` with `xhigh` reasoning
+
+- scoring workers: `gpt-5.4` with `xhigh` reasoning
+
+- prompt-revision workers that draft `v{N+1}`: `GPT-5.5` with `xhigh` reasoning
+
+The orchestrator should not pick models ad hoc.
+
+If the controller exposes `worker_model` and `worker_reasoning_effort` in its JSON output, treat those fields as authoritative when spawning the next worker.
 
 ---
 

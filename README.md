@@ -65,11 +65,6 @@ RUST_LOG=info
 # ANTHROPIC_API_KEY=...
 # GEMINI_API_KEY=...
 # DEEPSEEK_API_KEY=...
-
-# Optional: use Gemini for discovery-style runs
-# AI_AGENT_AUDIT_DISCOVERY_PROVIDER=gemini
-# AI_AGENT_AUDIT_DISCOVERY_MODEL=gemini-3-pro-preview
-# AI_AGENT_AUDIT_DISCOVERY_GEMINI_THINKING_LEVEL=high
 ```
 
 4. The first OpenAI-backed run will prompt you to sign in with ChatGPT if there is no cached Codex session yet. After that, the session is reused automatically until expiry.
@@ -166,12 +161,11 @@ Use `Client` for internal or client-style audits. Use the contest values when yo
 | `DEEPSEEK_API_KEY` | No | Supported by the agent layer, not required by the default path. |
 | `GITHUB_TOKEN` | No | Used for private GitHub repo cloning. |
 | `AI_AGENT_AUDIT_DATA_DIR` | No | Overrides the local cache directory. Defaults to `.ai-agent-audit`. |
-| `AI_AGENT_AUDIT_DISCOVERY_PROVIDER` | No | Discovery backend for patterns, actors, and invariants. Valid values: `openai`, `gemini`. Default is `openai`. |
-| `AI_AGENT_AUDIT_DISCOVERY_MODEL` | No | Optional model override for the selected discovery provider. For Gemini, the current default is `gemini-3-pro-preview`. |
-| `AI_AGENT_AUDIT_DISCOVERY_GEMINI_THINKING_LEVEL` | No | Gemini-only discovery setting. Valid values: `low`, `high`. Default is `high`. |
 | `RUST_LOG` | No | Standard Rust log level, defaults to `info`. |
 
 The shipped template is [`.env.example`](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/.env.example:1).
+
+Discovery provider/model defaults now live in [src/config.rs](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/src/config.rs:35). Edit `DISCOVERY_PROVIDER`, `GEMINI_DISCOVERY_MODEL`, and `DISCOVERY_GEMINI_THINKING_LEVEL` there if you want to switch discovery between OpenAI and Gemini.
 
 ## How The Pipeline Works
 
@@ -185,7 +179,7 @@ The shipped template is [`.env.example`](/Users/apmfree/Desktop/CHAIN%20SHIELD/a
 
 5. Codeblock generation. It slices the codebase into contextual per-contract codeblocks using call graph depth and token-budget settings.
 
-6. AI review. The current default review path uses OpenAI through Codex/ChatGPT OAuth across discovery, verification, deduplication, summaries, and report-writing. If you set `AI_AGENT_AUDIT_DISCOVERY_PROVIDER=gemini`, only the discovery-style phases switch to Gemini; verification, deduplication, summaries, and report-writing stay on the OpenAI/Codex path. Findings are aggregated across contracts and deduplicated at the end.
+6. AI review. Verification, deduplication, summaries, and report-writing stay on the OpenAI/Codex path. Discovery-style phases (patterns, actors, invariants) use the provider configured in [src/config.rs](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/src/config.rs:35). Findings are aggregated across contracts and deduplicated at the end.
 
 7. Report export and local persistence. The tool writes Markdown outputs, records findings in local SQLite databases, and keeps cached repo metadata for later runs.
 

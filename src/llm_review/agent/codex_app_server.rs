@@ -5,6 +5,7 @@ use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -15,6 +16,8 @@ const RATE_LIMIT_FALLBACK_WAIT_SECS: u64 = 5 * 60 * 60;
 const CODEX_BIN_ENV_VARS: &[&str] = &["AI_AGENT_AUDIT_CODEX_BIN", "CODEX_BIN"];
 const DEFAULT_CODEX_SESSION_POOL_SIZE: usize = 12;
 const CODEX_SESSION_POOL_SIZE_ENV: &str = "AI_AGENT_AUDIT_CODEX_SESSION_POOL_SIZE";
+const CODEX_REQUEST_TIMEOUT_SECS: u64 = 30;
+const CODEX_TURN_EVENT_TIMEOUT_SECS: u64 = 10 * 60;
 #[cfg(target_os = "macos")]
 const PLATFORM_CODEX_FALLBACKS: &[&str] = &["/Applications/Codex.app/Contents/Resources/codex"];
 #[cfg(not(target_os = "macos"))]
@@ -290,7 +293,7 @@ impl Drop for PooledCodexSession {
 struct CodexSession {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    message_rx: Receiver<Result<Value>>,
     next_id: u64,
     auth_verified: bool,
 }
@@ -319,11 +322,12 @@ impl CodexSession {
             .stdout
             .take()
             .context("failed to capture Codex app-server stdout")?;
+        let message_rx = spawn_codex_reader_thread(stdout);
 
         Ok(Self {
             child,
             stdin,
-            stdout: BufReader::new(stdout),
+            message_rx,
             next_id: 1,
             auth_verified: false,
         })
@@ -526,7 +530,9 @@ impl CodexSession {
         let mut final_text: Option<String> = None;
 
         loop {
-            let message = match self.read_message() {
+            let message = match self
+                .read_message_with_timeout(Duration::from_secs(CODEX_TURN_EVENT_TIMEOUT_SECS))
+            {
                 Ok(message) => message,
                 Err(err) => return Err(classify_error(err)),
             };
@@ -652,7 +658,8 @@ impl CodexSession {
         self.write_message(&message)?;
 
         loop {
-            let response = self.read_message()?;
+            let response =
+                self.read_message_with_timeout(Duration::from_secs(CODEX_REQUEST_TIMEOUT_SECS))?;
             let Some(response_id) = response.get("id").and_then(Value::as_u64) else {
                 continue;
             };
@@ -695,27 +702,11 @@ impl CodexSession {
     }
 
     fn read_message(&mut self) -> Result<Value> {
-        let mut line = String::new();
+        recv_session_message(&self.message_rx, None)
+    }
 
-        loop {
-            line.clear();
-            let bytes = self
-                .stdout
-                .read_line(&mut line)
-                .context("failed to read Codex app-server output")?;
-
-            if bytes == 0 {
-                bail!("Codex app-server closed the stdio transport unexpectedly");
-            }
-
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            return serde_json::from_str(trimmed)
-                .with_context(|| format!("failed to parse Codex JSON-RPC payload: {trimmed}"));
-        }
+    fn read_message_with_timeout(&mut self, timeout: Duration) -> Result<Value> {
+        recv_session_message(&self.message_rx, Some(timeout))
     }
 
     fn get_rate_limit_reset_at(&mut self) -> Option<u64> {
@@ -733,6 +724,70 @@ impl CodexSession {
 
     fn is_running(&mut self) -> bool {
         self.child.try_wait().ok().flatten().is_none()
+    }
+}
+
+fn spawn_codex_reader_thread(stdout: ChildStdout) -> Receiver<Result<Value>> {
+    let (message_tx, message_rx) = mpsc::channel::<Result<Value>>();
+
+    thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            let bytes = stdout
+                .read_line(&mut line)
+                .context("failed to read Codex app-server output");
+
+            let bytes = match bytes {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    let _ = message_tx.send(Err(err));
+                    return;
+                }
+            };
+
+            if bytes == 0 {
+                let _ = message_tx.send(Err(anyhow!(
+                    "Codex app-server closed the stdio transport unexpectedly"
+                )));
+                return;
+            }
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let parsed = serde_json::from_str(trimmed)
+                .with_context(|| format!("failed to parse Codex JSON-RPC payload: {trimmed}"));
+            if message_tx.send(parsed).is_err() {
+                return;
+            }
+        }
+    });
+
+    message_rx
+}
+
+fn recv_session_message(
+    message_rx: &Receiver<Result<Value>>,
+    timeout: Option<Duration>,
+) -> Result<Value> {
+    match timeout {
+        Some(timeout) => message_rx.recv_timeout(timeout).map_err(|err| match err {
+            RecvTimeoutError::Timeout => anyhow!(
+                "timed out waiting {}s for Codex app-server message",
+                timeout.as_secs()
+            ),
+            RecvTimeoutError::Disconnected => {
+                anyhow!("Codex app-server message channel closed unexpectedly")
+            }
+        })?,
+        None => message_rx
+            .recv()
+            .map_err(|_| anyhow!("Codex app-server message channel closed unexpectedly"))?,
     }
 }
 
@@ -1272,6 +1327,22 @@ mod tests {
         assert_eq!(
             params.get("serviceName").and_then(Value::as_str),
             Some("ai-agent-audit")
+        );
+    }
+
+    #[test]
+    fn test_recv_session_message_timeout_is_retryable() {
+        let (_message_tx, message_rx) = mpsc::channel::<Result<Value>>();
+        let err = recv_session_message(&message_rx, Some(Duration::from_millis(5)))
+            .expect_err("missing messages should time out");
+
+        assert!(
+            err.to_string().contains("timed out waiting"),
+            "timeout error should explain that the Codex stream went silent"
+        );
+        assert!(
+            matches!(classify_error(err), PromptFailure::Retryable(_)),
+            "silent-turn timeouts should be treated as retryable"
         );
     }
 

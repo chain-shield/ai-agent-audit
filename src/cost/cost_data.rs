@@ -71,8 +71,10 @@ impl LlmCostType {
 }
 
 pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) -> f64 {
+    let normalized_model = model.trim().to_ascii_lowercase();
+
     match token_type {
-        TokenType::Input => match model {
+        TokenType::Input => match normalized_model.as_str() {
             // OpenAI models
             "gpt-4o" => 2.50,
             "gpt-5" => 1.25,
@@ -92,7 +94,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // Gemini models
             "gemini-2.5-pro" | "gemini-2-5-pro" => 1.25,
             "gemini-pro" => 1.25,
-            "gemini-3-pro-preview" => 2.00,
+            "gemini-3-pro-preview" | "gemini-3.1-pro-preview" | "gemini-3-1-pro-preview" => 2.00,
 
             // DeepSeek models
             "deepseek-chat" => 0.07,
@@ -107,7 +109,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
                 1.25 // Default to GPT-5 input rate
             }
         },
-        TokenType::Output => match model {
+        TokenType::Output => match normalized_model.as_str() {
             // OpenAI models
             "gpt-4o" => 10.00,
             "gpt-5" => 25.00, // set to 2.5X actual value to account for reasoning tokens
@@ -127,7 +129,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // Gemini models
             "gemini-2.5-pro" | "gemini-2-5-pro" => 10.00,
             "gemini-pro" => 10.00,
-            "gemini-3-pro-preview" => 12.00,
+            "gemini-3-pro-preview" | "gemini-3.1-pro-preview" | "gemini-3-1-pro-preview" => 12.00,
 
             // DeepSeek models
             "deepseek-chat" => 1.10,
@@ -262,6 +264,26 @@ pub fn estimate_chat_completion_tokens(user_message: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_gemini_3_1_preview_model_uses_expected_cost_rates() {
+        assert_eq!(
+            get_cost_per_million_tokens_by_model("gemini-3.1-pro-preview", TokenType::Input),
+            2.00
+        );
+        assert_eq!(
+            get_cost_per_million_tokens_by_model("gemini-3.1-pro-preview", TokenType::Output),
+            12.00
+        );
+        assert_eq!(
+            get_cost_per_million_tokens_by_model("GEMINI-3-1-PRO-PREVIEW", TokenType::Input),
+            2.00
+        );
+        assert_eq!(
+            get_cost_per_million_tokens_by_model("gemini-3-1-pro-preview", TokenType::Output),
+            12.00
+        );
+    }
 
     #[tokio::test]
     async fn test_cost_calculation_accuracy() {
