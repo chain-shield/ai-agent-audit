@@ -374,3 +374,9 @@ This file records orchestrator-visible worker lifecycle events and the exact raw
 
 ## 2026-04-24T23:15:15Z `completed` `raw-finding`
 - Summary: H-109 valid medium: registerAgentsWithSignature does not bind bond terms, so a service owner can update service bond requirements before consuming an old operator signature and charge the now-higher current bond
+
+## 2026-04-24T23:20:26Z `completed` `raw-finding`
+- Summary: H-110 valid low/QA: recoverAccess really builds multisend data with quadratic bytes.concat growth, but the exploit requires already-authorized Safe owners to deliberately bloat the owner set before recovery
+
+## 2026-04-24T23:22:23Z `completed` `raw-finding`
+- Summary: H-111 valid medium: recoverAccess only unlocks in PreRegistration, and a contract operator that rejects ETH can make unbond revert forever and keep the service stuck in TerminatedBonded

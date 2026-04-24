@@ -65,6 +65,16 @@ pub const MAX_PATTERN_GENERAL: usize = 4; // 2 for large protocol, default: 4
 
 pub const MAX_FILE_RUNS: usize = 1;
 
+/// Codex/OpenAI review concurrency caps.
+pub const MAX_CONCURRENTS_VERIFY: usize = 1;
+pub const MAX_CONCURRENTS_REVIEW: usize = 2;
+pub const MAX_CONCURRENTS_POC: usize = 1;
+pub const MAX_CONCURRENTS_GENERAL: usize = 8;
+
+/// File summarization fanout. Keep this low because Codex-backed summary jobs
+/// can retain large prompt/context strings and become memory-heavy.
+pub const SUMMARY_MAX_PARALLEL: usize = 50;
+
 /// Docker volume path for repository analysis
 pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
