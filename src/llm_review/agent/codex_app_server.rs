@@ -14,7 +14,10 @@ const MAX_PROMPT_ATTEMPTS: usize = 10;
 const INITIAL_RETRY_DELAY_MS: u64 = 1_000;
 const RATE_LIMIT_FALLBACK_WAIT_SECS: u64 = 5 * 60 * 60;
 const CODEX_BIN_ENV_VARS: &[&str] = &["AI_AGENT_AUDIT_CODEX_BIN", "CODEX_BIN"];
-const DEFAULT_CODEX_SESSION_POOL_SIZE: usize = 12;
+// Keep the default pool conservative: each pooled Codex app-server session is a
+// separate long-lived subprocess, so large pools multiply memory usage fast when
+// users run multiple audits in parallel.
+const DEFAULT_CODEX_SESSION_POOL_SIZE: usize = 2;
 const CODEX_SESSION_POOL_SIZE_ENV: &str = "AI_AGENT_AUDIT_CODEX_SESSION_POOL_SIZE";
 const CODEX_REQUEST_TIMEOUT_SECS: u64 = 30;
 const CODEX_TURN_EVENT_TIMEOUT_SECS: u64 = 10 * 60;
