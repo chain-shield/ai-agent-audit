@@ -491,10 +491,14 @@ fn anthropic_client() -> Result<&'static anthropic::Client> {
 
 /// Returns the Gemini client instance, initializing it if necessary.
 fn gemini_client() -> Result<&'static gemini::Client> {
+    if !audit_config().has_google_ai_key() {
+        return Err(AuditError::configuration(
+            "gemini_client",
+            "Gemini API key not configured",
+        ));
+    }
+
     GEMINI_CLIENT.get_or_init(|| {
-        if !audit_config().has_google_ai_key() {
-            panic!("Gemini API key not configured");
-        }
         log::info!("Lazy-initializing Gemini client...");
         gemini::Client::from_env()
     });

@@ -174,6 +174,13 @@ where
         }
     }
 
+    if !handles.is_empty() {
+        info!(
+            "Queued {} finding-discovery prompt tasks; waiting for all rounds to finish...",
+            handles.len()
+        );
+    }
+
     // Wait for ALL tasks to complete
     for handle in handles {
         handle.await?; // Will error if task panicked

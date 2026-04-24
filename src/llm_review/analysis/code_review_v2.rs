@@ -9,7 +9,7 @@ use crate::llm_review::analysis::context_state::{
 use crate::llm_review::analysis::pre_audit_analysis::generate_discovery_agent;
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_file_map::ContractType;
-use crate::llm_review::findings::findings::{CLAUDE_4_5_SONNET, Finding};
+use crate::llm_review::findings::findings::Finding;
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::llm_review::{agent::agent_enums::AIAgent, phases};
 use crate::llm_review::{
@@ -286,14 +286,6 @@ pub async fn generate_ai_agents(
         .with_preamble(verify_preamble)
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
-
-    let _finding_verify_config = AgentConfig::new(Some(repo.clone()))
-        .with_temperature(0.2)
-        .with_model(CLAUDE_4_5_SONNET)
-        .with_max_tokens(64_000)
-        .with_preamble(verify_preamble)
-        .with_file_picker(false) // Disabled to avoid rate limits
-        .with_file_retrieval(false);
 
     let ai_finding_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
     // let ai_pattern_verify_agent =

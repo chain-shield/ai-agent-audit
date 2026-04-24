@@ -17,6 +17,8 @@ use dotenvy::dotenv;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Once;
+use std::time::Duration;
+use tokio::time::timeout;
 
 static OAUTH_STARTUP: Once = Once::new();
 
@@ -101,89 +103,93 @@ Set id to null.
 async fn test_openai_codex_handles_real_app_schemas_with_optional_nested_fields() {
     ensure_oauth_runtime_initialized();
 
-    let agent_config = AgentConfig::new(None)
-        .with_model(OPENAI_MODEL)
-        .with_preamble("You are a precise test assistant.")
-        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
+    timeout(Duration::from_secs(300), async {
+        let agent_config = AgentConfig::new(None)
+            .with_model(OPENAI_MODEL)
+            .with_preamble("You are a precise test assistant.")
+            .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
 
-    let agent =
-        AgentFactory::create_openai_agent(&agent_config).expect("should create OpenAI agent");
+        let agent =
+            AgentFactory::create_openai_agent(&agent_config).expect("should create OpenAI agent");
 
-    let actors_prompt = r#"
-Return valid JSON for the `Actors` schema with exactly one actor.
-Set `id` to null.
-Use:
-- name: "Unprivileged caller"
-- role_type: "UnprivilegedUser"
-- description: "Permissionless user interacting with the protocol."
-- capabilities: ["Call public functions"]
-"#;
+        let actors_prompt = r#"
+	Return valid JSON for the `Actors` schema with exactly one actor.
+	Set `id` to null.
+	Use:
+	- name: "Unprivileged caller"
+	- role_type: "UnprivilegedUser"
+	- description: "Permissionless user interacting with the protocol."
+	- capabilities: ["Call public functions"]
+	"#;
 
-    let actors: Actors = agent
-        .extract_with_retry(actors_prompt)
-        .await
-        .expect("Actors extraction should succeed through ChatGPT OAuth");
+        let actors: Actors = agent
+            .extract_with_retry(actors_prompt)
+            .await
+            .expect("Actors extraction should succeed through ChatGPT OAuth");
 
-    assert_eq!(actors.actors.len(), 1);
-    assert!(actors.actors[0].id.is_none(), "actor id should be nullable");
-    assert_eq!(actors.actors[0].name, "Unprivileged caller");
-    assert_eq!(actors.actors[0].role_type, RoleType::UnprivilegedUser);
+        assert_eq!(actors.actors.len(), 1);
+        assert!(actors.actors[0].id.is_none(), "actor id should be nullable");
+        assert_eq!(actors.actors[0].name, "Unprivileged caller");
+        assert_eq!(actors.actors[0].role_type, RoleType::UnprivilegedUser);
 
-    let invariants_prompt = r#"
-Return valid JSON for the `ContractInvariants` schema with exactly one invariant.
-Set `id`, `pre_state`, `post_state`, and `impact` to null.
-Use:
-- inv_type: "Permission"
-- contract: "Vault"
-- function: "deposit"
-- predicate: "Only authorized actors can pause withdrawals."
-- desc: "The pause control should remain restricted to privileged governance."
-- checks: ["onlyOwner", "role validation"]
-- status: "Holds"
-"#;
+        let invariants_prompt = r#"
+	Return valid JSON for the `ContractInvariants` schema with exactly one invariant.
+	Set `id`, `pre_state`, `post_state`, and `impact` to null.
+	Use:
+	- inv_type: "Permission"
+	- contract: "Vault"
+	- function: "deposit"
+	- predicate: "Only authorized actors can pause withdrawals."
+	- desc: "The pause control should remain restricted to privileged governance."
+	- checks: ["onlyOwner", "role validation"]
+	- status: "Holds"
+	"#;
 
-    let invariants: ContractInvariants = agent
-        .extract_with_retry(invariants_prompt)
-        .await
-        .expect("ContractInvariants extraction should succeed through ChatGPT OAuth");
+        let invariants: ContractInvariants = agent
+            .extract_with_retry(invariants_prompt)
+            .await
+            .expect("ContractInvariants extraction should succeed through ChatGPT OAuth");
 
-    assert_eq!(invariants.invariants.len(), 1);
-    assert!(invariants.invariants[0].id.is_none());
-    assert_eq!(invariants.invariants[0].inv_type, InvariantType::Permission);
-    assert_eq!(invariants.invariants[0].status, InvariantStatus::Holds);
-    assert!(invariants.invariants[0].pre_state.is_none());
-    assert!(invariants.invariants[0].post_state.is_none());
-    assert!(invariants.invariants[0].impact.is_none());
+        assert_eq!(invariants.invariants.len(), 1);
+        assert!(invariants.invariants[0].id.is_none());
+        assert_eq!(invariants.invariants[0].inv_type, InvariantType::Permission);
+        assert_eq!(invariants.invariants[0].status, InvariantStatus::Holds);
+        assert!(invariants.invariants[0].pre_state.is_none());
+        assert!(invariants.invariants[0].post_state.is_none());
+        assert!(invariants.invariants[0].impact.is_none());
 
-    let patterns_prompt = r#"
-Return valid JSON for the `Patterns` schema with exactly one pattern.
-Set `impact` to null.
-Use:
-- issue_type: "Reentrancy"
-- title: "External callback before state sync"
-- contract: "Vault"
-- function: "withdraw"
-- description: "External control is returned before internal balances are finalized."
-- static_signals: ["external call before balance update"]
-- assets_at_risk: ["vault reserves"]
-- privilege: "Permissionless"
-"#;
+        let patterns_prompt = r#"
+	Return valid JSON for the `Patterns` schema with exactly one pattern.
+	Set `impact` to null.
+	Use:
+	- issue_type: "Reentrancy"
+	- title: "External callback before state sync"
+	- contract: "Vault"
+	- function: "withdraw"
+	- description: "External control is returned before internal balances are finalized."
+	- static_signals: ["external call before balance update"]
+	- assets_at_risk: ["vault reserves"]
+	- privilege: "Permissionless"
+	"#;
 
-    let patterns: Patterns = agent
-        .extract_with_retry(patterns_prompt)
-        .await
-        .expect("Patterns extraction should succeed through ChatGPT OAuth");
+        let patterns: Patterns = agent
+            .extract_with_retry(patterns_prompt)
+            .await
+            .expect("Patterns extraction should succeed through ChatGPT OAuth");
 
-    assert_eq!(patterns.patterns.len(), 1);
-    assert_eq!(
-        patterns.patterns[0].issue_type,
-        VulnerabilityPattern::Reentrancy
-    );
-    assert_eq!(
-        patterns.patterns[0].privilege.to_string(),
-        PrivilegeLevel::Permissionless.to_string()
-    );
-    assert!(patterns.patterns[0].impact.is_none());
+        assert_eq!(patterns.patterns.len(), 1);
+        assert_eq!(
+            patterns.patterns[0].issue_type,
+            VulnerabilityPattern::Reentrancy
+        );
+        assert_eq!(
+            patterns.patterns[0].privilege.to_string(),
+            PrivilegeLevel::Permissionless.to_string()
+        );
+        assert!(patterns.patterns[0].impact.is_none());
+    })
+    .await
+    .expect("structured OAuth extracts should not stall indefinitely");
 }
 
 #[tokio::test]
@@ -191,45 +197,49 @@ Use:
 async fn test_openai_codex_repeated_calls_clear_context_and_handle_parallel_prompts() {
     ensure_oauth_runtime_initialized();
 
-    let agent_config = AgentConfig::new(None)
-        .with_model(OPENAI_MODEL)
-        .with_preamble("You are a precise test assistant.")
-        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
+    timeout(Duration::from_secs(300), async {
+        let agent_config = AgentConfig::new(None)
+            .with_model(OPENAI_MODEL)
+            .with_preamble("You are a precise test assistant.")
+            .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
 
-    let agent =
-        AgentFactory::create_openai_agent(&agent_config).expect("should create OpenAI agent");
+        let agent =
+            AgentFactory::create_openai_agent(&agent_config).expect("should create OpenAI agent");
 
-    let first = agent
-        .prompt("Reply exactly with MEMORY-SET and nothing else.")
-        .await
-        .expect("first prompt should succeed");
-    assert_eq!(first.trim(), "MEMORY-SET");
+        let first = agent
+            .prompt("Reply exactly with MEMORY-SET and nothing else.")
+            .await
+            .expect("first prompt should succeed");
+        assert_eq!(first.trim(), "MEMORY-SET");
 
-    let second = agent
-        .prompt("Reply exactly with SECOND-CALL and nothing else.")
-        .await
-        .expect("second prompt should succeed");
-    assert_eq!(second.trim(), "SECOND-CALL");
+        let second = agent
+            .prompt("Reply exactly with SECOND-CALL and nothing else.")
+            .await
+            .expect("second prompt should succeed");
+        assert_eq!(second.trim(), "SECOND-CALL");
 
-    let mut handles = Vec::new();
-    for token in ["ALPHA", "BRAVO", "CHARLIE", "DELTA"] {
-        let agent_config = agent_config.clone();
-        let prompt = format!("Reply exactly with {token} and nothing else.");
-        handles.push(tokio::spawn(async move {
-            let agent = AgentFactory::create_openai_agent(&agent_config)
-                .expect("parallel prompt agent creation should succeed");
-            let response = agent
-                .prompt(&prompt)
-                .await
-                .expect("parallel prompt should succeed");
-            (token, response)
-        }));
-    }
+        let mut handles = Vec::new();
+        for token in ["ALPHA", "BRAVO", "CHARLIE", "DELTA"] {
+            let agent_config = agent_config.clone();
+            let prompt = format!("Reply exactly with {token} and nothing else.");
+            handles.push(tokio::spawn(async move {
+                let agent = AgentFactory::create_openai_agent(&agent_config)
+                    .expect("parallel prompt agent creation should succeed");
+                let response = agent
+                    .prompt(&prompt)
+                    .await
+                    .expect("parallel prompt should succeed");
+                (token, response)
+            }));
+        }
 
-    for handle in handles {
-        let (token, response) = handle.await.expect("parallel task should join");
-        assert_eq!(response.trim(), token);
-    }
+        for handle in handles {
+            let (token, response) = handle.await.expect("parallel task should join");
+            assert_eq!(response.trim(), token);
+        }
+    })
+    .await
+    .expect("parallel OAuth prompts should not stall indefinitely");
 }
 
 #[tokio::test]
