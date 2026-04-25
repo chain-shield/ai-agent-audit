@@ -380,3 +380,129 @@ This file records orchestrator-visible worker lifecycle events and the exact raw
 
 ## 2026-04-24T23:22:23Z `completed` `raw-finding`
 - Summary: H-111 valid medium: recoverAccess only unlocks in PreRegistration, and a contract operator that rejects ETH can make unbond revert forever and keep the service stuck in TerminatedBonded
+
+## 2026-04-24T23:24:16Z `completed` `raw-finding`
+- Summary: H-112 valid low/QA: Safe owners can remove the recovery module and break later recoverAccess, but the report overstates this as a slashing bypass because slash is only callable while the service is still Deployed
+
+## 2026-04-24T23:24:55Z `completed` `raw-finding`
+- Summary: H-113 valid low/QA duplicate: this is the same Safe-owner inflation plus quadratic bytes.concat recovery-DoS mechanism already captured in H-110, not a new independent High
+
+## 2026-04-24T23:28:33Z `completed` `raw-finding`
+- Summary: H-114 valid low/QA: BalancerPriceOracle really has a fail-closed lifetime-average liveness weakness, but the report overstates it as an ordinary permanent brick because failed updates still mutate cumulativePrice and the repo config uses 50% oracle slippage
+
+## 2026-04-24T23:29:25Z `completed` `raw-finding`
+- Summary: M-115 valid low/QA: BalancerPriceOracle really uses cumulativePrice divided by a mutable averagePrice as a time proxy, causing average drift, but the benchmarked 50% slippage setup keeps this as a low-severity correctness issue
+
+## 2026-04-24T23:30:02Z `completed` `raw-finding`
+- Summary: H-116 valid low/QA duplicate: this combines the same Balancer oracle math-drift and fail-closed liveness issues already captured in H-114 and M-115, rather than adding a new High-severity root cause
+
+## 2026-04-24T23:30:40Z `completed` `raw-finding`
+- Summary: H-117 valid low/QA duplicate: this is the same Balancer oracle lifetime-average plus biased-math plus fail-closed liveness cluster already captured in H-114, M-115, and H-116
+
+## 2026-04-24T23:35:44Z `completed` `raw-finding`
+- Summary: H-118 valid low/QA duplicate: the V3 buyback path really lacks a post-trade price floor and swaps with amountOutMinimum 1 after only a pre-swap TWAP/spot check, but the dangerous pool must be owner-whitelisted so this is the same low-severity V3 slippage family rather than a new High
+
+## 2026-04-24T23:37:33Z `completed` `raw-finding`
+- Summary: M-119 valid low/QA duplicate: the V2 buyback path really stacks a pre-trade oracle tolerance with a post-trade check against pre-swap spot while swapping with zero min-out, but this is another low-severity slippage-guardrail issue in an owner-configured buyback path rather than a fresh Medium
+
+## 2026-04-24T23:38:47Z `completed` `raw-finding`
+- Summary: H-120 valid low/QA duplicate: the V3 buyback path ignores BuyBackBurner.maxSlippage and relies on a LiquidityManager pre-check whose deviation math is effectively non-binding, but this still collapses into the same low-severity V3 buyback slippage/min-out family rather than a fresh High
+
+## 2026-04-24T23:39:56Z `completed` `raw-finding`
+- Summary: M-121 invalid: the report imports a WAD-style slippage assumption from the V3 LiquidityManager path, but the V2 buyback/oracle wiring in this benchmark clearly uses plain percentage values like 50, so the claimed unit-mismatch underflow does not reflect the actual code path
+
+## 2026-04-24T23:42:53Z `completed` `raw-finding`
+- Summary: M-122 invalid: these liquidity operations are owner-only and compute min-amount bounds from on-chain state at execution time, so deadline=block.timestamp is at most a missing UX parameter, not an unlimited-slippage exploit path
+
+## 2026-04-24T23:45:16Z `completed` `raw-finding`
+- Summary: M-123 invalid: the report relies on the already-public LiquidityManager slippage/check bug family documented in the tokenomics test folder, which README marks out of scope, and it also overstates convertToV3 by claiming the optimizer directly uses manipulable spot rather than the TWAP-derived center price on the normal path
+
+## 2026-04-24T23:45:57Z `completed` `raw-finding`
+- Summary: H-124 invalid: the mature-pools explanation is technically wrong because the code reads the latest observation index, and the real fail-open/deviation issue it points at is already publicly documented in the tokenomics test folder, which README marks out of scope
+
+## 2026-04-24T23:46:36Z `completed` `raw-finding`
+- Summary: H-125 invalid: checkPoolAndGetCenterPrice really fails open to spot when the TWAP staticcall fails, but that exact oracle-guard bypass is already publicly documented in the tokenomics test folder, which README marks out of scope
+
+## 2026-04-24T23:48:29Z `completed` `raw-finding`
+- Summary: H-126 invalid: the variable-overwrite bug in checkPoolAndGetCenterPrice is real, but the exact broken-deviation logic is already publicly documented in the tokenomics test folder, which README marks out of scope
+
+## 2026-04-24T23:49:03Z `completed` `raw-finding`
+- Summary: M-127 invalid: this is another restatement of the already-public LiquidityManager slippage/deviation bug family from the tokenomics test folder, and rephrasing it as a hardcoded 10% tolerance does not make it a new in-scope Medium
+
+## 2026-04-24T23:49:57Z `completed` `raw-finding`
+- Summary: M-128 valid low/QA: BuyBackBurner uses raw IERC20 approve and transfer calls with bool-return interfaces, so returnless legacy tokens like USDT can revert buyback approvals and token sweeps, causing a real low-severity compatibility/stuck-funds issue
+
+## 2026-04-24T23:50:49Z `completed` `raw-finding`
+- Summary: M-129 valid low/QA: LiquidityManagerCore repeatedly uses raw non-zero approve calls to the position manager without a reset-to-zero pattern, so USDT-like tokens can revert later liquidity operations once residual allowance remains
+
+## 2026-04-24T23:51:25Z `completed` `raw-finding`
+- Summary: M-130 valid low/QA duplicate: BuyBackBurnerUniswap and BuyBackBurner use raw typed approve and transfer calls that expect bool returns, so returnless legacy tokens like USDT can break buybacks and sweeps as a real low-severity compatibility issue
+
+## 2026-04-24T23:53:34Z `completed` `raw-finding`
+- Summary: M-131 valid low/QA duplicate: LiquidityManagerCore.convertToV3 uses raw non-zero approve calls to the position manager without a reset-to-zero pattern, so USDT-like tokens can revert later pair-management operations once residual allowance remains
+
+## 2026-04-24T23:54:27Z `completed` `raw-finding`
+- Summary: M-132 valid low/QA: WormholeRelayerTimelock.transferTokens uses a raw typed approve call to the token bridge, so USDT-like non-standard tokens can revert bridging as a real low-severity compatibility issue
+
+## 2026-04-24T23:56:38Z `completed` `raw-finding`
+- Summary: H-133 valid low/QA duplicate: WormholeRelayerTimelock uses a raw typed approve call before bridging, so USDT-like tokens can leave funds stuck as a real low-severity compatibility issue rather than a new High
+
+## 2026-04-24T23:57:01Z `completed` `raw-finding`
+- Summary: M-134 valid low/QA duplicate: LiquidityManagerCore repeatedly uses raw non-zero approve calls to the position manager without a zero-reset pattern, so USDT-like tokens can brick later pool-management operations as a real low-severity compatibility issue
+
+## 2026-04-24T23:57:44Z `completed` `raw-finding`
+- Summary: M-135 valid low/QA duplicate: BuyBackBurnerUniswap uses raw bool-returning approve and sweep transfer calls, so USDT-like returnless tokens remain a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-24T23:58:20Z `completed` `raw-finding`
+- Summary: M-136 valid low/QA duplicate: BuyBackBurnerUniswap’s strict bool-returning approve path leaves USDT-like returnless tokens as a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-24T23:58:55Z `completed` `raw-finding`
+- Summary: M-137 valid low/QA duplicate: BuyBackBurner’s strict transfer interface and the Uniswap burner’s raw approve calls keep USDT-like tokens as a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-24T23:59:40Z `completed` `raw-finding`
+- Summary: M-138 valid low/QA duplicate: BuyBackBurner’s strict transfer interface keeps USDT-like returnless tokens as a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-25T00:02:02Z `completed` `raw-finding`
+- Summary: M-139 valid low/QA duplicate: BuyBackBurner.transfer uses a strict bool-returning ERC20 transfer path, so USDT-like returnless tokens remain a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-25T00:02:37Z `completed` `raw-finding`
+- Summary: M-140 valid low/QA duplicate: BuyBackBurnerUniswap’s strict approve path and the shared sweep transfer path keep USDT-like returnless tokens as a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-25T00:03:09Z `completed` `raw-finding`
+- Summary: H-141 valid low/QA duplicate: the buyback stack’s strict approve and transfer interfaces keep USDT-like returnless tokens as a real low-severity compatibility issue rather than a new High
+
+## 2026-04-25T00:05:05Z `completed` `raw-finding`
+- Summary: M-142 valid low/QA duplicate: LiquidityManagerCore’s strict bool-returning IToken approve path keeps USDT-like returnless tokens as a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-25T00:05:36Z `completed` `raw-finding`
+- Summary: M-143 valid low/QA duplicate: LiquidityManagerCore combines strict bool-returning approve calls with raw non-zero allowance updates, keeping USDT-like tokens as a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-25T00:06:06Z `completed` `raw-finding`
+- Summary: M-144 valid low/QA duplicate: LiquidityManagerCore’s missing zero-reset on repeated approve calls keeps USDT-like tokens as a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-25T00:08:00Z `completed` `raw-finding`
+- Summary: M-145 valid low/QA duplicate: LiquidityManagerCore’s unsafe repeated approve pattern keeps USDT-like tokens as a real low-severity compatibility issue rather than a new Medium
+
+## 2026-04-25T00:10:08Z `completed` `raw-finding`
+- Summary: M-146 invalid speculative: IdentityRegistryBridger can overwrite cached multisig-to-agent mappings, but the claimed shared-multisig collision is not grounded in the real service deployment and same-address redeploy flow
+
+## 2026-04-25T00:11:13Z `completed` `raw-finding`
+- Summary: M-147 invalid speculative: VerifyData does alias chain IDs modulo 2^64, but the contract explicitly assumes a uint64 chain-id domain and the report does not ground a live >2^64 collision in this benchmark
+
+## 2026-04-25T00:13:45Z `completed` `raw-finding`
+- Summary: M-148 invalid: ServiceManager.update does not check the returned bool, but ServiceRegistry.update has no real false-return branch and instead reverts on failure, so the claimed state split is unreachable
+
+## 2026-04-25T00:14:14Z `completed` `raw-finding`
+- Summary: M-149 invalid speculative: VerifyData’s chain-id aliasing is the same out-of-domain uint64 packing issue as M-147 and is not grounded in a live benchmark-relevant collision
+
+## 2026-04-25T00:18:51Z `completed` `raw-finding`
+- Summary: L-150 invalid speculative: unchecked ERC20 return values exist, but the benchmarked buyback path is wired to standard OLAS and WETH rather than arbitrary false-return tokens
+
+## 2026-04-25T00:21:13Z `completed` `raw-finding`
+- Summary: M-151 invalid: the benchmarked UniswapPriceOracle is not a stored-TWAP oracle, so the missing updatePrice call does not create stale-price state
+
+## 2026-04-25T00:22:02Z `completed` `raw-finding`
+- Summary: M-152 invalid: IdentityRegistryBridgerProxy initializes atomically in its constructor, so the reported front-run initialize race does not exist on the benchmarked path
+
+## 2026-04-25T00:24:10Z `completed` `raw-finding`
+- Summary: H-153 invalid governance risk: GuardCM pause-after-defeated is an intended emergency power exercised by the privileged community multisig rather than an unprivileged bypass
