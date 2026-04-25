@@ -11,7 +11,7 @@
     "timestamp": "2026-04-24T12:32:02Z",
     "title": "Tokenomics.checkpoint fails to reduce effectiveBond when actual inflation is lower than estimated"
   },
-  "phase": "prompt-revision",
-  "token": "phase:prompt-revision",
-  "updated_at": "2026-04-24T17:52:36Z"
+  "phase": "complete",
+  "token": "phase:complete",
+  "updated_at": "2026-04-25T03:08:18Z"
 }

@@ -21,6 +21,7 @@ from typing import Iterable
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AUDIT_ROOT = Path("/Users/apmfree/Desktop/Audit")
 TRUTH_ROOT = Path("/Users/apmfree/.ai-agent-audit-validation-truth")
+WORKER_PROMPT_ROOT = REPO_ROOT / "validation-worker-prompts"
 APPEND_ANCHOR = "<!-- APPEND FINDING BLOCKS ABOVE THIS LINE -->"
 SCORING_SECTION_START = "<!-- SCORING SECTION START -->"
 SCORING_SECTION_END = "<!-- SCORING SECTION END -->"
@@ -135,6 +136,23 @@ def read_text(path: Path) -> str:
         raise SystemExit(f"Missing required file: {path}") from None
 
 
+def render_worker_prompt(template_name: str, replacements: dict[str, object]) -> str:
+    template_path = WORKER_PROMPT_ROOT / template_name
+    text = read_text(template_path)
+
+    for key, value in replacements.items():
+        text = text.replace(f"{{{{{key}}}}}", str(value))
+
+    unresolved = sorted(set(re.findall(r"\{\{[A-Z0-9_]+\}\}", text)))
+    if unresolved:
+        raise SystemExit(
+            f"Unresolved placeholders in worker prompt template {template_path}: "
+            + ", ".join(unresolved)
+        )
+
+    return text
+
+
 def parse_findings(report: Path) -> list[Finding]:
     text = read_text(report)
     lines = text.splitlines()
@@ -197,11 +215,15 @@ def latest_prompt_version() -> str:
     return sorted(versions)[-1][1]
 
 
-def next_prompt_version(prompt_version: str) -> str:
+def prompt_version_number(prompt_version: str) -> int:
     match = re.fullmatch(r"v(\d+)", prompt_version)
     if not match:
         raise SystemExit(f"Invalid prompt version: {prompt_version}")
-    return f"v{int(match.group(1)) + 1}"
+    return int(match.group(1))
+
+
+def next_prompt_version(prompt_version: str) -> str:
+    return f"v{prompt_version_number(prompt_version) + 1}"
 
 
 def next_run_id(prompt_version: str, benchmark: str) -> str:
@@ -213,6 +235,78 @@ def next_run_id(prompt_version: str, benchmark: str) -> str:
             if match and match.group("benchmark") == benchmark:
                 highest = max(highest, int(match.group("num")))
     return f"run-{highest + 1:03d}"
+
+
+def sorted_prompt_versions() -> list[str]:
+    versions: list[tuple[int, str]] = []
+    for path in (REPO_ROOT / "validation-prompts").glob("v*.md"):
+        match = PROMPT_VERSION_RE.match(path.name)
+        if match:
+            versions.append((int(match.group(1)), path.stem))
+    return [version for _, version in sorted(versions)]
+
+
+def historical_prompt_artifacts(
+    prompt_version: str, benchmark: str
+) -> tuple[list[Path], list[Path], list[Path]]:
+    current_num = prompt_version_number(prompt_version)
+    prior_prompts: list[Path] = []
+    prior_results: list[Path] = []
+    prior_analyses: list[Path] = []
+
+    for version in sorted_prompt_versions():
+        if prompt_version_number(version) >= current_num:
+            continue
+
+        prior_prompts.append(prompt_path(version))
+        results_dir = REPO_ROOT / "validation-results" / version
+        if not results_dir.exists():
+            continue
+
+        for path in sorted(results_dir.iterdir()):
+            if not path.is_file():
+                continue
+
+            if path.name.endswith("-prompt-analysis.md"):
+                prefix = path.name[: -len("-prompt-analysis.md")]
+                match = RUN_RE.match(prefix + ".md")
+                if match and match.group("benchmark") == benchmark:
+                    prior_analyses.append(path)
+                continue
+
+            match = RUN_RE.match(path.name)
+            if match and match.group("benchmark") == benchmark:
+                prior_results.append(path)
+
+    return prior_prompts, prior_results, prior_analyses
+
+
+def format_history_section(prompt_version: str, benchmark: str) -> str:
+    prior_prompts, prior_results, prior_analyses = historical_prompt_artifacts(
+        prompt_version, benchmark
+    )
+
+    lines = [f"- changelog: {REPO_ROOT / 'validation-prompts' / 'CHANGELOG.md'}"]
+
+    if prior_prompts:
+        lines.append("- prior prompt versions:")
+        lines.extend(f"  - {path}" for path in prior_prompts)
+    else:
+        lines.append("- prior prompt versions: none")
+
+    if prior_results:
+        lines.append("- prior scored result artifacts for this benchmark:")
+        lines.extend(f"  - {path}" for path in prior_results)
+    else:
+        lines.append("- prior scored result artifacts for this benchmark: none")
+
+    if prior_analyses:
+        lines.append("- prior prompt-analysis artifacts for this benchmark:")
+        lines.extend(f"  - {path}" for path in prior_analyses)
+    else:
+        lines.append("- prior prompt-analysis artifacts for this benchmark: none")
+
+    return "\n".join(lines)
 
 
 def worker_execution_config(worker_type: str) -> WorkerExecutionConfig | None:
@@ -318,22 +412,22 @@ def raw_finding_blocks(raw: Path) -> dict[str, str]:
 
     lines = raw.read_text().splitlines()
     starts: list[tuple[int, re.Match[str]]] = []
+    anchors: list[int] = []
     for idx, line in enumerate(lines):
         match = RAW_FINDING_RE.match(line)
         if match:
             starts.append((idx, match))
+        if line == APPEND_ANCHOR:
+            anchors.append(idx)
 
     if not starts:
         return {}
 
-    try:
-        anchor_idx = lines.index(APPEND_ANCHOR)
-    except ValueError:
-        anchor_idx = len(lines)
-
     blocks: dict[str, str] = {}
     for pos, (start_idx, match) in enumerate(starts):
-        end_idx = starts[pos + 1][0] if pos + 1 < len(starts) else anchor_idx
+        next_start_idx = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
+        next_anchor_idx = next((idx for idx in anchors if idx > start_idx), len(lines))
+        end_idx = min(next_start_idx, next_anchor_idx)
         blocks[match.group(1)] = "\n".join(lines[start_idx:end_idx]).rstrip() + "\n"
 
     return blocks
@@ -765,64 +859,27 @@ def append_worker_prompt(prompt_version: str, benchmark: str, run_id: str, findi
     raw = raw_path(prompt_version, benchmark, run_id)
     report = report_path(benchmark)
     prompt = prompt_path(prompt_version)
-
-    return f"""You are the raw-validation worker for exactly one finding.
-
-Workspace root: {REPO_ROOT}
-
-Benchmark:
-- slug: {benchmark}
-- report: {report}
-- source root: {source_root}
-- raw run file to append: {raw}
-- append anchor: {APPEND_ANCHOR}
-- prompt: {prompt}
-
-Validate exactly this finding and no others:
-- Finding ID: {finding.fid}
-- Finding title: {finding.title}
-- Report id: {finding.report_id}
-- Report lines: {finding.start_line}-{finding.end_line} in {report}
-
-Finding report block:
-```md
-{finding.block.rstrip()}
-```
-
-Required evidence sources to use:
-- {source_root / "README.md"}
-- {source_root / "olas-docs.md"}
-- {source_root / "olas-scope.md"}
-- Relevant Solidity code under {source_root}
-
-Critical evidence hygiene:
-- Do not look for any hidden truth, approved findings list, answer key, or benchmark scoring artifact.
-- Do not read local post-hoc analysis files, validator outputs, or user-generated markdown that appears to summarize likely findings.
-- Prioritize actual Solidity code and canonical benchmark docs over the report narrative.
-
-Important constraints:
-- This phase is raw validation only. Do not score the run or revise the prompt.
-- Append exactly one new finding block above the anchor in the raw run file, then stop.
-- Do not rewrite prior finding blocks.
-- Use apply_patch for file editing.
-- You are not alone in the codebase. Do not revert others' edits.
-
-Append in this exact shape:
-
-### {finding.fid} / `{finding.report_id}`
-- Finding Title: {finding.title}
-- Decision: <Valid|Invalid|Needs Review>
-- Confidence: <High|Med|Low>
-- Bug Exists: <Yes|No|Unclear>
-- Severity Assessment: <High|Medium|Low / QA|Low / Unclear>
-- Root Cause Family: `<short-family-name>`
-- Checklist Gates Passed: `<comma-separated>`
-- Checklist Gates Failed: `<comma-separated or ->`
-- Detailed Reason: <1 concise paragraph grounded in code and benchmark docs>
-- Code Evidence: <1 concise paragraph citing the most relevant file paths and functions>
-
-When done, reply with a concise summary and list the files you changed.
-"""
+    return render_worker_prompt(
+        "raw-validation.md",
+        {
+            "REPO_ROOT": REPO_ROOT,
+            "BENCHMARK": benchmark,
+            "REPORT": report,
+            "SOURCE_ROOT": source_root,
+            "RAW": raw,
+            "APPEND_ANCHOR": APPEND_ANCHOR,
+            "PROMPT": prompt,
+            "FINDING_ID": finding.fid,
+            "FINDING_TITLE": finding.title,
+            "REPORT_ID": finding.report_id,
+            "FINDING_START_LINE": finding.start_line,
+            "FINDING_END_LINE": finding.end_line,
+            "FINDING_BLOCK": finding.block.rstrip(),
+            "README_PATH": source_root / "README.md",
+            "DOCS_PATH": source_root / "olas-docs.md",
+            "SCOPE_PATH": source_root / "olas-scope.md",
+        },
+    )
 
 
 def scoring_worker_prompt(prompt_version: str, benchmark: str, run_id: str) -> str:
@@ -830,56 +887,20 @@ def scoring_worker_prompt(prompt_version: str, benchmark: str, run_id: str) -> s
     raw = raw_path(prompt_version, benchmark, run_id)
     results = results_path(prompt_version, benchmark, run_id)
     truth = truth_path(benchmark)
-
-    return f"""You are the scoring worker for one completed validation run.
-
-Workspace root: {REPO_ROOT}
-
-Your task:
-1. Read the raw run at {raw}
-2. Read the benchmark truth file at {truth}
-3. Score the raw run against the truth file.
-4. Update the scoring section inside {results} by replacing only the content between:
-   - {SCORING_SECTION_START}
-   - {SCORING_SECTION_END}
-5. Preserve the existing run-status header and per-finding decision table.
-
-Optional context:
-- benchmark source root: {source_root}
-- benchmark report: {report_path(benchmark)}
-
-Required output:
-- begin the scoring section with `{SCORING_COMPLETE_MARKER}`
-- benchmark name
-- prompt version tested
-- run id
-- scoring scope, with the primary confusion matrix computed on H/M findings only under this rubric:
-  - truth-positive = rows marked `Valid` in `APPROVED_FINDINGS_KEY.md`
-  - run-positive = rows marked `Decision=Valid` with `Severity Assessment=High` or `Medium`
-  - run-side `Valid` rows scored as `Low / QA` or `Low / Unclear`, plus `Invalid` rows, count as negatives
-  - `Needs Review` remains an abstention bucket outside `TP` / `FP` / `TN` / `FN`
-- TP, FP, TN, FN on that severity-aware H/M subset
-- recall, precision, specificity on the H/M subset
-- abstentions / Needs Review on the H/M subset, if any
-- total canonical approved C4 H/M findings
-- unique approved H/M findings present in the report
-- unique approved H/M findings accepted as Valid with High / Medium severity
-- present-root recall
-- end-to-end unique recall
-- real H/M findings missed
-- non-H/M findings incorrectly accepted as H/M
-- checklist gates causing the most mistakes
-- root-cause families causing false negatives and false positives
-- short plain-English summary
-
-Important constraints:
-- This phase is scoring only. Do not revise the prompt.
-- Use apply_patch for file creation/editing.
-- Be explicit about assumptions if the truth mapping is incomplete.
-- Replace only the scoring section content; do not delete the existing per-finding decision table above it.
-
-When done, reply with a concise summary and list the files you changed.
-"""
+    return render_worker_prompt(
+        "scoring.md",
+        {
+            "REPO_ROOT": REPO_ROOT,
+            "RAW": raw,
+            "TRUTH": truth,
+            "RESULTS": results,
+            "SOURCE_ROOT": source_root,
+            "REPORT": report_path(benchmark),
+            "SCORING_SECTION_START": SCORING_SECTION_START,
+            "SCORING_SECTION_END": SCORING_SECTION_END,
+            "SCORING_COMPLETE_MARKER": SCORING_COMPLETE_MARKER,
+        },
+    )
 
 
 def prompt_analysis_worker_prompt(prompt_version: str, benchmark: str, run_id: str) -> str:
@@ -889,64 +910,27 @@ def prompt_analysis_worker_prompt(prompt_version: str, benchmark: str, run_id: s
     worker_log = worker_log_path(prompt_version, benchmark, run_id)
     truth = truth_path(benchmark)
     analysis = prompt_analysis_path(prompt_version, benchmark, run_id)
+    history = format_history_section(prompt_version, benchmark)
 
-    return f"""You are the prompt-analysis worker for one completed validation iteration.
-
-Workspace root: {REPO_ROOT}
-
-Your task:
-1. Read the current prompt at {prompt_path(prompt_version)}
-2. Read the scored result at {results}
-3. Read the raw run at {raw}
-4. Read the worker log at {worker_log}
-5. Read the benchmark report at {report_path(benchmark)}
-6. Use benchmark source context from {source_root} as needed.
-7. Read the specific truth artifacts needed for analysis:
-   - {truth}
-   - {REPO_ROOT / "C4_APPROVED_FINDINGS.md"}
-   - {REPO_ROOT / "APPROVED_FINDINGS_KEY.md"}
-   - {REPO_ROOT / "C4_LOW_QA_INVALID_FINDINGS.md"}
-8. Produce a detailed analysis document at {analysis} that explains the validation mistakes in depth before any prompt revision is attempted.
-
-Required analysis goals:
-- determine why Low / QA / Invalid findings were mistakenly accepted as H/M
-- determine why true H/M findings were mistakenly downgraded to Low / QA, rejected as Invalid, or abstained as Needs Review
-- group mistakes into recurring, protocol-agnostic error families
-- distinguish benchmark-specific facts from reusable validation lessons
-- produce concrete prompt-revision recommendations grounded in the error analysis
-
-Required output document shape:
-- begin the file with `{PROMPT_ANALYSIS_COMPLETE_MARKER}`
-- benchmark name
-- prompt version tested
-- run id
-- artifact list reviewed
-- current scored metrics summary
-- executive summary of the biggest validation failure modes
-- section: false positives / over-severity
-  - list the main reasons Low / QA / Invalid findings were mistakenly accepted as H/M
-  - include representative finding ids and any relevant judge-rationale patterns
-- section: false negatives / under-severity
-  - list the main reasons true H/M findings were mistakenly marked Low / QA, Invalid, or Needs Review
-  - include representative finding ids, approved roots, and the failure mode for each cluster
-- section: severity-calibration mistakes
-  - explain when the system found a real issue but mis-scored its severity
-- section: gate-level mistakes
-  - summarize which validation gates or heuristics failed most often on the false-positive side and on the false-negative side
-- section: protocol-agnostic lessons
-  - convert the analysis into reusable lessons without embedding benchmark-specific facts
-- section: prompt-revision recommendations
-  - propose concrete, protocol-agnostic edits for the next prompt
-  - clearly separate recommendations aimed at recall improvement from those aimed at precision improvement
-
-Important constraints:
-- This phase is analysis only. Do not create the next prompt version yet.
-- Use apply_patch for file creation/editing.
-- Do not copy benchmark-specific exploit narratives into reusable rules.
-- You are not alone in the codebase. Do not revert others' edits.
-
-When done, reply with a concise summary and list the files you changed.
-"""
+    return render_worker_prompt(
+        "prompt-analysis.md",
+        {
+            "REPO_ROOT": REPO_ROOT,
+            "CURRENT_PROMPT": prompt_path(prompt_version),
+            "RESULTS": results,
+            "RAW": raw,
+            "WORKER_LOG": worker_log,
+            "REPORT": report_path(benchmark),
+            "SOURCE_ROOT": source_root,
+            "TRUTH": truth,
+            "C4_APPROVED_FINDINGS": REPO_ROOT / "C4_APPROVED_FINDINGS.md",
+            "APPROVED_FINDINGS_KEY": REPO_ROOT / "APPROVED_FINDINGS_KEY.md",
+            "C4_LOW_QA_INVALID_FINDINGS": REPO_ROOT / "C4_LOW_QA_INVALID_FINDINGS.md",
+            "HISTORY": history,
+            "ANALYSIS": analysis,
+            "PROMPT_ANALYSIS_COMPLETE_MARKER": PROMPT_ANALYSIS_COMPLETE_MARKER,
+        },
+    )
 
 
 def prompt_revision_worker_prompt(prompt_version: str, benchmark: str, run_id: str) -> str:
@@ -957,50 +941,30 @@ def prompt_revision_worker_prompt(prompt_version: str, benchmark: str, run_id: s
     worker_log = worker_log_path(prompt_version, benchmark, run_id)
     truth = truth_path(benchmark)
     analysis = prompt_analysis_path(prompt_version, benchmark, run_id)
+    history = format_history_section(prompt_version, benchmark)
 
-    return f"""You are the prompt-revision worker for one completed validation iteration.
-
-Workspace root: {REPO_ROOT}
-
-Your task:
-1. Read the current prompt at {prompt_path(prompt_version)}
-2. Read the scored result at {results}
-3. Read the raw run at {raw}
-4. Read the worker log at {worker_log}
-5. Read the benchmark report at {report_path(benchmark)}
-6. Read the prompt-analysis document at {analysis}
-7. Use benchmark source context from {source_root} as needed.
-8. Read the specific truth artifacts needed for analysis:
-   - {truth}
-   - {REPO_ROOT / "C4_APPROVED_FINDINGS.md"}
-   - {REPO_ROOT / "APPROVED_FINDINGS_KEY.md"}
-   - {REPO_ROOT / "C4_LOW_QA_INVALID_FINDINGS.md"}
-9. Use the prompt-analysis document as the primary synthesis artifact for deciding what to change in the next prompt. Use the scored result, worker log, and `C4_LOW_QA_INVALID_FINDINGS.md` to verify and refine that analysis as needed, but do not copy benchmark-specific facts into the reusable prompt.
-10. Draft the next prompt version at {prompt_path(next_version)} if the evidence justifies a protocol-agnostic improvement.
-11. Update {REPO_ROOT / "validation-prompts" / "CHANGELOG.md"} with the {prompt_version} -> {next_version} rationale if you create the next prompt.
-
-Rules for the new prompt:
-- Every change must be protocol-agnostic.
-- Do not bake in protocol names, contest facts, contract names, addresses, or benchmark-specific exploit details as reusable rules.
-- Revise the stable prompt structure in place: maintain one `Core Validation Principles` section and fold lessons into the relevant gates whenever possible.
-- Do not append version-named principles blocks to the active prompt.
-- Add a new gate only when the error pattern is genuinely distinct and recurring.
-- Prioritize precision once recall is already high.
-- Use the C4 rejected / Low / QA judge rationales to improve severity calibration and false-positive suppression, especially when a report describes a real issue that is out-of-scope, unsupported, duplicate-root, operationally minor, or otherwise below the H/M bar.
-- Use the approved H/M misses in the scored result and worker log to improve false-negative handling, especially when real H/M findings were downgraded to `Low / QA`, rejected as `Invalid`, or abstained as `Needs Review`.
-- Improve both recall and precision; do not optimize one by sacrificing the other.
-- Preserve same-or-higher H/M recall and same-or-higher H/M precision versus the current prompt.
-- Treat at least 80% H/M recall and greater than 50% H/M precision as the convergence floor.
-- Do not improve recall by broadly accepting more invalid findings.
-- If no clearly generalizable improvement exists, say so and do not force a new version.
-
-Important constraints:
-- This phase is prompt revision only. Do not rescore the run.
-- Use apply_patch for file creation/editing.
-- You are not alone in the codebase. Do not revert others' edits.
-
-When done, reply with a concise summary and list the files you changed.
-"""
+    return render_worker_prompt(
+        "prompt-revision.md",
+        {
+            "REPO_ROOT": REPO_ROOT,
+            "CURRENT_PROMPT": prompt_path(prompt_version),
+            "RESULTS": results,
+            "RAW": raw,
+            "WORKER_LOG": worker_log,
+            "REPORT": report_path(benchmark),
+            "ANALYSIS": analysis,
+            "SOURCE_ROOT": source_root,
+            "TRUTH": truth,
+            "C4_APPROVED_FINDINGS": REPO_ROOT / "C4_APPROVED_FINDINGS.md",
+            "APPROVED_FINDINGS_KEY": REPO_ROOT / "APPROVED_FINDINGS_KEY.md",
+            "C4_LOW_QA_INVALID_FINDINGS": REPO_ROOT / "C4_LOW_QA_INVALID_FINDINGS.md",
+            "HISTORY": history,
+            "NEXT_PROMPT": prompt_path(next_version),
+            "CHANGELOG": REPO_ROOT / "validation-prompts" / "CHANGELOG.md",
+            "PROMPT_VERSION": prompt_version,
+            "NEXT_VERSION": next_version,
+        },
+    )
 
 
 def write_prompt(path: Path, text: str) -> None:

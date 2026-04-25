@@ -9,7 +9,7 @@ This repository is being released as a GitHub-first public beta. It is meant to 
 - Public beta.
 - Solidity and EVM-focused.
 - Repository source, docs, and derived context are sent to third-party LLM providers you configure.
-- The current default audit pipeline uses ChatGPT/Codex OAuth for OpenAI access and runs the active review flow on `gpt-5.4` with `xhigh` reasoning.
+- The current default audit pipeline uses ChatGPT/Codex OAuth for OpenAI access and runs the active review flow on `gpt-5.5`. Summary and deduplication helpers use `gpt-5.4` with low reasoning.
 - Startup performs a one-time ChatGPT sign-in if needed and reuses the cached session on later runs until the token expires.
 - `OPENAI_API_KEY` remains legacy-only and is not used by the default OpenAI path.
 - `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_AI_API_KEY`, and `DEEPSEEK_API_KEY` are still supported by the agent layer, but they are not required by the default review path.

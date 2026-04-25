@@ -1,6 +1,7 @@
 use ai_agent_audit::build_brain::summarize::FileSummary;
 use ai_agent_audit::config::{
-    OPENAI_MODEL, OPENAI_REASONING_EFFORT, OPENAI_SUMMARY_REASONING_EFFORT, init_config,
+    OPENAI_MODEL, OPENAI_REASONING_EFFORT, OPENAI_SUMMARY_MODEL, OPENAI_SUMMARY_REASONING_EFFORT,
+    init_config,
 };
 use ai_agent_audit::llm_review::agent::{
     agent_factory::{AgentConfig, AgentFactory, ensure_codex_chatgpt_auth, init_llm_clients},
@@ -248,7 +249,7 @@ async fn test_openai_codex_low_effort_summary_style_extract_still_works() {
     ensure_oauth_runtime_initialized();
 
     let agent_config = AgentConfig::new(None)
-        .with_model(OPENAI_MODEL)
+        .with_model(OPENAI_SUMMARY_MODEL)
         .with_preamble("You are a precise summarization test assistant.")
         .with_openai_reasoning_effort(OPENAI_SUMMARY_REASONING_EFFORT);
 

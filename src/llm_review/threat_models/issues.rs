@@ -1,7 +1,7 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    config::{OPENAI_DEDUP_REASONING_EFFORT, OPENAI_MODEL},
+    config::{OPENAI_DEDUP_MODEL, OPENAI_DEDUP_REASONING_EFFORT},
     cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
         agent::{
@@ -245,7 +245,7 @@ where
     // let openai_client = openai::Client::from_env();
     // let openai_agent = Arc::new(openai_client.agent("gpt-5").build());
     let openai_config = AgentConfig::new(None)
-        .with_model(OPENAI_MODEL)
+        .with_model(OPENAI_DEDUP_MODEL)
         .with_openai_reasoning_effort(OPENAI_DEDUP_REASONING_EFFORT);
 
     let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);

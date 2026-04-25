@@ -32,11 +32,13 @@ pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
 pub const INVARIANT_DISCOVERY_RUNS: usize = 3; // old value 5
 pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
-pub const OPENAI_MODEL: &str = "gpt-5.4";
+pub const OPENAI_MODEL: &str = "gpt-5.5";
 pub const OPENAI_REASONING_EFFORT: &str = "high";
+pub const OPENAI_SUMMARY_MODEL: &str = "gpt-5.4";
 pub const OPENAI_SUMMARY_REASONING_EFFORT: &str = "low";
+pub const OPENAI_DEDUP_MODEL: &str = "gpt-5.4";
 pub const OPENAI_DEDUP_REASONING_EFFORT: &str = "low";
-pub const DISCOVERY_PROVIDER: &str = "gemini";
+pub const DISCOVERY_PROVIDER: &str = "openai";
 pub const GEMINI_DISCOVERY_MODEL: &str = "gemini-3.1-pro-preview";
 pub const DISCOVERY_GEMINI_THINKING_LEVEL: &str = "high";
 pub const SKIP_LIBRARIES: bool = true;
@@ -77,7 +79,7 @@ pub const SUMMARY_MAX_PARALLEL: usize = 50;
 
 /// Recycle pooled Codex app-server sessions after a small number of completed
 /// turns so helper subprocesses cannot accumulate unboundedly in one process.
-pub const MAX_CODEX_TURNS_PER_SESSION: usize = 2;
+pub const MAX_CODEX_TURNS_PER_SESSION: usize = 10;
 
 /// Docker volume path for repository analysis
 pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
@@ -423,6 +425,9 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AuditConfig::default();
+        assert_eq!(OPENAI_MODEL, "gpt-5.5");
+        assert_eq!(OPENAI_SUMMARY_MODEL, "gpt-5.4");
+        assert_eq!(OPENAI_DEDUP_MODEL, "gpt-5.4");
         assert_eq!(config.max_depth, MAX_DEPTH);
         assert_eq!(config.token_budget, TOKEN_BUDGET);
         assert_eq!(config.runs, PATTERN_DISCOVERY_RUNS);
