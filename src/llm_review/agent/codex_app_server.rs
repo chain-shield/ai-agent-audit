@@ -1,8 +1,11 @@
+use crate::config::MAX_CODEX_TURNS_PER_SESSION;
 use anyhow::{Context, Result, anyhow, bail};
 use schemars::{JsonSchema, schema_for};
 use serde_json::{Value, json};
 use std::env;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -21,6 +24,8 @@ const DEFAULT_CODEX_SESSION_POOL_SIZE: usize = 2;
 const CODEX_SESSION_POOL_SIZE_ENV: &str = "AI_AGENT_AUDIT_CODEX_SESSION_POOL_SIZE";
 const CODEX_REQUEST_TIMEOUT_SECS: u64 = 30;
 const CODEX_TURN_EVENT_TIMEOUT_SECS: u64 = 10 * 60;
+const CODEX_SHUTDOWN_POLL_ATTEMPTS: usize = 10;
+const CODEX_SHUTDOWN_POLL_INTERVAL_MS: u64 = 50;
 #[cfg(target_os = "macos")]
 const PLATFORM_CODEX_FALLBACKS: &[&str] = &["/Applications/Codex.app/Contents/Resources/codex"];
 #[cfg(not(target_os = "macos"))]
@@ -105,6 +110,7 @@ impl CodexAgentConfig {
             session.mark_broken();
         } else {
             session.mark_broken_if_not_running();
+            session.mark_broken_if_turn_limit_reached();
         }
         result
     }
@@ -273,6 +279,18 @@ impl PooledCodexSession {
         }
     }
 
+    fn mark_broken_if_turn_limit_reached(&mut self) {
+        if let Some(session) = self.session.as_ref()
+            && session.should_recycle()
+        {
+            log::info!(
+                "Recycling Codex app-server session after {} completed turns",
+                session.completed_turns
+            );
+            self.broken = true;
+        }
+    }
+
     fn mark_broken(&mut self) {
         self.broken = true;
     }
@@ -299,23 +317,26 @@ struct CodexSession {
     message_rx: Receiver<Result<Value>>,
     next_id: u64,
     auth_verified: bool,
+    completed_turns: usize,
 }
 
 impl CodexSession {
     fn start() -> Result<Self> {
         let codex_cli = resolve_codex_cli_path()?;
-        let mut child = Command::new(&codex_cli)
+        let mut command = Command::new(&codex_cli);
+        command
             .args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to start Codex app-server using `{}`",
-                    codex_cli.display()
-                )
-            })?;
+            .stderr(Stdio::null());
+        configure_codex_process_group(&mut command);
+
+        let mut child = command.spawn().with_context(|| {
+            format!(
+                "failed to start Codex app-server using `{}`",
+                codex_cli.display()
+            )
+        })?;
 
         let stdin = child
             .stdin
@@ -333,6 +354,7 @@ impl CodexSession {
             message_rx,
             next_id: 1,
             auth_verified: false,
+            completed_turns: 0,
         })
     }
 
@@ -624,13 +646,17 @@ impl CodexSession {
 
                     let status = turn.get("status").and_then(Value::as_str).unwrap_or("");
                     return match status {
-                        "completed" | "interrupted" => final_text
-                            .filter(|text| !text.trim().is_empty())
-                            .ok_or_else(|| {
-                                PromptFailure::Fatal(anyhow!(
-                                    "Codex completed without final text output"
-                                ))
-                            }),
+                        "completed" | "interrupted" => {
+                            let output = final_text
+                                .filter(|text| !text.trim().is_empty())
+                                .ok_or_else(|| {
+                                    PromptFailure::Fatal(anyhow!(
+                                        "Codex completed without final text output"
+                                    ))
+                                })?;
+                            self.completed_turns = self.completed_turns.saturating_add(1);
+                            Ok(output)
+                        }
                         "failed" => {
                             let error = turn.get("error").cloned().unwrap_or_else(|| json!({}));
                             Err(classify_turn_error(error, self))
@@ -727,6 +753,10 @@ impl CodexSession {
 
     fn is_running(&mut self) -> bool {
         self.child.try_wait().ok().flatten().is_none()
+    }
+
+    fn should_recycle(&self) -> bool {
+        self.completed_turns >= MAX_CODEX_TURNS_PER_SESSION
     }
 }
 
@@ -844,12 +874,95 @@ fn is_runnable_file(path: &Path) -> bool {
     path.is_file()
 }
 
+fn configure_codex_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    unsafe {
+        // Give each pooled app-server its own process group so we can tear down
+        // any MCP/browser helper descendants when the session is recycled.
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+fn terminate_codex_process_tree(child: &mut Child) {
+    #[cfg(unix)]
+    if let Some(process_group_id) = i32::try_from(child.id()).ok() {
+        if process_group_is_alive(process_group_id) {
+            send_process_group_signal(process_group_id, libc::SIGTERM);
+            if !wait_for_process_group_exit(process_group_id, child) {
+                send_process_group_signal(process_group_id, libc::SIGKILL);
+                let _ = wait_for_process_group_exit(process_group_id, child);
+            }
+        }
+    }
+
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+#[cfg(unix)]
+fn wait_for_process_group_exit(process_group_id: i32, child: &mut Child) -> bool {
+    for _ in 0..CODEX_SHUTDOWN_POLL_ATTEMPTS {
+        let _ = child.try_wait();
+        if !process_group_is_alive(process_group_id) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(CODEX_SHUTDOWN_POLL_INTERVAL_MS));
+    }
+
+    let _ = child.try_wait();
+    !process_group_is_alive(process_group_id)
+}
+
+#[cfg(unix)]
+fn process_group_is_alive(process_group_id: i32) -> bool {
+    let result = unsafe { libc::killpg(process_group_id, 0) };
+    if result == 0 {
+        return true;
+    }
+
+    let err = std::io::Error::last_os_error();
+    match err.raw_os_error() {
+        Some(libc::ESRCH) => false,
+        Some(libc::EPERM) => true,
+        _ => {
+            log::warn!(
+                "Failed to probe Codex process group {}: {}",
+                process_group_id,
+                err
+            );
+            true
+        }
+    }
+}
+
+#[cfg(unix)]
+fn send_process_group_signal(process_group_id: i32, signal: i32) {
+    let result = unsafe { libc::killpg(process_group_id, signal) };
+    if result == 0 {
+        return;
+    }
+
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() != Some(libc::ESRCH) {
+        log::warn!(
+            "Failed to signal Codex process group {} with signal {}: {}",
+            process_group_id,
+            signal,
+            err
+        );
+    }
+}
+
 impl Drop for CodexSession {
     fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
+        terminate_codex_process_tree(&mut self.child);
     }
 }
 

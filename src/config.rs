@@ -69,11 +69,15 @@ pub const MAX_FILE_RUNS: usize = 1;
 pub const MAX_CONCURRENTS_VERIFY: usize = 1;
 pub const MAX_CONCURRENTS_REVIEW: usize = 2;
 pub const MAX_CONCURRENTS_POC: usize = 1;
-pub const MAX_CONCURRENTS_GENERAL: usize = 8;
+pub const MAX_CONCURRENTS_GENERAL: usize = 20;
 
 /// File summarization fanout. Keep this low because Codex-backed summary jobs
 /// can retain large prompt/context strings and become memory-heavy.
 pub const SUMMARY_MAX_PARALLEL: usize = 50;
+
+/// Recycle pooled Codex app-server sessions after a small number of completed
+/// turns so helper subprocesses cannot accumulate unboundedly in one process.
+pub const MAX_CODEX_TURNS_PER_SESSION: usize = 2;
 
 /// Docker volume path for repository analysis
 pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
