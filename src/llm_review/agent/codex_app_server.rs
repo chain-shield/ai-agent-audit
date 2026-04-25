@@ -1,6 +1,7 @@
 use crate::config::MAX_CODEX_TURNS_PER_SESSION;
 use anyhow::{Context, Result, anyhow, bail};
 use schemars::{JsonSchema, schema_for};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::env;
 use std::io::{BufRead, BufReader, Write};
@@ -26,12 +27,14 @@ const CODEX_REQUEST_TIMEOUT_SECS: u64 = 30;
 const CODEX_TURN_EVENT_TIMEOUT_SECS: u64 = 10 * 60;
 const CODEX_SHUTDOWN_POLL_ATTEMPTS: usize = 10;
 const CODEX_SHUTDOWN_POLL_INTERVAL_MS: u64 = 50;
+const CODEX_DISABLE_PLUGINS_FEATURE: &str = "plugins";
 #[cfg(target_os = "macos")]
 const PLATFORM_CODEX_FALLBACKS: &[&str] = &["/Applications/Codex.app/Contents/Resources/codex"];
 #[cfg(not(target_os = "macos"))]
 const PLATFORM_CODEX_FALLBACKS: &[&str] = &[];
 
 static CODEX_SESSION_POOL: OnceLock<CodexSessionPool> = OnceLock::new();
+static CODEX_APP_SERVER_ARGS: OnceLock<Vec<String>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct CodexAgentConfig {
@@ -46,6 +49,12 @@ pub struct CodexAgentConfig {
 pub struct ChatGptAccount {
     pub email: String,
     pub plan_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfiguredMcpServer {
+    name: String,
+    enabled: bool,
 }
 
 impl CodexAgentConfig {
@@ -325,6 +334,7 @@ impl CodexSession {
         let codex_cli = resolve_codex_cli_path()?;
         let mut command = Command::new(&codex_cli);
         command
+            .args(codex_app_server_args(&codex_cli))
             .args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -872,6 +882,82 @@ fn find_codex_on_path() -> Option<PathBuf> {
 
 fn is_runnable_file(path: &Path) -> bool {
     path.is_file()
+}
+
+fn codex_app_server_args(codex_cli: &Path) -> &'static [String] {
+    CODEX_APP_SERVER_ARGS
+        .get_or_init(|| resolve_codex_app_server_args(codex_cli))
+        .as_slice()
+}
+
+fn resolve_codex_app_server_args(codex_cli: &Path) -> Vec<String> {
+    let mut args = vec![
+        "--disable".to_string(),
+        CODEX_DISABLE_PLUGINS_FEATURE.to_string(),
+    ];
+
+    match configured_mcp_server_names(codex_cli) {
+        Ok(server_names) => {
+            if server_names.is_empty() {
+                log::info!(
+                    "Starting Codex app-server with plugins disabled and no configured MCP servers"
+                );
+                return args;
+            }
+
+            let disabled_count = server_names.len();
+            for server_name in server_names {
+                args.push("-c".to_string());
+                args.push(format!("mcp_servers.{server_name}.enabled=false"));
+            }
+
+            log::info!(
+                "Starting Codex app-server with plugins disabled and {} MCP server overrides",
+                disabled_count
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "Failed to inspect Codex MCP configuration; audit sessions will start with plugins disabled only: {err:#}"
+            );
+        }
+    }
+
+    args
+}
+
+fn configured_mcp_server_names(codex_cli: &Path) -> Result<Vec<String>> {
+    let output = Command::new(codex_cli)
+        .args([
+            "--disable",
+            CODEX_DISABLE_PLUGINS_FEATURE,
+            "mcp",
+            "list",
+            "--json",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("failed to inspect configured Codex MCP servers")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "Codex MCP inspection exited with status {}: {}",
+            output.status,
+            stderr.trim()
+        );
+    }
+
+    let configured_servers: Vec<ConfiguredMcpServer> = serde_json::from_slice(&output.stdout)
+        .context("failed to parse Codex MCP server list JSON")?;
+
+    Ok(configured_servers
+        .into_iter()
+        .filter(|server| server.enabled)
+        .map(|server| server.name)
+        .collect())
 }
 
 fn configure_codex_process_group(command: &mut Command) {

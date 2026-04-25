@@ -6508,3 +6508,6 @@ This file records orchestrator-visible worker lifecycle events and the exact raw
 
 ## 2026-04-24T18:59:36Z `completed` `prompt-revision`
 - Summary: Created validation-prompts/v2.md and updated CHANGELOG.md using the prompt-analysis artifact plus the approved and rejected finding truth artifacts.
+
+## 2026-04-25T14:55:47Z `completed` `prompt-revision`
+- Summary: Created fresh recall-first v2 prompt after resetting discarded v2/v3 lineage

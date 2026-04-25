@@ -12,7 +12,7 @@ use std::sync::Arc;
 use strum_macros::EnumString;
 use tokio::sync::Semaphore;
 
-use crate::config::{OPENAI_SUMMARY_REASONING_EFFORT, SUMMARY_MAX_PARALLEL};
+use crate::config::{OPENAI_SUMMARY_MODEL, OPENAI_SUMMARY_REASONING_EFFORT, SUMMARY_MAX_PARALLEL};
 use crate::utils::check_folder_name::is_script_file;
 use crate::{
     build_brain::{
@@ -22,7 +22,6 @@ use crate::{
             insert_file_summary_to_db,
         },
     },
-    config::OPENAI_MODEL,
     llm_review::{
         agent::{
             agent_enums::{all_enum_variants, generate_enum_list},
@@ -197,7 +196,7 @@ pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
 // pub const MAX_CHARS_STORAGE_DESC: u16 = 16;
 
 pub async fn summarize_src_files(repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
-    summarize_src_files_with_model(repo, OPENAI_MODEL).await
+    summarize_src_files_with_model(repo, OPENAI_SUMMARY_MODEL).await
 }
 
 pub async fn summarize_src_files_with_model(
@@ -462,7 +461,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
 
     let ai_summary_agent = AgentFactory::create_openai_agent(
         &AgentConfig::new(Some(repo.clone()))
-            .with_model(OPENAI_MODEL)
+            .with_model(OPENAI_SUMMARY_MODEL)
             .with_preamble(preamble)
             .with_openai_reasoning_effort(OPENAI_SUMMARY_REASONING_EFFORT),
     )?;

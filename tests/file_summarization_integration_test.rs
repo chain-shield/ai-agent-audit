@@ -14,7 +14,7 @@ use ai_agent_audit::{
         summarize::{FileSummaryType, summarize_src_files_with_model},
         summarize_db::{get_file_summary_from_db, get_summaries_from_db},
     },
-    config::{AuditType, OPENAI_MODEL},
+    config::{AuditType, OPENAI_SUMMARY_MODEL},
     llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::{PocConfig, RepoPaths},
     utils::remapping::parse_and_store_remappings,
@@ -157,10 +157,10 @@ async fn test_file_summarization_and_categorization() {
 
     // Generate summaries and categorizations
     println!("\n📝 Generating file summaries and categorizations...");
-    println!("   Using model: {}", OPENAI_MODEL);
+    println!("   Using model: {}", OPENAI_SUMMARY_MODEL);
     println!("   This will take several minutes as each file is analyzed by the LLM...");
 
-    let summaries = summarize_src_files_with_model(&repo, OPENAI_MODEL)
+    let summaries = summarize_src_files_with_model(&repo, OPENAI_SUMMARY_MODEL)
         .await
         .expect("Failed to generate summaries");
 

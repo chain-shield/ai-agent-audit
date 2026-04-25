@@ -79,6 +79,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "gpt-4o" => 2.50,
             "gpt-5" => 1.25,
             "gpt-5.4" => 1.25,
+            "gpt-5.5" => 5.00,
             "gpt-5-mini" => 0.25,
             "gpt-5.1" => 1.25,
             "gpt-5.2" => 1.75,
@@ -114,6 +115,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "gpt-4o" => 10.00,
             "gpt-5" => 25.00, // set to 2.5X actual value to account for reasoning tokens
             "gpt-5.4" => 25.00, // approximate GPT-5 family cost for local usage estimates
+            "gpt-5.5" => 30.00,
             "gpt-5-mini" => 2.00,
             "gpt-5.1" => 25.00,
             "gpt-5.2" => 30.00,
@@ -264,6 +266,22 @@ pub fn estimate_chat_completion_tokens(user_message: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_gpt_5_5_model_uses_expected_cost_rates() {
+        assert_eq!(
+            get_cost_per_million_tokens_by_model("gpt-5.5", TokenType::Input),
+            5.00
+        );
+        assert_eq!(
+            get_cost_per_million_tokens_by_model("gpt-5.5", TokenType::Output),
+            30.00
+        );
+        assert_eq!(
+            get_cost_per_million_tokens_by_model(" GPT-5.5 ", TokenType::Input),
+            5.00
+        );
+    }
 
     #[test]
     fn test_gemini_3_1_preview_model_uses_expected_cost_rates() {
