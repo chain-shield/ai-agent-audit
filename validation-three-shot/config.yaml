@@ -1,0 +1,40 @@
+# Production defaults for scripts/three_shot_round.py.
+#
+# For a new contest, usually change:
+# - benchmark
+# - run_id
+# - prompt_version, only when testing a new validation prompt
+
+benchmark: 2026-01-olas
+prompt_version: v2
+run_id: run-003
+
+workers:
+  r1:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r2:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r3:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r4:
+    model: gpt-5.4
+    reasoning_effort: high
+  scoring:
+    model: gpt-5.4
+    reasoning_effort: xhigh
+
+goals:
+  primary_kpi: present_root_recall
+  h_m_precision_floor: 50%
+  h_m_precision_target: 50%-60%
+  h_m_recall_goal: as close to 100% as possible before canonicalization
+
+rounds:
+  r1_scope_screen: true
+  r2_unsupported_token_screen: true
+  r3_final_validation: true
+  r4_canonicalization: true
+  scoring: true

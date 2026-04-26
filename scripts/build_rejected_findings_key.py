@@ -28,13 +28,13 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Iterable
 
-import validation_loop as vl
+from three_shot_round import Finding, REPO_ROOT, parse_findings, report_path
 
 
-OUTPUT_MD = vl.REPO_ROOT / "C4_REJECTED_FINDINGS_KEY.md"
-OUTPUT_JSON = vl.REPO_ROOT / "C4_REJECTED_FINDINGS_KEY.json"
-REJECTED_CORPUS = vl.REPO_ROOT / "C4_LOW_QA_INVALID_FINDINGS.md"
-APPROVED_KEY = vl.REPO_ROOT / "APPROVED_FINDINGS_KEY.md"
+OUTPUT_MD = REPO_ROOT / "C4_REJECTED_FINDINGS_KEY.md"
+OUTPUT_JSON = REPO_ROOT / "C4_REJECTED_FINDINGS_KEY.json"
+REJECTED_CORPUS = REPO_ROOT / "C4_LOW_QA_INVALID_FINDINGS.md"
+APPROVED_KEY = REPO_ROOT / "APPROVED_FINDINGS_KEY.md"
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ class RejectedMatch:
 
 @dataclass(frozen=True)
 class PreparedFinding:
-    finding: vl.Finding
+    finding: Finding
     key_row: ApprovedKeyRow
     norm_title: str
     title_tokens: frozenset[str]
@@ -336,7 +336,7 @@ def category_from_key_reason(reason: str) -> str:
 
 
 def prepare_finding(
-    finding: vl.Finding,
+    finding: Finding,
     key_row: ApprovedKeyRow,
 ) -> PreparedFinding:
     combined_text = finding.title + " " + finding.block[:1200]
@@ -469,7 +469,7 @@ def build_markdown(
         "# C4 Rejected Findings Key",
         "",
         f"Benchmark: `{benchmark}`",
-        f"Source report: `{vl.report_path(benchmark)}`",
+        f"Source report: `{report_path(benchmark)}`",
         f"Source approved key: `{APPROVED_KEY}`",
         f"Source rejected corpus: `{REJECTED_CORPUS}`",
         "",
@@ -520,7 +520,7 @@ def build_markdown(
 def main() -> None:
     args = parse_args()
     report_findings = {
-        finding.fid: finding for finding in vl.parse_findings(vl.report_path(args.benchmark))
+        finding.fid: finding for finding in parse_findings(report_path(args.benchmark))
     }
     approved_rows = parse_approved_key()
     rejected_entries = parse_rejected_entries()
@@ -548,7 +548,7 @@ def main() -> None:
             json.dumps(
                 {
                     "benchmark": args.benchmark,
-                    "source_report": str(vl.report_path(args.benchmark)),
+                    "source_report": str(report_path(args.benchmark)),
                     "source_approved_key": str(APPROVED_KEY),
                     "source_rejected_corpus": str(REJECTED_CORPUS),
                     "matches": [asdict(match) for match in matches],
