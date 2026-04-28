@@ -1,5 +1,11 @@
 # Validation Prompt Changelog
 
+## Runtime worker spec update on 2026-04-27
+
+- Added `{{WORKER_LAUNCHER}}` to R1-R8 prompt headers.
+- Updated controller worker payloads to emit `worker_launcher`, `worker_spawn_command_template`, and exact `worker_spawn_command` values when prompts are written to disk.
+- Default launcher is `/Users/apmfree/codex-minimal-worker` so parallel workers do not load plugin MCP servers.
+
 ## Reset on 2026-04-25
 
 - Discarded the `v2` / `v3` prompt lineage and the derived `v4` draft after recall regressed across iterations.
@@ -9,7 +15,7 @@
 ## v1 -> v2
 
 - Added an explicit evidence hierarchy and durable `Core Validation Principles` section so workers separate bug existence, root-cause independence, and severity instead of collapsing them.
-- Added a mandatory scope-first stage that tells workers to read `README.md`, `olas-scope.md`, `olas-docs.md`, `v12-findings.md`, and `v12-checklist.md` before any deeper validation work.
+- Added a mandatory scope-first stage that tells workers to read configured benchmark context docs, benchmark V12/prior-findings context whether standalone or embedded, and the shared three-shot `v12-checklist.md` before any deeper validation work.
 - Strengthened the prompt so client-declared scope, known issues, and V12 duplicates are filtered before bug-existence or severity analysis.
 - Reframed unsupported ERC20 / non-standard token behavior as out of scope unless the benchmark docs explicitly declare support for that exact token class or semantic.
 - Added a root-cause independence gate that rejects only non-independent downstream symptoms or alternate patch sites while preserving same-root articulations that still prove the live broken invariant.

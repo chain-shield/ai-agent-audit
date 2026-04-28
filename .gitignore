@@ -40,3 +40,5 @@ olas-*.md
 docs/
 audit-docs/
 prompts/
+!validation-three-shot/prompts/
+!validation-three-shot/prompts/*.md

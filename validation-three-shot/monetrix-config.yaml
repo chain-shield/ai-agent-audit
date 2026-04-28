@@ -7,7 +7,7 @@
 # - paths.audit_report
 # - prompt_version, only when testing a new validation prompt
 
-benchmark: example-contest
+benchmark: 2026-04-monetrix
 prompt_version: v2
 run_id: run-001
 
@@ -15,10 +15,10 @@ paths:
   # Full path to the contest workspace/source bundle. context_docs can use
   # {{SOURCE_ROOT}} to point at README.md, scope/docs files, prior findings,
   # and any other contest-specific context workers must read.
-  source_root: /absolute/path/to/contest/source-root
+  source_root: /Users/apmfree/Desktop/Audit/2026-04-monetrix
   # Full path to the AI audit report containing findings in `## [H-1]. Title`
   # format.
-  audit_report: /absolute/path/to/audit-report.md
+  audit_report: 2026-04-monetrix/report/audit-report-openai.md
   # Optional: uncomment for score-local / scoring against a truth file.
   # truth_file: /absolute/path/to/truth-file.md
 
@@ -29,10 +29,9 @@ paths:
 # If V12 prior findings are embedded in a *-scope.md file for a contest, omit
 # the standalone {{SOURCE_ROOT}}/v12-findings.md entry.
 context_docs:
+  - audit-docs/monetrix-docs.md
+  - audit-docs/monetrix-scope.md
   - "{{SOURCE_ROOT}}/README.md"
-  - "{{SOURCE_ROOT}}/*-scope.md"
-  - "{{SOURCE_ROOT}}/*-docs.md"
-  - "{{SOURCE_ROOT}}/v12-findings.md"
   - "{{THREE_SHOT_ROOT}}/v12-checklist.md"
 
 workers:
