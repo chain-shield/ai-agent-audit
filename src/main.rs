@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
     let cli = parse::Cli::parse_args()?;
 
     // Clone repository in the local audit workspace and build with Foundry/Hardhat
-    let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
+    let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli).await?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
     info!("github url => {:?}", &repo.github_url);

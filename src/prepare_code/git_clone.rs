@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use glob::glob;
 use ignore::gitignore::GitignoreBuilder;
 use log::info;
+use regex::Regex;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::Command;
@@ -19,6 +20,7 @@ use walkdir::WalkDir;
 
 use crate::cli_args::parse::{BuilderType, Cli};
 use crate::config::{AuditType, audit_config};
+use crate::prepare_code::audit_context::{generate_audit_context, should_generate_context};
 use crate::utils::check_folder_name::{
     contains_build_config, is_library_package_json, is_monorepo_config_file, is_root_config_file,
     is_script_file, is_test_file,
@@ -95,7 +97,7 @@ pub struct RepoPaths {
 /// # Returns
 /// * `RepoPaths` - Organized repository paths and metadata
 ///
-pub fn clone_and_filter_git_repo(
+pub async fn clone_and_filter_git_repo(
     // url: &str,
     // subfolder: Option<&str>,
     // build_flags: BuildFlags,
@@ -157,6 +159,34 @@ pub fn clone_and_filter_git_repo(
         );
     }
 
+    let generated_context = if should_generate_context(cli) {
+        Some(generate_audit_context(cli, &root, &search_root, &repo_name, &commit_hash).await?)
+    } else {
+        None
+    };
+
+    if let Some(context) = &generated_context {
+        info!(
+            "generated audit context: scope_txt={}, scope_md={}, docs_md={}",
+            context.scope_txt.display(),
+            context.scope_md.display(),
+            context.docs_md.display()
+        );
+    }
+
+    let effective_custom_doc = generated_context
+        .as_ref()
+        .map(|context| context.docs_md.to_string_lossy().to_string())
+        .or_else(|| cli.custom_doc.clone());
+    let effective_audit_scope = generated_context
+        .as_ref()
+        .map(|context| context.scope_md.to_string_lossy().to_string())
+        .or_else(|| cli.audit_scope.clone());
+    let effective_scoped_files = generated_context
+        .as_ref()
+        .map(|context| context.scope_txt.to_string_lossy().to_string())
+        .or_else(|| cli.scoped_files.clone());
+
     // create excluded folders
     let excluded_folders = if let Some(folders) = &cli.exclude_folders {
         let folder_paths: Vec<PathBuf> = folders
@@ -172,7 +202,7 @@ pub fn clone_and_filter_git_repo(
     // check if custom doc folder set it up
     let mut docs = Vec::new();
 
-    let has_custom_docs = match &cli.custom_doc {
+    let has_custom_docs = match &effective_custom_doc {
         Some(doc) => {
             let doc_path = Path::new(doc).to_path_buf();
             if doc_path.exists() {
@@ -294,7 +324,7 @@ pub fn clone_and_filter_git_repo(
         }
     }
 
-    let audit_scope = match &cli.audit_scope {
+    let audit_scope = match &effective_audit_scope {
         Some(scope) => {
             let audit_scope_file = Path::new(scope).to_path_buf();
 
@@ -307,7 +337,7 @@ pub fn clone_and_filter_git_repo(
         None => None,
     };
 
-    let scoped_files = match &cli.scoped_files {
+    let scoped_files = match &effective_scoped_files {
         Some(scope) => {
             let scope_file = Path::new(scope).to_path_buf();
 
@@ -434,18 +464,24 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     let has_build_artifacts = cloned_repo_root.join("out").exists()
         || cloned_repo_root.join("artifacts").exists()
         || cloned_repo_root.join("build").exists(); // Some projects use 'build'
+    let custom_build = matches!(cli.builder, BuilderType::Custom);
 
     // Determine if we should reuse the existing workspace
     let should_reuse = workspace_path.exists()
         && build_stamp.exists()
         && cloned_repo_root.exists()
-        && has_build_artifacts
+        && (has_build_artifacts || custom_build)
         && !cli.force_rebuild;
 
     if should_reuse {
         log::info!(
-            "✅ Reusing existing workspace (build artifacts found): {}",
-            workspace_path.display()
+            "✅ Reusing existing workspace ({}): {}",
+            if has_build_artifacts {
+                "build artifacts found"
+            } else {
+                "custom build stamp found"
+            },
+            workspace_path.display(),
         );
         return Ok(workspace_path);
     }
@@ -459,7 +495,7 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
         if !build_stamp.exists() {
             reasons.push("build stamp missing");
         }
-        if !has_build_artifacts {
+        if !has_build_artifacts && !custom_build {
             reasons.push("build artifacts (out/artifacts/build) not found");
         }
 
@@ -630,7 +666,11 @@ fn ensure_build_runtime_dependencies(cli: &Cli, build_root: &Path) -> Result<()>
         BuilderType::HardhatYarn => {
             deps.extend([RuntimeDependency::Node, RuntimeDependency::Yarn]);
         }
-        BuilderType::Custom => {}
+        BuilderType::Custom => {
+            if let Some(command) = &cli.build_cmd {
+                deps.extend(infer_custom_build_dependencies(command));
+            }
+        }
         BuilderType::Auto => {
             if build_root.join("foundry.toml").exists() || build_root.join("forge.toml").exists() {
                 deps.extend([RuntimeDependency::Git, RuntimeDependency::Forge]);
@@ -651,6 +691,47 @@ fn ensure_build_runtime_dependencies(cli: &Cli, build_root: &Path) -> Result<()>
     }
 
     ensure_runtime_dependencies("repository build", &deps)
+}
+
+fn infer_custom_build_dependencies(command: &str) -> Vec<RuntimeDependency> {
+    let mut deps = Vec::new();
+
+    if shell_command_mentions(command, "git") {
+        deps.push(RuntimeDependency::Git);
+    }
+    if shell_command_mentions(command, "forge") {
+        deps.push(RuntimeDependency::Forge);
+    }
+    if shell_command_mentions(command, "slither") {
+        deps.push(RuntimeDependency::Slither);
+    }
+    if shell_command_mentions(command, "npm") {
+        deps.extend([RuntimeDependency::Node, RuntimeDependency::Npm]);
+    }
+    if shell_command_mentions(command, "npx") {
+        deps.extend([RuntimeDependency::Node, RuntimeDependency::Npx]);
+    }
+    if shell_command_mentions(command, "yarn") {
+        deps.extend([RuntimeDependency::Node, RuntimeDependency::Yarn]);
+    }
+    if shell_command_mentions(command, "pnpm") {
+        deps.extend([RuntimeDependency::Node, RuntimeDependency::Pnpm]);
+    }
+    if shell_command_mentions(command, "hardhat") && !deps.contains(&RuntimeDependency::Node) {
+        deps.push(RuntimeDependency::Node);
+    }
+
+    deps
+}
+
+fn shell_command_mentions(command: &str, name: &str) -> bool {
+    let pattern = format!(
+        r"(^|[^A-Za-z0-9_./-]){}([^A-Za-z0-9_.-]|$)",
+        regex::escape(name)
+    );
+    Regex::new(&pattern)
+        .map(|regex| regex.is_match(command))
+        .unwrap_or(false)
 }
 
 impl AsRef<RepoPaths> for RepoPaths {
@@ -846,4 +927,28 @@ pub fn extract_list_of_files(files: &Path, root_folder: &Path) -> Result<Vec<Pat
         .collect();
 
     Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_build_dependency_inference_detects_package_managers() {
+        let deps = infer_custom_build_dependencies(
+            "git submodule update --init && cd contracts && yarn hardhat compile && npx hardhat compile",
+        );
+
+        assert!(deps.contains(&RuntimeDependency::Git));
+        assert!(deps.contains(&RuntimeDependency::Node));
+        assert!(deps.contains(&RuntimeDependency::Yarn));
+        assert!(deps.contains(&RuntimeDependency::Npx));
+    }
+
+    #[test]
+    fn custom_build_dependency_inference_keeps_submodule_only_lightweight() {
+        let deps = infer_custom_build_dependencies("git submodule update --init --recursive");
+
+        assert_eq!(deps, vec![RuntimeDependency::Git]);
+    }
 }
