@@ -1,0 +1,95 @@
+# Production defaults for scripts/three_shot_round.py.
+#
+# For a new contest, usually change:
+# - benchmark
+# - run_id
+# - paths.source_root
+# - paths.audit_report
+# - prompt_version, only when testing a new validation prompt
+
+benchmark: example-contest
+prompt_version: v2
+run_id: run-001
+
+paths:
+  # Full path to the contest workspace/source bundle. context_docs can use
+  # {{SOURCE_ROOT}} to point at README.md, scope/docs files, prior findings,
+  # and any other contest-specific context workers must read.
+  source_root: /absolute/path/to/contest/source-root
+  # Full path to the AI audit report containing findings in `## [H-1]. Title`
+  # format.
+  audit_report: /absolute/path/to/audit-report.md
+  # Optional: uncomment for score-local / scoring against a truth file.
+  # truth_file: /absolute/path/to/truth-file.md
+
+# Authoritative context files every three-shot worker must read.
+#
+# Supports exact paths and glob patterns. Use {{SOURCE_ROOT}} for paths under
+# paths.source_root and {{THREE_SHOT_ROOT}} for shared workflow artifacts.
+# If V12 prior findings are embedded in a *-scope.md file for a contest, omit
+# the standalone {{SOURCE_ROOT}}/v12-findings.md entry.
+context_docs:
+  - "{{SOURCE_ROOT}}/README.md"
+  - "{{SOURCE_ROOT}}/*-scope.md"
+  - "{{SOURCE_ROOT}}/*-docs.md"
+  - "{{SOURCE_ROOT}}/v12-findings.md"
+  - "{{THREE_SHOT_ROOT}}/v12-checklist.md"
+
+workers:
+  # All spawned workers should use the minimal Codex launcher to avoid loading
+  # plugin-provided MCP servers into every parallel worker process.
+  default:
+    launcher: /Users/apmfree/codex-minimal-worker
+  r1:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r2:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r3:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r4:
+    model: gpt-5.4
+    reasoning_effort: high
+  r4a:
+    model: gpt-5.4
+    reasoning_effort: high
+  r5:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r6:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r7:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r8:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  scoring:
+    model: gpt-5.4
+    reasoning_effort: xhigh
+
+goals:
+  primary_kpi: present_root_recall
+  h_m_precision_floor: 50%
+  h_m_precision_target: 50%-60%
+  h_m_recall_goal: as close to 100% as possible before canonicalization
+
+contest:
+  poc_instructions: Read the relevant contest repo README.md near the end of the document before creating or verifying a PoC.
+  repo_layout: The benchmark source may contain one repo or multiple repos under {{SOURCE_ROOT}}; identify the repo that owns the vulnerable code path and place each PoC in that repo's own test folder.
+  test_command_hints: Use each repo README.md and existing tests to determine the minimal command that runs the new PoC from the relevant repo.
+
+rounds:
+  r1_scope_screen: true
+  r2_unsupported_token_screen: true
+  r3_final_validation: true
+  r4_canonicalization: true
+  r4a_v12_sweep: true
+  r5_poc_generation: true
+  r6_poc_verification: true
+  r7_c4_report_generation: true
+  r8_c4_report_review: true
+  scoring: true

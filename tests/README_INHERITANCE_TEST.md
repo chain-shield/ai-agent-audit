@@ -30,23 +30,20 @@ IPriceOracle (interface)
 
 The test expects the Covenant repository to be located at:
 ```
-/private/tmp/audit-analysis/2025-10-covenant-d5ebe4/2025-10-covenant
+~/Desktop/Audit/2025-10-covenant-d5ebe4/2025-10-covenant
 ```
 
-This is the Docker volume mount point used during audits.
+This is the default local workspace used during audits.
 
-### 2. Docker Setup
+### 2. Local Tooling
 
-Ensure Docker is running and the Slither image is available:
-```bash
-docker pull ghcr.io/trailofbits/eth-security-toolbox:nightly
-```
+Ensure `slither` and the repo's build toolchain are available on PATH.
 
 ### 3. Repository Build
 
 The repository should be built before running the test:
 ```bash
-cd /private/tmp/audit-analysis/2025-10-covenant-d5ebe4/2025-10-covenant
+cd ~/Desktop/Audit/2025-10-covenant-d5ebe4/2025-10-covenant
 forge build
 ```
 
@@ -151,7 +148,7 @@ The test will output:
 
 **Solution**: Ensure the Covenant repo is cloned to the correct location:
 ```bash
-ls -la /private/tmp/audit-analysis/2025-10-covenant-d5ebe4/2025-10-covenant
+ls -la ~/Desktop/Audit/2025-10-covenant-d5ebe4/2025-10-covenant
 ```
 
 ### Test fails with "Slither failed"
@@ -159,14 +156,12 @@ ls -la /private/tmp/audit-analysis/2025-10-covenant-d5ebe4/2025-10-covenant
 **Problem**: Slither can't analyze the repository.
 
 **Solution**: 
-1. Ensure Docker is running
+1. Ensure `slither` is installed and on PATH
 2. Build the repository first: `cd /path/to/repo && forge build`
 3. Check Slither can run manually:
 ```bash
-docker run --rm -v /private/tmp/audit-analysis/2025-10-covenant-d5ebe4:/workspace \
-  -w /workspace \
-  ghcr.io/trailofbits/eth-security-toolbox:nightly \
-  slither --print inheritance --json - \
+cd ~/Desktop/Audit/2025-10-covenant-d5ebe4
+slither --print inheritance --json - \
   --filter-paths "lib/forge-std|lib/openzeppelin-contracts|lib/solady" \
   2025-10-covenant
 ```
@@ -249,4 +244,3 @@ The test passes if:
 - Use `--nocapture` to see detailed output
 - The test is async and uses `tokio::test`
 - Logging is initialized with `env_logger` for debugging
-

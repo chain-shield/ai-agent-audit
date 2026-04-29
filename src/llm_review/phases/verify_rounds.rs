@@ -13,6 +13,7 @@ use crate::llm_review::phases::rounds::validate_round::{
 use crate::llm_review::utils::prompt_context::generate_prompt_for_multi_finding_issue_check;
 use crate::reporting::save_file;
 use crate::{
+    config::{OPENAI_MODEL, OPENAI_REASONING_EFFORT},
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -203,7 +204,7 @@ pub async fn run_round<T>(
     agent: &AIAgent,
 ) -> Result<Findings>
 where
-    T: AnalysisRound + DeserializeOwned,
+    T: AnalysisRound + DeserializeOwned + JsonSchema + Send + 'static,
 {
     // filter out all findings that got tagged on ALL previous checks
     let clean_findings = Findings {
@@ -311,10 +312,10 @@ pub async fn run_round_validation(
 ) -> Result<Findings> {
     // custom agent for validation
     let validation_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.2")
+        .with_model(OPENAI_MODEL)
         .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing, and Top Code4rena Judge.")
         .with_file_retrieval(false)
-        .with_openai_reasoning_effort("high");
+        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
 
     let validation_agent = Arc::new(AgentFactory::create_openai_agent(&validation_config)?);
 

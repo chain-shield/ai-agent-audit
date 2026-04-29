@@ -13,7 +13,7 @@ use ai_agent_audit::{
         enrichment, summarize::summarize_src_files_with_model,
         summarize_db::get_file_summary_from_db,
     },
-    config::AuditType,
+    config::{AuditType, OPENAI_SUMMARY_MODEL},
     enumerator::{codeblock_db::CodeBlocksDb, codeblocks::generate_codeblock_from_codebase},
     llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::{PocConfig, RepoPaths},
@@ -148,7 +148,7 @@ async fn test_codeblock_generation_with_contract_category() {
     }
 
     // Generate summaries using LLM
-    summarize_src_files_with_model(&repo, "gpt-5-mini")
+    summarize_src_files_with_model(&repo, OPENAI_SUMMARY_MODEL)
         .await
         .expect("Failed to generate file summaries");
 

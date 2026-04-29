@@ -64,10 +64,7 @@ pub fn generate_prompt_for_multi_finding_issue_check(
 pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     let mut pattern_list = String::new();
 
-    pattern_list.push_str(&format!(
-        "\n\n ### Issue Type: {}\n",
-        pattern.issue_type
-    ));
+    pattern_list.push_str(&format!("\n\n ### Issue Type: {}\n", pattern.issue_type));
 
     pattern_list.push_str(&format!(
         "\n ### Relevant Function/Location: {}.{}\n",
@@ -103,10 +100,7 @@ pub fn generate_formatted_abbreviated_patterns(patterns: &[Pattern]) -> String {
     let mut pattern_list = String::new();
 
     for pattern in patterns {
-        pattern_list.push_str(&format!(
-            "\n\n ### Issue Type: {}\n",
-            pattern.issue_type
-        ));
+        pattern_list.push_str(&format!("\n\n ### Issue Type: {}\n", pattern.issue_type));
 
         pattern_list.push_str(&format!(
             "\n ### Relevant Function/Location: {}.{}\n",
@@ -191,8 +185,7 @@ pub fn get_finding_report(
         //title without index
         findings_report.push_str(&format!(
             "## [Severity-{}]. {}\n\n",
-            finding.severity,
-            finding.title
+            finding.severity, finding.title
         ));
     }
 

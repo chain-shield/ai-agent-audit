@@ -134,7 +134,7 @@ pub async fn execute<T, M>(
 where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
     <T as IssueStructTrait>::Spec: Send + Sync + Clone + DeserializeOwned + IssueTrait + 'static,
-    M: Clone + DeserializeOwned + JsonSchema + PatternVerification + Send + Sync,
+    M: Clone + DeserializeOwned + JsonSchema + PatternVerification + Send + Sync + 'static,
     <M as PatternVerification>::Spec: Send + Sync + IsLegit + JsonSchema,
 {
     let issue_title = patterns.issue_title();

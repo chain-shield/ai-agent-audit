@@ -1,7 +1,7 @@
 use crate::build_brain::graph_db::SmartContractFunction;
 use crate::build_brain::inheritance_map::{self, resolve_contract_file};
 use crate::build_brain::summarize_db::get_file_summary_from_db;
-use crate::config::{CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB};
+use crate::config::{CODEBLOCK_DB, app_db_path};
 use crate::cost::cost_data::get_token_count;
 /// Intelligent code slicing for focused AI analysis.
 ///
@@ -63,8 +63,7 @@ pub async fn generate_and_save_codeblocks_for_each_contract(
     let semantic_conn = Connection::open(semantics_db)?;
 
     // Create codeblock database path
-    let codeblock_path =
-        Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB)).to_path_buf();
+    let codeblock_path = app_db_path(CODEBLOCK_DB);
 
     // Delete the codeblock database from previous run to ensure fresh data
     if codeblock_path.exists() {
@@ -379,18 +378,20 @@ pub async fn generate_codeblock_from_codebase(
         );
         let main_tokens = get_token_count(&main_section);
 
-        info!(
+        log::info!(
             "✅ Adding 'Main Contract: {}' ({} tokens) - CRITICAL",
-            main_contract, main_tokens
+            main_contract,
+            main_tokens
         );
         markdown_codeblock_for_llm.push_str(&main_section);
         current_token_count += main_tokens;
         unique_files.insert(contract_file);
 
         if current_token_count > token_budget {
-            info!(
+            log::info!(
                 "⚠️ Main contract alone ({} tokens) exceeds budget ({} tokens)",
-                current_token_count, token_budget
+                current_token_count,
+                token_budget
             );
         }
         markdown_codeblock_for_llm
@@ -448,9 +449,10 @@ pub async fn generate_codeblock_from_codebase(
                 get_contract_file_content(&contract, file_option, repo).await?;
             // Skip if no content (could not resolve file)
             if contract_code.trim().is_empty() || unique_files.contains(&contract_file) {
-                info!(
+                log::info!(
                     "⏭️ Skipping '{} contract: {}' - no file or empty content",
-                    contract_type, contract
+                    contract_type,
+                    contract
                 );
                 contracts_skipped_no_file += 1;
                 continue;
@@ -461,9 +463,11 @@ pub async fn generate_codeblock_from_codebase(
 
             // Enforce minimum section size to avoid 1-token noise
             if section_tokens < 5 {
-                info!(
+                log::info!(
                     "⏭️ Skipping '{} contract: {}' ({} tokens) - below minimum (5 tokens)",
-                    contract_type, contract, section_tokens
+                    contract_type,
+                    contract,
+                    section_tokens
                 );
                 contracts_skipped_too_small += 1;
                 continue;
@@ -472,15 +476,23 @@ pub async fn generate_codeblock_from_codebase(
             let new_total = current_token_count + section_tokens;
 
             if new_total > token_budget {
-                info!(
+                log::info!(
                     "⏭️ Skipping '{} contract: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
-                    contract_type, contract, section_tokens, new_total, token_budget
+                    contract_type,
+                    contract,
+                    section_tokens,
+                    new_total,
+                    token_budget
                 );
                 contracts_skipped_budget += 1;
             } else {
-                info!(
+                log::info!(
                     "✅ Adding '{} contract: {}' ({} tokens) - total: {}/{} tokens",
-                    contract_type, contract, section_tokens, new_total, token_budget
+                    contract_type,
+                    contract,
+                    section_tokens,
+                    new_total,
+                    token_budget
                 );
                 markdown_codeblock_for_llm.push_str(&contract_section);
                 current_token_count = new_total;
@@ -515,7 +527,7 @@ pub async fn generate_codeblock_from_codebase(
             let source_content = match fs::read_to_string(source_file).await {
                 Ok(content) => content,
                 Err(e) => {
-                    info!(
+                    log::info!(
                         "⏭️ Could not read source file {} for dependency: {}",
                         display_file(source_file, repo),
                         e
@@ -531,7 +543,7 @@ pub async fn generate_codeblock_from_codebase(
             let new_total = current_token_count + source_tokens;
 
             if new_total > token_budget {
-                info!(
+                log::info!(
                     "⏭️ Skipping 'source file: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
                     display_file(source_file, repo),
                     source_tokens,
@@ -540,7 +552,7 @@ pub async fn generate_codeblock_from_codebase(
                 );
                 source_files_skipped_budget += 1;
             } else {
-                info!(
+                log::info!(
                     "✅ Adding 'source file: {}' ({} tokens) - total: {}/{} tokens",
                     display_file(source_file, repo),
                     source_tokens,
@@ -579,7 +591,7 @@ pub async fn generate_codeblock_from_codebase(
             if let Some(file_str) = interface_file.to_str()
                 && should_exclude_this_library(file_str)
             {
-                info!(
+                log::info!(
                     "⏭️ Skipping excluded library interface '{}' at {}",
                     interface_name,
                     display_file(interface_file, repo)
@@ -587,14 +599,14 @@ pub async fn generate_codeblock_from_codebase(
                 continue;
             }
 
-            info!(
+            log::info!(
                 "Adding Interface (or root implimentation) File: {}....",
                 display_file(interface_file, repo)
             );
             let interface_content = match fs::read_to_string(interface_file).await {
                 Ok(content) => content,
                 Err(e) => {
-                    info!(
+                    log::info!(
                         "could not read file {} for lib dependency detection: {}",
                         display_file(interface_file, repo),
                         e
@@ -609,7 +621,7 @@ pub async fn generate_codeblock_from_codebase(
             let new_total = current_token_count + interface_tokens;
 
             if new_total > token_budget {
-                info!(
+                log::info!(
                     "⏭️ Skipping 'interface/child: {} : {}' ({} tokens) - would exceed budget ({}/{} tokens)",
                     interface_name,
                     display_file(interface_file, repo),
@@ -618,7 +630,7 @@ pub async fn generate_codeblock_from_codebase(
                     token_budget
                 );
             } else {
-                info!(
+                log::info!(
                     "✅ Adding 'interface/child: {}' ({} tokens) - total: {}/{} tokens",
                     display_file(interface_file, repo),
                     interface_tokens,
@@ -650,7 +662,7 @@ pub async fn generate_codeblock_from_codebase(
             let impl_content = match fs::read_to_string(impl_file).await {
                 Ok(content) => content,
                 Err(e) => {
-                    info!(
+                    log::info!(
                         "⏭️ Could not read interface implementation {}: {} for dependency: {}",
                         impl_name,
                         display_file(impl_file, repo),
@@ -667,7 +679,7 @@ pub async fn generate_codeblock_from_codebase(
             let new_total = current_token_count + impl_tokens;
 
             if new_total > token_budget {
-                info!(
+                log::info!(
                     "⏭️ Skipping 'interface implementation: {}: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
                     impl_name,
                     display_file(impl_file, repo),
@@ -677,7 +689,7 @@ pub async fn generate_codeblock_from_codebase(
                 );
                 impl_skipped_budget += 1;
             } else {
-                info!(
+                log::info!(
                     "✅ Adding 'interface implementation: {}: {}' ({} tokens) - total: {}/{} tokens",
                     impl_name,
                     display_file(impl_file, repo),
@@ -712,14 +724,14 @@ pub async fn generate_codeblock_from_codebase(
                 continue;
             }
 
-            info!(
+            log::info!(
                 "Adding External Library File: {}....",
                 display_file(lib_file, repo),
             );
             let lib_content = match fs::read_to_string(lib_file).await {
                 Ok(content) => content,
                 Err(e) => {
-                    info!(
+                    log::info!(
                         "could not read file {} for lib dependency detection: {}",
                         display_file(lib_file, repo),
                         e
@@ -734,7 +746,7 @@ pub async fn generate_codeblock_from_codebase(
             let new_total = current_token_count + lib_tokens;
 
             if new_total > token_budget {
-                info!(
+                log::info!(
                     "⏭️ Skipping 'external lib: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
                     display_file(lib_file, repo),
                     lib_tokens,
@@ -742,7 +754,7 @@ pub async fn generate_codeblock_from_codebase(
                     token_budget
                 );
             } else {
-                info!(
+                log::info!(
                     "✅ Adding 'external lib: {}' ({} tokens) - total: {}/{} tokens",
                     display_file(lib_file, repo),
                     lib_tokens,
@@ -768,7 +780,7 @@ pub async fn generate_codeblock_from_codebase(
             let script_content = match fs::read_to_string(script).await {
                 Ok(content) => content,
                 Err(e) => {
-                    info!(
+                    log::info!(
                         "could not read file {} for dependency detection: {}",
                         display_file(script, repo),
                         e
@@ -783,7 +795,7 @@ pub async fn generate_codeblock_from_codebase(
             let new_total = current_token_count + script_tokens;
 
             if new_total > token_budget {
-                info!(
+                log::info!(
                     "⏭️ Skipping 'script: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
                     display_file(script, repo),
                     script_tokens,
@@ -791,7 +803,7 @@ pub async fn generate_codeblock_from_codebase(
                     token_budget
                 );
             } else {
-                info!(
+                log::info!(
                     "✅ Adding 'script: {}' ({} tokens) - total: {}/{} tokens",
                     display_file(script, repo),
                     script_tokens,
@@ -849,12 +861,10 @@ pub async fn extract_contract_category_from_contract(
     // Try Standard (source) files first
     let file_path = match resolve_contract_file(contract, SolFileType::Standard, repo).await? {
         Some(f) => f,
-        None => {
-            match resolve_contract_file(contract, SolFileType::LibFolder, repo).await? {
-                Some(f) => f,
-                None => return Ok(None),
-            }
-        }
+        None => match resolve_contract_file(contract, SolFileType::LibFolder, repo).await? {
+            Some(f) => f,
+            None => return Ok(None),
+        },
     };
 
     // Convert absolute path to relative path (same format as stored in database)
@@ -878,15 +888,13 @@ pub async fn get_contract_file_content(
 ) -> Result<(String, PathBuf)> {
     let file_path = option_file.unwrap_or(match get_file_from_contract(contract, repo).await {
         Some((filename, _)) => filename,
-        None => {
-            match get_file_from_lib_contract(contract, repo).await {
-                Some((filename, _)) => filename,
-                None => {
-                    info!("could not find file for contract {}", contract);
-                    PathBuf::new()
-                }
+        None => match get_file_from_lib_contract(contract, repo).await {
+            Some((filename, _)) => filename,
+            None => {
+                info!("could not find file for contract {}", contract);
+                PathBuf::new()
             }
-        }
+        },
     });
 
     if file_path.as_os_str().is_empty() {

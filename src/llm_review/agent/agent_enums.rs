@@ -6,8 +6,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
+use tokio::task;
 
 use crate::utils::extract_retry::agent_extract_with_retry;
+use crate::{
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    llm_review::agent::codex_app_server::CodexAgentConfig,
+};
 use rig::{
     agent::Agent,
     extractor::Extractor,
@@ -32,6 +37,15 @@ pub struct AgentMetadata {
     pub dynamic_context_enabled: bool,
 }
 
+pub enum OpenaiAgentBackend {
+    Direct {
+        agent: Agent<openai::responses_api::ResponsesCompletionModel>,
+    },
+    Codex {
+        config: CodexAgentConfig,
+    },
+}
+
 /// Unified AI agent enum supporting multiple LLM providers.
 ///
 /// Provides a common interface for different AI providers while maintaining
@@ -44,7 +58,7 @@ pub enum AIAgent {
     },
     /// OpenAI models (GPT-4o, O3)
     Openai {
-        agent: Agent<openai::responses_api::ResponsesCompletionModel>,
+        backend: OpenaiAgentBackend,
         metadata: AgentMetadata,
     },
     /// Google Gemini models
@@ -116,7 +130,14 @@ impl AIAgent {
 
         let out = match self {
             AIAgent::Anthropic { agent, .. } => agent.prompt(prompt).await?,
-            AIAgent::Openai { agent, .. } => agent.prompt(prompt).await?,
+            AIAgent::Openai { backend, .. } => match backend {
+                OpenaiAgentBackend::Direct { agent } => agent.prompt(prompt).await?,
+                OpenaiAgentBackend::Codex { config } => {
+                    let config = config.clone();
+                    let prompt = prompt.to_string();
+                    task::spawn_blocking(move || config.prompt_blocking(&prompt)).await??
+                }
+            },
             AIAgent::Gemini { agent, .. } => agent.prompt(prompt).await?,
             AIAgent::Deepseek { agent, .. } => agent.prompt(prompt).await?,
         };
@@ -126,15 +147,20 @@ impl AIAgent {
     //
     pub async fn extract_with_retry<T>(&self, prompt: &str) -> anyhow::Result<T>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + JsonSchema + Send + 'static,
     {
         match self {
             AIAgent::Anthropic { agent, metadata } => {
                 Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
             }
-            AIAgent::Openai { agent, metadata } => {
-                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
-            }
+            AIAgent::Openai { backend, metadata } => match backend {
+                OpenaiAgentBackend::Direct { agent } => {
+                    Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
+                }
+                OpenaiAgentBackend::Codex { config } => {
+                    Ok(Self::extract_with_retry_codex(config, prompt, metadata).await?)
+                }
+            },
             AIAgent::Gemini { agent, metadata } => {
                 Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
             }
@@ -168,13 +194,13 @@ impl AIAgent {
     }
 
     /// Gets the OpenAI reasoning effort level.
-    /// Returns "medium" if not explicitly set or not applicable.
+    /// Returns "xhigh" if not explicitly set or not applicable.
     pub fn get_reasoning_effort(&self) -> &str {
         match self {
             AIAgent::Openai { metadata, .. } => {
-                metadata.reasoning_effort.as_deref().unwrap_or("medium")
+                metadata.reasoning_effort.as_deref().unwrap_or("xhigh")
             }
-            _ => "medium", // Non-OpenAI providers don't have reasoning effort
+            _ => "xhigh", // Non-OpenAI providers don't have reasoning effort
         }
     }
 
@@ -237,5 +263,29 @@ impl AIAgent {
             AIAgent::Gemini { metadata, .. } => metadata,
             AIAgent::Deepseek { metadata, .. } => metadata,
         }
+    }
+}
+
+impl AIAgent {
+    async fn extract_with_retry_codex<T>(
+        config: &CodexAgentConfig,
+        prompt: &str,
+        metadata: &AgentMetadata,
+    ) -> anyhow::Result<T>
+    where
+        T: DeserializeOwned + JsonSchema + Send + 'static,
+    {
+        add_to_inference_cost_by_type(prompt, metadata, TokenType::Input).await;
+
+        let config = config.clone();
+        let prompt_owned = prompt.to_string();
+        let raw =
+            task::spawn_blocking(move || config.prompt_structured_blocking::<T>(&prompt_owned))
+                .await??;
+
+        add_to_inference_cost_by_type(&raw, metadata, TokenType::Output).await;
+
+        <T as crate::llm_review::findings::findings::FromLLMJson>::parse_from_llm_response(&raw)
+            .map_err(|err| anyhow::anyhow!("failed to parse Codex structured response: {err}"))
     }
 }

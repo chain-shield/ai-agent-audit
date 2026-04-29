@@ -1,0 +1,88 @@
+{
+  "benchmark": "2026-04-monetrix",
+  "results": [
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-2-NonAtomicHedgeBatchPoC.t.sol",
+      "finding_id": "M-2",
+      "notes": "Rerun passed. The test shows executeHedge emits success after spot fills while the perp leg is dropped, leaving unmatched exposure.",
+      "status": "Verified PoC",
+      "test_command": "cd /Users/apmfree/Desktop/Audit/2026-04-monetrix && forge test --match-path 'test/c4/M-2-NonAtomicHedgeBatchPoC.t.sol' -vvv",
+      "title": "Non-atomic hedge batches can leave MonetrixVault with one-sided spot or perp exposure",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/H-4-LiveSupplyAprCapPoC.t.sol",
+      "finding_id": "H-4",
+      "notes": "Old yield failed the pre-attack cap, then unchanged surplus settled after live supply increased and the late staker captured pro-rata yield.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path \"test/H-4-LiveSupplyAprCapPoC.t.sol\" -vvv",
+      "title": "Live supply APR cap lets late stakers front-run settlement and capture yield accrued before they joined",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-5-MultisigPrincipalReturnabilityPoC.t.sol",
+      "finding_id": "M-5",
+      "notes": "Rerun passed. The test shows multisig L1 principal remains outstanding while bridgePrincipalFromL1 reads only the Vault L1 account and leaves redemption funding short.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path test/c4/M-5-MultisigPrincipalReturnabilityPoC.t.sol --match-test testMultisigPrincipalCannotBridgeBackForRedemptions -vvv",
+      "title": "Multisig keeperBridge records principal that Vault cannot bridge back for redemptions",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-9-RedemptionClaimOrderingPoC.t.sol",
+      "finding_id": "M-9",
+      "notes": "Later 300 USDC claim drains escrow and strands earlier 500 USDC matured claim.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path \"test/c4/M-9-RedemptionClaimOrderingPoC.t.sol\" -vvv",
+      "title": "Redemption claims are first-come-first-served, letting later requests drain scarce escrow liquidity before earlier redeemers",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-15-BlpSupplyStaleRegistrationPoC.t.sol",
+      "finding_id": "M-15",
+      "notes": "Rerun passed 1 test. Real Vault registered the USDC supplied slot after accepted action 15 while 0x811 remained unreadable, breaking totalBackingSigned.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path 'test/c4/M-15-BlpSupplyStaleRegistrationPoC.t.sol' -vvv",
+      "title": "Supplying to BLP registers accountant slots even when the HyperCore supply action is silently dropped",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/M-19-BridgeBackFreeBalanceMismatchPoC.t.sol",
+      "finding_id": "M-19",
+      "notes": "PM supplied USDC is accepted as bridgeable L1 liquidity, principal is reduced, and redemptions remain unfunded.",
+      "status": "Verified PoC",
+      "test_command": "cd /Users/apmfree/Desktop/Audit/2026-04-monetrix && forge test --match-path test/M-19-BridgeBackFreeBalanceMismatchPoC.t.sol -vvv",
+      "title": "L1 bridge-back accounting can be reduced using held or supplied balances that cannot satisfy SEND_ASSET",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-23-PmSuppliedBridgeAccountingPoC.t.sol",
+      "finding_id": "M-23",
+      "notes": "The simulator drops SEND_ASSET because it lacks a 0x811 PM supplied execution model. The repo PM regression documents supplied USDC as bridgeable and passes.",
+      "status": "Invalid After PoC Review",
+      "test_command": "cd /Users/apmfree/Desktop/Audit/2026-04-monetrix && forge test --match-path 'test/c4/M-23-PmSuppliedBridgeAccountingPoC.t.sol' -vvv",
+      "title": "PM supplied USDC is treated as bridgeable spot balance, allowing bridge-back accounting to decrease without funds arriving",
+      "verification_result": "R5 passed but does not prove vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-24-HeldUsdcBridgePrincipalMismatchPoC.t.sol",
+      "finding_id": "M-24",
+      "notes": "Held spot USDC is counted as available, clearing principal while redemption shortfall remains unfunded.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path 'test/c4/M-24-HeldUsdcBridgePrincipalMismatchPoC.t.sol' -vvv",
+      "title": "Held HyperCore USDC can falsely reduce outstanding principal in MonetrixVault.bridgePrincipalFromL1",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/H-30-DustStakeEmptyVaultRerouteBypassPoC.t.sol",
+      "finding_id": "H-30",
+      "notes": "One-wei stake makes supply nonzero, bypasses foundation reroute, injects user share into sUSDM, and lets attacker redeem captured yield.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path \"test/c4/H-30-DustStakeEmptyVaultRerouteBypassPoC.t.sol\" -vvv",
+      "title": "Dust sUSDM stake bypasses empty-vault reroute and captures pending user yield in MonetrixVault.distributeYield",
+      "verification_result": "passed and proves vulnerability"
+    }
+  ],
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/submission-candidates/v2/2026-04-monetrix-run-001.md",
+  "source_poc_run": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/poc-runs/v2/2026-04-monetrix-run-001.md"
+}

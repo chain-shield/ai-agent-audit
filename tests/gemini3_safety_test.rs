@@ -17,6 +17,7 @@ fn gemini_key_present() -> bool {
 }
 
 #[tokio::test]
+#[ignore = "requires live Gemini credentials"]
 async fn test_gemini3_pro_security_research_prompt() {
     // Load environment variables
     dotenv().ok();
