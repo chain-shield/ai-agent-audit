@@ -26,7 +26,7 @@ fn anthropic_key_present() -> bool {
 /// This test:
 /// 1. Loads real findings from puppy-raffle audit
 /// 2. Uses Claude API to generate PoC tests
-/// 3. Saves and runs the PoC tests in Docker
+/// 3. Saves and runs the PoC tests with the local repo toolchain
 /// 4. Verifies the workflow completes without crashing
 #[tokio::test]
 #[ignore = "requires live Anthropic credentials and a prepared local repo workspace"]
@@ -166,7 +166,11 @@ fn create_puppy_raffle_findings() -> Findings {
 
 /// Creates RepoPaths configuration for puppy-raffle test
 fn create_puppy_raffle_repo_paths() -> RepoPaths {
-    let root = PathBuf::from("/private/tmp/audit-analysis/4-puppy-raffle-audit-3ff0f0");
+    let root = env::var_os("AI_AGENT_AUDIT_WORKSPACE_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join("Desktop/Audit")))
+        .unwrap_or_else(|| PathBuf::from("Audit"))
+        .join("4-puppy-raffle-audit-3ff0f0");
     let repo_name = "4-puppy-raffle-audit".to_string();
 
     // Read PoC instructions from puppy-test.md

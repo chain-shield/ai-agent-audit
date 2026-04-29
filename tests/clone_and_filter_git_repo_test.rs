@@ -58,7 +58,7 @@ fn test_clone_and_filter_git_repo_counts_all_files() {
         .expect("git clone should run");
     assert!(status.success(), "git clone failed");
 
-    // 2) Point the code under test to this workspace (bypass Docker)
+    // 2) Point the code under test to this workspace.
     unsafe {
         std::env::set_var("AIAUDIT_TEST_LOCAL_WORKSPACE", &ws);
     }

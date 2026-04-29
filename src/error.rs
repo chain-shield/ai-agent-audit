@@ -29,14 +29,6 @@ pub enum AuditError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
-    /// Docker container operations failures
-    #[error("Docker operation failed: {command} - {message}")]
-    Docker {
-        command: String,
-        message: String,
-        exit_code: Option<i32>,
-    },
-
     /// Slither static analysis failures
     #[error("Slither analysis failed: {printer} - {message}")]
     SlitherAnalysis {
@@ -128,19 +120,6 @@ impl AuditError {
             operation: operation.into(),
             message: message.into(),
             source: Some(Box::new(source)),
-        }
-    }
-
-    /// Creates a new Docker error with context.
-    pub fn docker(
-        command: impl Into<String>,
-        message: impl Into<String>,
-        exit_code: Option<i32>,
-    ) -> Self {
-        Self::Docker {
-            command: command.into(),
-            message: message.into(),
-            exit_code,
         }
     }
 
@@ -318,13 +297,6 @@ macro_rules! audit_error {
             operation: $op.to_string(),
             message: $msg.to_string(),
             source: None,
-        }
-    };
-    (docker, $cmd:expr, $msg:expr) => {
-        $crate::error::AuditError::Docker {
-            command: $cmd.to_string(),
-            message: $msg.to_string(),
-            exit_code: None,
         }
     };
     (security, $check:expr, $msg:expr) => {

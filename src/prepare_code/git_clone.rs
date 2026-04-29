@@ -1,8 +1,7 @@
-/// Repository preparation and Docker-based building.
+/// Repository preparation and native building.
 ///
-/// This module handles secure repository cloning in Docker containers,
-/// auto-detection of build systems (Foundry/Hardhat), and file filtering
-/// for smart contract analysis.
+/// This module handles repository cloning, auto-detection of build systems
+/// (Foundry/Hardhat), and file filtering for smart contract analysis.
 use anyhow::{Context, Result};
 use glob::glob;
 use ignore::gitignore::GitignoreBuilder;
@@ -18,7 +17,7 @@ use std::{
 };
 use walkdir::WalkDir;
 
-use crate::cli_args::parse::Cli;
+use crate::cli_args::parse::{BuilderType, Cli};
 use crate::config::{AuditType, audit_config};
 use crate::utils::check_folder_name::{
     contains_build_config, is_library_package_json, is_monorepo_config_file, is_root_config_file,
@@ -26,6 +25,7 @@ use crate::utils::check_folder_name::{
 };
 use crate::utils::file_security::validate_repo_url;
 use crate::utils::remapping::parse_and_store_remappings;
+use crate::utils::runtime_deps::{RuntimeDependency, ensure_runtime_dependencies};
 
 /// Build flags for forge compilation
 #[derive(Debug, Clone, Copy)]
@@ -78,11 +78,11 @@ pub struct RepoPaths {
     pub poc: PocConfig,
 }
 
-/// Clones a repository and builds it in a secure Docker environment.
+/// Clones a repository and builds it in the configured local workspace.
 ///
 /// This function performs the complete repository preparation workflow:
-/// 1. Creates a Docker volume for isolated analysis
-/// 2. Clones the repository using Trail of Bits security toolbox
+/// 1. Creates/reuses a local workspace under `~/Desktop/Audit` by default
+/// 2. Clones the repository
 /// 3. Auto-detects and builds with Foundry or Hardhat
 /// 4. Filters and organizes Solidity files and documentation
 /// 5. Extracts commit hash for unique identification
@@ -95,9 +95,6 @@ pub struct RepoPaths {
 /// # Returns
 /// * `RepoPaths` - Organized repository paths and metadata
 ///
-/// # Security
-/// All operations are performed in isolated Docker containers to prevent
-/// malicious code execution on the host system.
 pub fn clone_and_filter_git_repo(
     // url: &str,
     // subfolder: Option<&str>,
@@ -129,7 +126,7 @@ pub fn clone_and_filter_git_repo(
     }
     info!("repo_name ==> {}", repo_name);
 
-    // 5. git clone, install, and build in secure docker container
+    // 5. git clone, install, and build in the local workspace
     // 6. define project id
     // returns dierctory where files are located
     let project_id = format!("{}-{}", repo_name.replace("/", "-"), &commit_hash[..6]);
@@ -415,42 +412,46 @@ fn add_github_auth(repo_url: &str) -> String {
 }
 
 pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Result<PathBuf> {
-    let docker_volume = format!("{}/{}", audit_config().docker_volume, project_id);
-    let docker_path = PathBuf::from(&docker_volume);
+    ensure_runtime_dependencies(
+        "repository cloning",
+        &[RuntimeDependency::Git, RuntimeDependency::Shell],
+    )?;
+
+    let workspace_path = audit_config().workspace_root_path().join(project_id);
 
     // Derived paths
     let repo_root = repo_name.split('/').next().unwrap_or(repo_name);
-    let workspace_root = docker_path.join(repo_root);
-    // Test override: allow tests to provide a local workspace path to bypass Docker
+    let cloned_repo_root = workspace_path.join(repo_root);
+    // Test override: allow tests to provide a local workspace path.
     if let Ok(local_ws) = std::env::var("AIAUDIT_TEST_LOCAL_WORKSPACE") {
         log::info!("Using test local workspace override at {}", local_ws);
         return Ok(PathBuf::from(local_ws));
     }
 
-    let build_stamp = docker_path.join(".chainshield_build_ok");
+    let build_stamp = workspace_path.join(".chainshield_build_ok");
 
     // Check if build artifacts exist (foundry uses 'out', hardhat uses 'artifacts')
-    let has_build_artifacts = workspace_root.join("out").exists()
-        || workspace_root.join("artifacts").exists()
-        || workspace_root.join("build").exists(); // Some projects use 'build'
+    let has_build_artifacts = cloned_repo_root.join("out").exists()
+        || cloned_repo_root.join("artifacts").exists()
+        || cloned_repo_root.join("build").exists(); // Some projects use 'build'
 
     // Determine if we should reuse the existing workspace
-    let should_reuse = docker_path.exists()
+    let should_reuse = workspace_path.exists()
         && build_stamp.exists()
-        && workspace_root.exists()
+        && cloned_repo_root.exists()
         && has_build_artifacts
         && !cli.force_rebuild;
 
     if should_reuse {
         log::info!(
             "✅ Reusing existing workspace (build artifacts found): {}",
-            docker_path.display()
+            workspace_path.display()
         );
-        return Ok(PathBuf::from(docker_volume));
+        return Ok(workspace_path);
     }
 
     // Log the reason for rebuild
-    if docker_path.exists() {
+    if workspace_path.exists() {
         let mut reasons = Vec::new();
         if cli.force_rebuild {
             reasons.push("--force-rebuild flag set");
@@ -464,87 +465,80 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
 
         log::warn!(
             "🔄 Rebuilding workspace at {} (reason: {})",
-            docker_path.display(),
+            workspace_path.display(),
             reasons.join(", ")
         );
 
-        fs::remove_dir_all(&docker_path).with_context(|| {
+        fs::remove_dir_all(&workspace_path).with_context(|| {
             format!(
-                "Failed to remove existing docker volume {}",
-                docker_path.display()
+                "Failed to remove existing local workspace {}",
+                workspace_path.display()
             )
         })?;
     } else {
-        log::info!("📦 Creating new workspace at {}", docker_path.display());
+        log::info!("📦 Creating new workspace at {}", workspace_path.display());
     }
-    fs::create_dir_all(&docker_path)?;
+    fs::create_dir_all(&workspace_path)?;
 
     // Shallow clone for speed and security
     log::info!("git cloning repo...");
 
-    let build_command = cli.generate_build_command();
     let repo_url = add_github_auth(cli.get_repo());
 
-    // Install build tools if using custom builder (needed for native node modules)
-    let setup_build_tools = if matches!(cli.builder, crate::cli_args::parse::BuilderType::Custom) {
-        "apt-get update -qq && apt-get install -y -qq build-essential python3 > /dev/null 2>&1 && "
-    } else {
-        ""
-    };
+    let clone_output = Command::new("git")
+        .args(["clone", "--depth=1", &repo_url, repo_root])
+        .current_dir(&workspace_path)
+        .output()
+        .context("Failed to run git clone")?;
 
-    let clone_and_build_command = format!(
-        "{setup_build_tools}\
-     git clone --depth=1 {repo_url} {repo_root} && \
-     cd {repo_name} && \
-     git config --global url.\"https://github.com/\".insteadOf \"ssh://git@github.com/\" && \
-     git config --global url.\"https://github.com/\".insteadOf \"git@github.com:\" && \
-     git config --global url.\"https://\".insteadOf \"ssh://\" && \
-     export PNPM_HOME=/workspace/.pnpm && \
-     export PATH=$PNPM_HOME:$PATH && \
-     {build_command}"
-    );
-
-    // On Apple Silicon (arm64 host), the `linux/arm64` toolbox image + SVM-provided `solc`
-    // can fail to execute due to glibc/libstdc++ version mismatches. Forcing `linux/amd64`
-    // makes `forge build` reliable (via emulation) and avoids `Broken pipe (os error 32)`.
-    let force_amd64_platform =
-        std::env::consts::OS == "macos" && matches!(std::env::consts::ARCH, "aarch64" | "arm64");
-    if force_amd64_platform {
-        log::warn!(
-            "Host is {}-{}; forcing docker platform linux/amd64 to avoid solc runtime incompatibilities on arm64 images",
-            std::env::consts::OS,
-            std::env::consts::ARCH
+    if !clone_output.status.success() {
+        anyhow::bail!(
+            "git clone failed for {}\nstdout:\n{}\nstderr:\n{}",
+            cli.get_repo(),
+            String::from_utf8_lossy(&clone_output.stdout),
+            String::from_utf8_lossy(&clone_output.stderr)
         );
     }
 
-    let mut docker_args: Vec<String> = vec![
-        "run".to_string(),
-        "--rm".to_string(),
-        "--user".to_string(),
-        "root".to_string(),
-        "-v".to_string(),
-        format!("{}:/workspace", docker_volume),
-        "-w".to_string(),
-        "/workspace".to_string(),
-    ];
-    if force_amd64_platform {
-        docker_args.push("--platform".to_string());
-        docker_args.push("linux/amd64".to_string());
+    configure_git_url_rewrites(&cloned_repo_root)?;
+
+    let build_root = workspace_path.join(repo_name);
+    if !build_root.exists() {
+        anyhow::bail!(
+            "Build root '{}' does not exist after cloning '{}'. Check the configured subfolder.",
+            build_root.display(),
+            cli.get_repo()
+        );
     }
-    docker_args.extend([
-        "trailofbits/eth-security-toolbox:nightly".to_string(),
-        "bash".to_string(),
-        "-c".to_string(),
-        clone_and_build_command,
-    ]);
 
-    let status = Command::new("docker")
-        .args(&docker_args)
-        .status()
-        .context("Failed to clone and build repository in Docker")?;
+    ensure_build_runtime_dependencies(cli, &build_root)?;
+    let build_command = cli.generate_build_command();
+    let pnpm_home = workspace_path.join(".pnpm");
+    let path = std::env::var_os("PATH")
+        .and_then(|existing_path| {
+            std::env::join_paths(
+                std::iter::once(pnpm_home.clone()).chain(std::env::split_paths(&existing_path)),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| pnpm_home.clone().into_os_string());
 
-    if !status.success() {
-        anyhow::bail!("Clone and Build failed in Docker");
+    let build_output = Command::new("sh")
+        .args(["-lc", &build_command])
+        .current_dir(&build_root)
+        .env("PNPM_HOME", &pnpm_home)
+        .env("PATH", path)
+        .output()
+        .with_context(|| format!("Failed to run build command from {}", build_root.display()))?;
+
+    if !build_output.status.success() {
+        anyhow::bail!(
+            "Repository build failed from '{}'.\n\nCommand:\n{}\n\nstdout:\n{}\nstderr:\n{}",
+            build_root.display(),
+            build_command,
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
     }
 
     // On success, stamp the workspace for reuse
@@ -558,7 +552,7 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
         ),
     )?;
 
-    Ok(PathBuf::from(docker_volume))
+    Ok(workspace_path)
 }
 
 fn get_commit_hash(repo_url: &str) -> Result<String> {
@@ -584,6 +578,79 @@ fn get_commit_hash(repo_url: &str) -> Result<String> {
         .to_string();
 
     Ok(commit_hash)
+}
+
+fn configure_git_url_rewrites(repo_root: &Path) -> Result<()> {
+    let rewrites = [
+        ("https://github.com/", "ssh://git@github.com/"),
+        ("https://github.com/", "git@github.com:"),
+        ("https://", "ssh://"),
+    ];
+
+    for (replacement, instead_of) in rewrites {
+        let key = format!("url.{}.insteadOf", replacement);
+        let output = Command::new("git")
+            .args(["config", &key, instead_of])
+            .current_dir(repo_root)
+            .output()
+            .with_context(|| {
+                format!(
+                    "Failed to configure git URL rewrite in {}",
+                    repo_root.display()
+                )
+            })?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "Failed to configure git URL rewrite in '{}'.\nstdout:\n{}\nstderr:\n{}",
+                repo_root.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_build_runtime_dependencies(cli: &Cli, build_root: &Path) -> Result<()> {
+    let mut deps = vec![RuntimeDependency::Shell];
+
+    match cli.builder {
+        BuilderType::Foundry => {
+            deps.extend([RuntimeDependency::Git, RuntimeDependency::Forge]);
+        }
+        BuilderType::Hardhat => {
+            deps.extend([
+                RuntimeDependency::Node,
+                RuntimeDependency::Npm,
+                RuntimeDependency::Npx,
+            ]);
+        }
+        BuilderType::HardhatYarn => {
+            deps.extend([RuntimeDependency::Node, RuntimeDependency::Yarn]);
+        }
+        BuilderType::Custom => {}
+        BuilderType::Auto => {
+            if build_root.join("foundry.toml").exists() || build_root.join("forge.toml").exists() {
+                deps.extend([RuntimeDependency::Git, RuntimeDependency::Forge]);
+            } else if build_root.join("hardhat.config.js").exists()
+                || build_root.join("hardhat.config.ts").exists()
+                || build_root.join("hardhat.config.cjs").exists()
+            {
+                deps.push(RuntimeDependency::Node);
+                if build_root.join("yarn.lock").exists() {
+                    deps.push(RuntimeDependency::Yarn);
+                } else if build_root.join("pnpm-lock.yaml").exists() {
+                    deps.push(RuntimeDependency::Pnpm);
+                } else {
+                    deps.extend([RuntimeDependency::Npm, RuntimeDependency::Npx]);
+                }
+            }
+        }
+    }
+
+    ensure_runtime_dependencies("repository build", &deps)
 }
 
 impl AsRef<RepoPaths> for RepoPaths {

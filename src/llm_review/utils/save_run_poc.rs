@@ -9,6 +9,7 @@ use regex::Regex;
 use crate::{
     llm_review::phases::add_poc_findings::{PocStatus, PocTest},
     prepare_code::git_clone::RepoPaths,
+    utils::runtime_deps::{RuntimeDependency, ensure_runtime_dependencies},
 };
 
 pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result<()> {
@@ -28,38 +29,25 @@ pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result
         poc_test.poc_test_command
     );
 
-    // Determine the working directory for the forge command
-    // For Foundry projects, we need to run from where foundry.toml is located
-    // This is typically repo.root/repo.repo_name
-    // let work_dir = if !repo.source_code_folders.is_empty() {
-    //     // Use the first source code folder (relative to repo.root)
-    //     repo.source_code_folders[0]
-    //         .strip_prefix(&repo.root)
-    //         .unwrap_or_else(|_| Path::new(&repo.repo_name))
-    //         .to_string_lossy()
-    //         .to_string()
-    // } else {
-    //     // Fallback to repo_name
-    //     repo.repo_name.clone()
-    // };
+    let mut deps = vec![RuntimeDependency::Shell];
+    if poc_test.poc_test_command.contains("forge") {
+        deps.push(RuntimeDependency::Forge);
+    }
+    if poc_test.poc_test_command.contains("npm") {
+        deps.extend([RuntimeDependency::Node, RuntimeDependency::Npm]);
+    }
+    if poc_test.poc_test_command.contains("yarn") {
+        deps.extend([RuntimeDependency::Node, RuntimeDependency::Yarn]);
+    }
+    if poc_test.poc_test_command.contains("pnpm") {
+        deps.extend([RuntimeDependency::Node, RuntimeDependency::Pnpm]);
+    }
+    ensure_runtime_dependencies("PoC test execution", &deps)?;
 
-    // Wrap the command to cd into the working directory first
-    let full_command = format!("cd {} && {}", repo.repo_name, poc_test.poc_test_command);
-
-    let args = vec![
-        "run".to_string(),
-        "--rm".to_string(),
-        "-v".to_string(),
-        format!("{}:/workspace", repo.root.display()),
-        "-w".to_string(),
-        "/workspace".to_string(),
-        "trailofbits/eth-security-toolbox:nightly".to_string(),
-        "sh".to_string(),
-        "-lc".to_string(),
-        full_command,
-    ];
-    let out = Command::new("docker")
-        .args(&args)
+    let work_dir = repo.get_protocol_root();
+    let out = Command::new("sh")
+        .args(["-lc", &poc_test.poc_test_command])
+        .current_dir(&work_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
@@ -84,7 +72,7 @@ pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result
     let parsed = parse_forge_result(&parse_target);
 
     // Classify status:
-    // - If docker/forge returned nonzero, prefer "test_error" unless we clearly see failing tests.
+    // - If the test runner returned nonzero, prefer "test_error" unless we clearly see failing tests.
     // - If parsed says failed > 0 => failing_tests
     // - If parsed says 0/0 => treat as test_error (no tests found / pattern mismatch).
     // - Else passed.

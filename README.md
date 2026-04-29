@@ -1,6 +1,6 @@
 # AI Agent Audit
 
-AI Agent Audit is a Rust command-line tool for AI-assisted security review of Solidity repositories. It clones and builds a target repo in Docker, extracts semantic data with Slither, generates per-contract code slices, runs LLM-based discovery and verification passes, and writes Markdown audit reports.
+AI Agent Audit is a Rust command-line tool for AI-assisted security review of Solidity repositories. It clones and builds a target repo in a local audit workspace, extracts semantic data with Slither, generates per-contract code slices, runs LLM-based discovery and verification passes, and writes Markdown audit reports.
 
 This repository is being released as a GitHub-first public beta. It is meant to accelerate expert review, not replace manual auditing.
 
@@ -18,7 +18,7 @@ This repository is being released as a GitHub-first public beta. It is meant to 
 
 ## What It Does
 
-- Clones and builds Foundry or Hardhat repositories inside Docker.
+- Clones and builds Foundry or Hardhat repositories under `~/Desktop/Audit` by default.
 - Uses Slither-derived call graph and semantic data when static analysis succeeds.
 - Builds inheritance and interface-implementation indexes from Solidity source.
 - Generates contextual codeblocks for each in-scope contract.
@@ -37,8 +37,10 @@ This project is not a hosted service, not a generic SAST scanner for every langu
 ## Requirements
 
 - Rust stable toolchain.
-- Docker.
 - Git.
+- Slither.
+- Foundry (`forge`) for Foundry repositories.
+- Node.js plus `npm`/`npx`, Yarn, or pnpm for Hardhat repositories.
 - Optional `GITHUB_TOKEN` for private GitHub repositories.
 
 ## Quickstart
@@ -161,6 +163,7 @@ Use `Client` for internal or client-style audits. Use the contest values when yo
 | `DEEPSEEK_API_KEY` | No | Supported by the agent layer, not required by the default path. |
 | `GITHUB_TOKEN` | No | Used for private GitHub repo cloning. |
 | `AI_AGENT_AUDIT_DATA_DIR` | No | Overrides the local cache directory. Defaults to `.ai-agent-audit`. |
+| `AI_AGENT_AUDIT_WORKSPACE_ROOT` | No | Overrides where target repos are cloned and built. Defaults to `~/Desktop/Audit`. |
 | `RUST_LOG` | No | Standard Rust log level, defaults to `info`. |
 
 The shipped template is [`.env.example`](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/.env.example:1).
@@ -169,7 +172,7 @@ Discovery provider/model defaults now live in [src/config.rs](/Users/apmfree/Des
 
 ## How The Pipeline Works
 
-1. Repository preparation. The tool validates the repo URL, resolves the current `HEAD` commit, clones the target into a Docker-backed workspace under `/tmp/audit-analysis/<project-id>/`, and builds it with Foundry, Hardhat, or a custom command. The current Docker image is `trailofbits/eth-security-toolbox:nightly`.
+1. Repository preparation. The tool validates the repo URL, resolves the current `HEAD` commit, clones the target into a local workspace under `~/Desktop/Audit/<project-id>/`, and builds it with Foundry, Hardhat, or a custom command.
 
 2. Semantic extraction. It runs the Slither-based enrichment path to build a local semantic SQLite database with function metadata and call graph edges.
 
@@ -228,7 +231,7 @@ The exact prompts and pattern catalogs continue to evolve, so the README intenti
 - The current default path depends on a valid cached ChatGPT/Codex session for OpenAI work.
 - `audit_type` affects severity and rubric behavior more than it changes the overall pipeline.
 - Automatic PoC generation is present in code but disabled in the current public beta.
-- If the target repo does not build cleanly inside Docker, analysis quality will degrade or the run may fail.
+- If the target repo does not build cleanly on the local machine, analysis quality will degrade or the run may fail.
 - If Slither cannot extract semantic data, the tool falls back to a reduced analysis path with less Slither-derived context.
 
 ## Troubleshooting
@@ -239,7 +242,11 @@ If startup cannot authenticate OpenAI access, rerun the tool and complete the Ch
 
 ### Build System Not Detected
 
-If Docker logs show `No build system detected`, the target repo likely does not expose a recognizable `foundry.toml` or `hardhat.config.*` at the analyzed root. Set `subfolder`, `monorepo_folders`, or `builder: "Custom"` plus `build_cmd`.
+If the build output shows `No build system detected`, the target repo likely does not expose a recognizable `foundry.toml` or `hardhat.config.*` at the analyzed root. Set `subfolder`, `monorepo_folders`, or `builder: "Custom"` plus `build_cmd`.
+
+### Missing Runtime Dependencies
+
+The Docker execution path has been removed. If `git`, `slither`, `forge`, `node`, `npm`, `npx`, `yarn`, or `pnpm` is required and missing, startup/build/static-analysis will fail with an install note for the missing command.
 
 ### Wrong Source Folder
 
@@ -262,7 +269,7 @@ src/
   main.rs                 CLI entrypoint and top-level orchestration
   config.rs               environment/config loading and constants
   cli_args/               clap/YAML argument parsing
-  prepare_code/           repo cloning, filtering, Docker builds, repo metadata
+  prepare_code/           repo cloning, filtering, native builds, repo metadata
   build_brain/            Slither enrichment, summaries, graph DB
   enumerator/             codeblock generation, Solidity parsing, interface indexing
   llm_review/             prompt generation, agent setup, findings, review phases

@@ -241,11 +241,12 @@ impl Cli {
                 .clone()
                 .expect("--build-cmd required with --builder custom"),
             BuilderType::Auto | BuilderType::Foundry => {
-                // Auto-detect inside Docker based on files
+                // Auto-detect in the local workspace based on project files.
                 format!(
                     "if [ -f foundry.toml ]; then {forge_build_cmd}; \
              elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ]; then \
              if [ -f yarn.lock ]; then [ -f .env.example ] && cp .env.example .env; yarn install && yarn hardhat compile; \
+             elif [ -f pnpm-lock.yaml ]; then [ -f .env.example ] && cp .env.example .env; pnpm install && pnpm hardhat compile; \
              else [ -f .env.example ] && cp .env.example .env; npm install hardhat --legacy-peer-deps && npm install --legacy-peer-deps && npx hardhat compile; fi; \
              else echo 'No build system detected'; exit 1; fi"
                 )

@@ -33,7 +33,7 @@ pub mod build_brain {
 
 /// Repository preparation and building
 pub mod prepare_code {
-    /// Git cloning and Docker-based building
+    /// Git cloning and native repository building
     pub mod git_clone;
     pub mod repo_data;
 }
@@ -179,8 +179,6 @@ pub mod utils {
     pub mod bpe;
     pub mod check_folder_name;
     pub mod contract_name_check;
-    /// Docker volume cleanup utilities
-    pub mod delete_docker_volumes;
     pub mod deserialize_bool;
     pub mod display_file;
     pub mod env_security;
@@ -198,6 +196,8 @@ pub mod utils {
     pub mod read_file;
     /// Solidity import remapping utilities
     pub mod remapping;
+    /// Runtime dependency checks for native tooling
+    pub mod runtime_deps;
     /// Text sanitization utilities
     pub mod sanitize;
     pub mod semantic_compare;

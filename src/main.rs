@@ -22,7 +22,7 @@ use log::info;
 /// The main entry point for the AI Agent Audit tool.
 ///
 /// This application performs comprehensive smart contract security audits by:
-/// 1. Cloning and building repositories (Foundry/Hardhat) in Docker containers
+/// 1. Cloning and building repositories (Foundry/Hardhat) in a local workspace
 /// 2. Extracting call graphs, IR, and storage layouts using Slither
 /// 3. Generating contextual code slices for focused AI analysis
 /// 4. Running multi-LLM security analysis across 19+ vulnerability categories
@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     // Cli struct contains all info we need to execute audit
     let cli = parse::Cli::parse_args()?;
 
-    // Clone repository in Docker container and build with Foundry/Hardhat
+    // Clone repository in the local audit workspace and build with Foundry/Hardhat
     let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);

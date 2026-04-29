@@ -81,8 +81,8 @@ pub const SUMMARY_MAX_PARALLEL: usize = 50;
 /// turns so helper subprocesses cannot accumulate unboundedly in one process.
 pub const MAX_CODEX_TURNS_PER_SESSION: usize = 10;
 
-/// Docker volume path for repository analysis
-pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
+/// Default local workspace root for cloned audit targets.
+pub const DEFAULT_WORKSPACE_ROOT: &str = "~/Desktop/Audit";
 
 /// Default local directory for SQLite caches and analysis state.
 pub const DEFAULT_APP_DATA_DIR: &str = ".ai-agent-audit";
@@ -105,6 +105,23 @@ pub fn app_data_dir() -> PathBuf {
 /// Returns a path inside the application data directory.
 pub fn app_db_path(filename: &str) -> PathBuf {
     app_data_dir().join(filename)
+}
+
+/// Expands a leading `~/` in a user-facing path.
+pub fn expand_home_path(path: &str) -> PathBuf {
+    if path == "~" {
+        return env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(path));
+    }
+
+    if let Some(rest) = path.strip_prefix("~/") {
+        return env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join(rest))
+            .unwrap_or_else(|| PathBuf::from(path));
+    }
+
+    PathBuf::from(path)
 }
 
 /// Maximum repository URL length for security validation
@@ -158,8 +175,8 @@ pub struct AuditConfig {
     /// Logging level for the application
     pub log_level: String,
 
-    /// Docker volume path for repository analysis
-    pub docker_volume: String,
+    /// Local workspace root for cloned audit targets
+    pub workspace_root: String,
 
     /// Maximum repository URL length for security validation
     pub max_repo_url_length: usize,
@@ -195,7 +212,7 @@ impl Default for AuditConfig {
             discovery_model,
             discovery_gemini_thinking_level: DISCOVERY_GEMINI_THINKING_LEVEL.to_string(),
             log_level: "info".to_string(),
-            docker_volume: DOCKER_VOLUME.to_string(),
+            workspace_root: DEFAULT_WORKSPACE_ROOT.to_string(),
             max_repo_url_length: MAX_REPO_URL_LENGTH,
             llm_timeout_seconds: LLM_TIMEOUT_SECONDS,
             default_temperature: DEFAULT_TEMPERATURE,
@@ -232,6 +249,8 @@ impl AuditConfig {
         config.deepseek_api_key = env::var("DEEPSEEK_API_KEY").ok();
         // Load logging level
         config.log_level = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+        config.workspace_root =
+            env::var("AI_AGENT_AUDIT_WORKSPACE_ROOT").unwrap_or(config.workspace_root);
 
         Ok(config)
     }
@@ -354,6 +373,11 @@ impl AuditConfig {
         providers
     }
 
+    /// Returns the expanded local workspace root.
+    pub fn workspace_root_path(&self) -> PathBuf {
+        expand_home_path(&self.workspace_root)
+    }
+
     /// Creates a test configuration with minimal settings.
     #[cfg(test)]
     pub fn test_config() -> Self {
@@ -373,7 +397,7 @@ impl AuditConfig {
             },
             discovery_gemini_thinking_level: DISCOVERY_GEMINI_THINKING_LEVEL.to_string(),
             log_level: "debug".to_string(),
-            docker_volume: DOCKER_VOLUME.to_string(),
+            workspace_root: DEFAULT_WORKSPACE_ROOT.to_string(),
             max_repo_url_length: MAX_REPO_URL_LENGTH,
             llm_timeout_seconds: LLM_TIMEOUT_SECONDS,
             default_temperature: DEFAULT_TEMPERATURE,
@@ -469,6 +493,21 @@ mod tests {
         assert_eq!(providers.len(), 2);
         assert!(providers.contains(&"OpenAI".to_string()));
         assert!(providers.contains(&"Anthropic".to_string()));
+    }
+
+    #[test]
+    fn test_workspace_root_expands_home() {
+        let config = AuditConfig {
+            workspace_root: "~/Desktop/Audit".to_string(),
+            ..AuditConfig::default()
+        };
+
+        if let Some(home) = env::var_os("HOME") {
+            assert_eq!(
+                config.workspace_root_path(),
+                PathBuf::from(home).join("Desktop/Audit")
+            );
+        }
     }
 
     #[test]
