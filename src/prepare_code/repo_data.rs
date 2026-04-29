@@ -8,7 +8,7 @@ use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    config::{AuditType, CHAINSHIELD_DB_FOLDER, REPO_DATA_DB},
+    config::{AuditType, REPO_DATA_DB, app_db_path},
     llm_review::analysis::context_state::get_metadata_context,
     prepare_code::git_clone::{PocConfig, RepoPaths},
 };
@@ -47,10 +47,8 @@ pub struct RepoData {
 }
 
 pub async fn save_repo_data_to_db(repo: &RepoPaths) -> anyhow::Result<()> {
-    let repodata_db = RepoDataDb::create(Path::new(&format!(
-        "{}/{}",
-        CHAINSHIELD_DB_FOLDER, REPO_DATA_DB
-    )))?;
+    let db_path = app_db_path(REPO_DATA_DB);
+    let repodata_db = RepoDataDb::create(&db_path)?;
     let context = get_metadata_context(repo).await.expect("no context found!");
 
     repodata_db.insert_repo_data(repo, &context)?;
@@ -65,6 +63,9 @@ impl RepoDataDb {
     ///
     /// Initializes SQLite database with table for complete repository metadata.
     pub fn create(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let conn = Connection::open(path)?;
         conn.execute_batch(
             r#"

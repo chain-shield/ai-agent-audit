@@ -1,14 +1,10 @@
 /// Protocol and file summarization using LLMs.
 ///
 /// This module generates intelligent summaries of smart contract protocols and
-/// individual source files using OpenAI models. Provides cached summarization
+/// individual source files using Codex-backed OpenAI models. Provides cached summarization
 /// for protocol overviews and contextual information for AI analysis.
 use anyhow::Result;
 use log::info;
-use rig::{
-    client::CompletionClient,
-    providers::openai::{self, O3},
-};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -16,6 +12,7 @@ use std::sync::Arc;
 use strum_macros::EnumString;
 use tokio::sync::Semaphore;
 
+use crate::config::{OPENAI_SUMMARY_MODEL, OPENAI_SUMMARY_REASONING_EFFORT, SUMMARY_MAX_PARALLEL};
 use crate::utils::check_folder_name::is_script_file;
 use crate::{
     build_brain::{
@@ -25,15 +22,17 @@ use crate::{
             insert_file_summary_to_db,
         },
     },
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
-        agent::agent_enums::{AgentMetadata, all_enum_variants, generate_enum_list},
+        agent::{
+            agent_enums::{all_enum_variants, generate_enum_list},
+            agent_factory::{AgentConfig, AgentFactory},
+        },
         contract::contract_category::{
             ContractCategory, generate_formated_list_of_contract_categories,
         },
     },
     prepare_code::git_clone::RepoPaths,
-    utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
+    utils::contract_name_check::has_non_mock_contract,
 };
 
 /// Check if a file path contains standard library folders that should be excluded from summarization.
@@ -197,7 +196,7 @@ pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
 // pub const MAX_CHARS_STORAGE_DESC: u16 = 16;
 
 pub async fn summarize_src_files(repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
-    summarize_src_files_with_model(repo, "gpt-5").await
+    summarize_src_files_with_model(repo, OPENAI_SUMMARY_MODEL).await
 }
 
 pub async fn summarize_src_files_with_model(
@@ -211,8 +210,6 @@ pub async fn summarize_src_files_with_model(
         return Ok(summaries);
     }
     info!("generating file summaries...");
-
-    let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
     let mut context = String::new();
     let src_file_list = get_all_files_src(repo)?;
@@ -268,17 +265,24 @@ Respond only with valid JSON matching the schema!
 "#
     .to_string();
 
-    let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(model)
-        .preamble(&preamble_source_summary)
-        .context(&context)
-        .build();
+    let ai_summary_agent = AgentFactory::create_openai_agent(
+        &AgentConfig::new(Some(repo.clone()))
+            .with_model(model)
+            .with_preamble(&preamble_source_summary)
+            .with_context(context.clone())
+            .with_file_retrieval(false)
+            .with_openai_reasoning_effort(OPENAI_SUMMARY_REASONING_EFFORT),
+    )?;
 
-    let ai_deploy_summary_agent = openai_client
-        .extractor::<FileSummary>(model)
-        .preamble(&preamble_deploy_script_summary)
-        .context(&context)
-        .build();
+    let ai_deploy_summary_agent = AgentFactory::create_openai_agent(
+        &AgentConfig::new(Some(repo.clone()))
+            .with_model(model)
+            .with_preamble(&preamble_deploy_script_summary)
+            .with_context(context.clone())
+            .with_file_retrieval(false)
+            .with_openai_reasoning_effort(OPENAI_SUMMARY_REASONING_EFFORT),
+    )?;
+
     // ---------------------------------------------
     // 1.  PREP – collect the  files we want to summarize first
     // ---------------------------------------------
@@ -366,21 +370,9 @@ Respond only with valid JSON matching the schema!
         panic!("over 200 files are going to be summarized, please check if this is correct!");
     }
 
-    // let mut files_to_summarize = String::new();
-    //
-    // for (file, _, file_type) in work_items {
-    //     files_to_summarize.push_str(&format!(
-    //         "file: {}, type: {}\n",
-    //         file.display(),
-    //         file_type.to_string()
-    //     ));
-    // }
-    // info!("{}", files_to_summarize);
-
-    let max_parallel = 50;
-    let sem = Arc::new(Semaphore::new(max_parallel));
-    let agent = Arc::new(ai_summary_agent); // the OpenAI client
-    let deploy_agent = Arc::new(ai_deploy_summary_agent); // the OpenAI client
+    let sem = Arc::new(Semaphore::new(SUMMARY_MAX_PARALLEL));
+    let agent = Arc::new(ai_summary_agent);
+    let deploy_agent = Arc::new(ai_deploy_summary_agent);
     let mut handles = Vec::new();
 
     for (file, content, file_type) in work_items {
@@ -403,14 +395,9 @@ Respond only with valid JSON matching the schema!
             // acquire permit – blocks if `max_parallel` already in-flight
             let _permit = sem.acquire_owned().await.unwrap();
 
-            let metadata = AgentMetadata {
-                model: O3.to_string(),
-                ..Default::default()
-            };
-
             info!("summarizing {}", file.display());
 
-            match extractor_with_retry(&agent, &content, &metadata).await {
+            match agent.extract_with_retry::<FileSummary>(&content).await {
                 Ok(res) => {
                     let filename = file
                         .strip_prefix(&repo_root)
@@ -418,7 +405,6 @@ Respond only with valid JSON matching the schema!
                         .to_string_lossy()
                         .to_string();
 
-                    add_to_inference_cost_by_type(&res.summary, &metadata, TokenType::Output).await;
                     Some(SrcFileSummary {
                         filename,
                         summary: res.summary,
@@ -470,27 +456,18 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
     // if no cached context is required
     let context = context.expect("if summary of protocol is not cached must provide context");
 
-    let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
-
     log::info!("generate context for code review");
     let preamble = "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, please create a max 4000 word detailed summary of this protocol explaining what it is, and how it works. Format in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
-    let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(O3)
-        .preamble(preamble)
-        .build();
+    let ai_summary_agent = AgentFactory::create_openai_agent(
+        &AgentConfig::new(Some(repo.clone()))
+            .with_model(OPENAI_SUMMARY_MODEL)
+            .with_preamble(preamble)
+            .with_openai_reasoning_effort(OPENAI_SUMMARY_REASONING_EFFORT),
+    )?;
 
     log::info!("extracting protocol summary");
-    // rerun if NoDataExtracted Error
-
-    let metadata = AgentMetadata {
-        model: O3.to_string(),
-        ..Default::default()
-    };
-
-    let summary = extractor_with_retry(&ai_summary_agent, context, &metadata).await?;
-
-    add_to_inference_cost_by_type(&summary.summary, &metadata, TokenType::Output).await;
+    let summary: FileSummary = ai_summary_agent.extract_with_retry(context).await?;
 
     // save to db
     insert_file_summary_to_db("protocol-summary", &summary.summary, repo)?;

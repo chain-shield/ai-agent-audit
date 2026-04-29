@@ -3,8 +3,8 @@ use crate::{
     llm_review::{
         agent::agent_enums::{all_enum_variants, generate_enum_list},
         threat_models::invariants::{
-            ContractInvariants, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
-            INVARIANT_LIBRARY,
+            ContractInvariants, INVARIANT_LIBRARY, InvariantFinding, InvariantSpec,
+            InvariantStatus, InvariantType,
         },
     },
 };

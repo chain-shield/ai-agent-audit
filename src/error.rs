@@ -12,7 +12,7 @@ use thiserror::Error;
 /// failure scenarios with descriptive messages and error chaining.
 #[derive(Debug, Error)]
 pub enum AuditError {
-    /// Database operation failures (SQLite, Qdrant)
+    /// Database operation failures (SQLite)
     #[error("Database operation failed: {message}")]
     Database {
         message: String,
@@ -29,14 +29,6 @@ pub enum AuditError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
-    /// Docker container operations failures
-    #[error("Docker operation failed: {command} - {message}")]
-    Docker {
-        command: String,
-        message: String,
-        exit_code: Option<i32>,
-    },
-
     /// Slither static analysis failures
     #[error("Slither analysis failed: {printer} - {message}")]
     SlitherAnalysis {
@@ -50,15 +42,6 @@ pub enum AuditError {
     #[error("LLM processing failed: {provider} - {message}")]
     LlmProcessing {
         provider: String,
-        message: String,
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
-    },
-
-    /// Vector database operations failures
-    #[error("Vector database operation failed: {operation} - {message}")]
-    VectorDb {
-        operation: String,
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -140,19 +123,6 @@ impl AuditError {
         }
     }
 
-    /// Creates a new Docker error with context.
-    pub fn docker(
-        command: impl Into<String>,
-        message: impl Into<String>,
-        exit_code: Option<i32>,
-    ) -> Self {
-        Self::Docker {
-            command: command.into(),
-            message: message.into(),
-            exit_code,
-        }
-    }
-
     /// Creates a new Slither analysis error with context.
     pub fn slither<E>(printer: impl Into<String>, message: impl Into<String>, source: E) -> Self
     where
@@ -172,18 +142,6 @@ impl AuditError {
     {
         Self::LlmProcessing {
             provider: provider.into(),
-            message: message.into(),
-            source: Some(Box::new(source)),
-        }
-    }
-
-    /// Creates a new vector database error with context.
-    pub fn vector_db<E>(operation: impl Into<String>, message: impl Into<String>, source: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        Self::VectorDb {
-            operation: operation.into(),
             message: message.into(),
             source: Some(Box::new(source)),
         }
@@ -305,16 +263,6 @@ impl From<reqwest::Error> for AuditError {
     }
 }
 
-impl From<qdrant_client::QdrantError> for AuditError {
-    fn from(err: qdrant_client::QdrantError) -> Self {
-        Self::VectorDb {
-            operation: "unknown".to_string(),
-            message: err.to_string(),
-            source: Some(Box::new(err)),
-        }
-    }
-}
-
 impl From<tokio::task::JoinError> for AuditError {
     fn from(err: tokio::task::JoinError) -> Self {
         Self::AsyncTask {
@@ -349,13 +297,6 @@ macro_rules! audit_error {
             operation: $op.to_string(),
             message: $msg.to_string(),
             source: None,
-        }
-    };
-    (docker, $cmd:expr, $msg:expr) => {
-        $crate::error::AuditError::Docker {
-            command: $cmd.to_string(),
-            message: $msg.to_string(),
-            exit_code: None,
         }
     };
     (security, $check:expr, $msg:expr) => {

@@ -323,7 +323,9 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
 
         // Then add all other statuses in their original order
         for k in order {
-            if k != "Valid" && let Some(v) = map.remove(&k) {
+            if k != "Valid"
+                && let Some(v) = map.remove(&k)
+            {
                 grouped.push((k, v));
             }
         }
@@ -344,7 +346,8 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
             for f in findings_vec {
                 match report_type {
                     ReportDataType::Summary => {
-                        findings_summary.push_str(&prompt_context::get_finding_summary_report(f, num));
+                        findings_summary
+                            .push_str(&prompt_context::get_finding_summary_report(f, num));
                     }
                     ReportDataType::Full => {
                         findings_summary.push_str(&prompt_context::get_finding_report(

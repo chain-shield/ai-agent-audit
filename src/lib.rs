@@ -1,8 +1,8 @@
 //! AI Agent Audit - Comprehensive Smart Contract Security Analysis Tool
 //!
 //! This library provides advanced AI-powered smart contract auditing capabilities,
-//! combining static analysis, multiple LLM providers, and vector embeddings for
-//! professional-grade security assessments.
+//! combining static analysis and multiple LLM providers for professional-grade
+//! security assessments.
 
 /// Centralized error handling and types
 pub mod error;
@@ -14,8 +14,6 @@ pub mod config;
 pub mod build_brain {
     /// Call graph analysis and traversal
     pub mod callgraph;
-    /// Vector embeddings generation for semantic search
-    pub mod enbeddings;
     /// Slither analysis integration and data enrichment
     pub mod enrichment;
     /// Function summarization using LLMs
@@ -31,15 +29,13 @@ pub mod build_brain {
     /// Protocol and file summarization
     pub mod summarize;
     pub mod summarize_db;
-    /// Qdrant vector database operations
-    pub mod vector_db;
-    /// High-level vector database service
-    pub mod vector_service;
 }
 
 /// Repository preparation and building
 pub mod prepare_code {
-    /// Git cloning and Docker-based building
+    /// Generated audit scope/docs context
+    pub mod audit_context;
+    /// Git cloning and native repository building
     pub mod git_clone;
     pub mod repo_data;
 }
@@ -93,6 +89,8 @@ pub mod llm_review {
         pub mod agent_enums;
         /// AI agent factory for centralized agent creation
         pub mod agent_factory;
+        /// Codex app-server bridge for ChatGPT-backed OpenAI usage
+        pub mod codex_app_server;
     }
     pub mod analysis {
 
@@ -179,12 +177,10 @@ pub mod test_support {
 
 /// Shared utilities and helper functions
 pub mod utils {
-    /// OpenAI tokenizer (BPE) for text chunking
+    /// OpenAI tokenizer (BPE) for token counting
     pub mod bpe;
     pub mod check_folder_name;
     pub mod contract_name_check;
-    /// Docker volume cleanup utilities
-    pub mod delete_docker_volumes;
     pub mod deserialize_bool;
     pub mod display_file;
     pub mod env_security;
@@ -202,9 +198,9 @@ pub mod utils {
     pub mod read_file;
     /// Solidity import remapping utilities
     pub mod remapping;
+    /// Runtime dependency checks for native tooling
+    pub mod runtime_deps;
     /// Text sanitization utilities
     pub mod sanitize;
     pub mod semantic_compare;
-    /// Vector database connection utilities
-    pub mod vec_db_connect;
 }

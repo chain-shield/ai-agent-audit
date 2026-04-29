@@ -94,21 +94,7 @@ pub fn sanitize_for_logging(input: &str) -> String {
 
 /// Validates that required environment variables are set without exposing values.
 pub fn validate_required_env_vars() -> Result<()> {
-    let required_vars = ["OPENAI_API_KEY", "QDRANT_URL"];
-    let mut missing_vars = Vec::new();
-
-    for var in &required_vars {
-        if env::var(var).is_err() {
-            missing_vars.push(*var);
-        }
-    }
-
-    if !missing_vars.is_empty() {
-        anyhow::bail!(
-            "Missing required environment variables: {}",
-            missing_vars.join(", ")
-        );
-    }
-
+    // OpenAI authentication now uses cached ChatGPT/Codex OAuth at runtime,
+    // so there are no universally required env vars at startup.
     Ok(())
 }

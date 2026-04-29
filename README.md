@@ -1,802 +1,333 @@
-# AI Agent Audit v2.0
+# AI Agent Audit
 
-An advanced AI-powered smart contract auditing tool that combines static analysis, multiple LLM providers, and vector embeddings to perform comprehensive security audits of Solidity codebases with automated PoC generation and professional report writing.
+AI Agent Audit is a Rust command-line tool for AI-assisted security review of Solidity repositories. It clones and builds a target repo in a local audit workspace, extracts semantic data with Slither, generates per-contract code slices, runs LLM-based discovery and verification passes, and writes Markdown audit reports.
 
-## What's New in v2.0
+This repository is being released as a GitHub-first public beta. It is meant to accelerate expert review, not replace manual auditing.
 
-### 🎲 Randomized Prompt Generation
-- **Pattern Randomization**: Vulnerability patterns are now randomized in each analysis run, reducing LLM position bias and increasing finding diversity by 10-20%
-- **Actor Randomization**: Threat actor lists are shuffled per prompt, ensuring all actor types get equal attention across multiple runs
-- **Invariant Randomization**: Protocol invariants are randomized to maximize coverage and reduce primacy/recency effects
+## Status
 
-### 🏗️ Architectural Improvements
-- **Structured Data Storage**: Refactored multimodal context system to store structured data (`Actors`, `ContractInvariants`) instead of pre-formatted strings
-- **Dynamic Formatting**: Actors and invariants are now formatted at prompt generation time, enabling per-run randomization
-- **Pattern Field Mapping**: New `PatternField` trait with `to_field()` method for converting vulnerability patterns to snake_case field names
+- Public beta.
+- Solidity and EVM-focused.
+- Repository source, docs, and derived context are sent to third-party LLM providers you configure.
+- The current default audit pipeline uses ChatGPT/Codex OAuth for OpenAI access and runs the active review flow on `gpt-5.5`. Summary and deduplication helpers use `gpt-5.4` with low reasoning.
+- Startup performs a one-time ChatGPT sign-in if needed and reuses the cached session on later runs until the token expires.
+- `OPENAI_API_KEY` remains legacy-only and is not used by the default OpenAI path.
+- `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_AI_API_KEY`, and `DEEPSEEK_API_KEY` are still supported by the agent layer, but they are not required by the default review path.
+- Discovery-style runs can be switched back to Gemini with env config if you want to use Google AI for patterns, actors, and invariants while keeping verification/reporting on OpenAI/Codex.
+- PoC-related config fields exist, but automatic PoC generation is currently disabled in the public beta.
 
-### 📊 Enhanced Finding Tracking
-- **PatternChecked Struct**: Complete tracking of all 73 vulnerability patterns (49 syntactic + 24 semantic) plus 6 invariant types
-- **Deterministic Ordering**: Findings now use consistent ordering across summary and full reports via `OnceCell` initialization
-- **Better Deduplication**: Improved semantic similarity scoring with clear thresholds (< 0.25 = different, > 0.5 = duplicate)
+## What It Does
 
-### 🔍 Improved Analysis Quality
-- **Multi-Round Diversity**: Each of the 40 analysis runs now gets different pattern ordering, maximizing unique finding discovery
-- **Reduced False Positives**: Enhanced verification gates with pre-checks for hallucinated bugs and invalid invariants
-- **Better Coverage**: Randomization ensures all vulnerability patterns get fair representation across runs
+- Clones and builds Foundry or Hardhat repositories under `~/Desktop/Audit` by default.
+- Generates audit scope and protocol docs from README/configured entry files into `audit-docs/`.
+- Uses Slither-derived call graph and semantic data when static analysis succeeds.
+- Builds inheritance and interface-implementation indexes from Solidity source.
+- Generates contextual codeblocks for each in-scope contract.
+- Uses pattern libraries, invariant prompts, and actor-oriented context to discover candidate findings.
+- Verifies and deduplicates findings before producing report output.
+- Stores local SQLite state in `.ai-agent-audit/`.
 
-## Overview
+## Who It Is For
 
-AI Agent Audit is a sophisticated Rust-based tool that performs comprehensive smart contract security audits through a **7-phase workflow**:
+- Smart contract auditors and security researchers.
+- Protocol teams doing internal review of Solidity codebases.
+- Engineers experimenting with AI-assisted audit workflows on repos they are allowed to share with external model providers.
 
-1. **Repository Analysis**: Cloning and building smart contract repositories with support for Foundry, Hardhat, and custom build systems
-2. **Static Analysis**: Extracting detailed IR, call graphs, and storage information using Slither
-3. **AI-Powered Security Review**: Leveraging multiple LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) for vulnerability detection across 29+ categories
-4. **Verification & Quality Check**: Multi-stage AI verification to reduce false positives and enhance finding quality
-5. **Automated PoC Generation**: AI-generated Proof-of-Concept tests with automatic compilation and validation
-6. **Professional Report Writing**: Competition-grade markdown reports formatted for Code4rena, Sherlock, and other platforms
-7. **Vector Embeddings**: Creating semantic search capabilities through Qdrant vector database for intelligent context retrieval
+This project is not a hosted service, not a generic SAST scanner for every language, and not a substitute for human validation.
 
-This tool provides professional-grade smart contract auditing capabilities with AI assistance, making it suitable for security researchers, auditors, bug bounty hunters, and development teams.
+## Requirements
 
-## Quick Start
+- Rust stable toolchain.
+- Git.
+- Slither.
+- Foundry (`forge`) for Foundry repositories.
+- Node.js plus `npm`/`npx`, Yarn, or pnpm for Hardhat repositories.
+- Optional `GITHUB_TOKEN` for private GitHub repositories.
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/chain-shield/ai-agent-audit.git
-cd ai-agent-audit
+## Quickstart
 
-# 2. Set up environment variables
-cat > .env << EOF
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
-QDRANT_URL=http://localhost:6334
-RUST_LOG=info
-EOF
-
-# 3. Start Qdrant vector database
-docker-compose up -d
-
-# 4. Build the project
-cargo build --release
-
-# 5. Create a YAML config file
-cat > audit.yaml << EOF
-repo: "https://github.com/Cyfrin/4-puppy-raffle-audit.git"
-audit_type: "Code4rena"
-poc_instructions: "poc-guide.md"
-EOF
-
-# 6. Run the audit
-cargo run --release -- --config audit.yaml
-```
-
-## Features
-
-### Core Functionality
-- **Multi-Platform Repository Support**: Automatically clone and build repositories with Foundry, Hardhat, or custom build commands
-- **YAML Configuration**: Define audit configurations in reusable YAML files for consistent analysis
-- **Advanced Static Analysis**: Deep integration with Slither for IR extraction, call graph analysis, and storage layout
-- **Multi-LLM Security Analysis**: Parallel vulnerability detection using OpenAI (GPT-4o, O3-mini), Anthropic (Claude 3.7/4.0/4.5 Sonnet, Opus 4.0), Google Gemini, and DeepSeek
-- **Comprehensive Vulnerability Detection**: Covers 73 distinct vulnerability patterns (49 syntactic + 24 semantic) with randomized ordering
-- **Vector-Based Semantic Search**: High-quality embeddings with Qdrant for intelligent code search and context retrieval
-- **Professional Audit Reports**: Generate competition-grade markdown reports formatted for Code4rena, Sherlock, and other platforms
-- **Cost Optimization**: Real-time tracking of inference costs across different LLM providers
-
-### Advanced Capabilities
-- **7-Phase Analysis Workflow**: Pattern discovery → Verification → Deduplication → Quality check → PoC generation → Report writing → Vector storage
-- **Randomized Analysis (v2.0)**: Pattern, actor, and invariant randomization per run for 10-20% more unique findings
-- **Automated PoC Generation**: AI-generated Solidity test files with automatic compilation and validation (up to 5 retry attempts)
-- **Intelligent Code Slicing**: Generate contextual code blocks with call graph traversal for focused analysis
-- **AI-Powered Verification**: Multi-stage verification with hallucination detection and invariant validation
-- **Structured Context Management (v2.0)**: Type-safe actor and invariant storage with dynamic formatting
-- **Workspace Caching**: Intelligent caching of build artifacts and analysis results for faster re-runs
-- **Docker Integration**: Secure, isolated analysis environment using Trail of Bits security toolbox
-- **Concurrent Processing**: Parallel analysis across multiple AI agents with configurable semaphore limits
-- **Private Repository Support**: GitHub token authentication for private repository audits
-
-## Prerequisites
-
-### Required Software
-- [Rust](https://www.rust-lang.org/tools/install) (latest stable version)
-- [Docker](https://docs.docker.com/get-docker/) for containerized analysis environment
-- [Qdrant](https://qdrant.tech/documentation/quick-start/) vector database
-
-### Optional (for local development)
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) for Forge (handled by Docker)
-- [Slither](https://github.com/crytic/slither#how-to-install) static analyzer (handled by Docker)
-
-### API Keys
-You'll need API keys for the LLM providers you want to use:
-- **OpenAI**: Required for embeddings and GPT models
-- **Anthropic**: Optional, for Claude models
-- **Google AI**: Optional, for Gemini models
-- **DeepSeek**: Optional, for cost-effective analysis
-
-## Environment Setup
-
-1. Create a `.env` file in the project root with your API keys:
-
-```bash
-# Required
-OPENAI_API_KEY=your_openai_api_key
-QDRANT_URL=http://localhost:6334
-
-# Optional LLM Providers
-ANTHROPIC_API_KEY=your_anthropic_api_key
-GOOGLE_AI_API_KEY=your_gemini_api_key
-DEEPSEEK_API_KEY=your_deepseek_api_key
-
-# Optional: For private GitHub repositories
-GITHUB_TOKEN=your_github_personal_access_token
-
-# Logging
-RUST_LOG=info
-```
-
-2. Start the Qdrant vector database:
-
-```bash
-docker-compose up -d
-```
-
-This will start Qdrant on ports 6333 (REST API) and 6334 (gRPC API).
-
-## Installation
-
-1. Clone this repository:
+1. Clone this repository and enter it.
 
 ```bash
 git clone https://github.com/chain-shield/ai-agent-audit.git
 cd ai-agent-audit
 ```
 
-2. Build the project:
+2. Create a local env file from the template.
 
 ```bash
-cargo build --release
+cp .env.example .env
 ```
 
-## Usage
-
-### Basic Usage
-
-Run the application with a Git repository URL containing Solidity contracts:
+3. Edit `.env` and set the values you actually need:
 
 ```bash
-cargo run --release -- https://github.com/example/solidity-project.git
+RUST_LOG=info
+# OPENAI_API_KEY is not required for the default ChatGPT/Codex OAuth path.
+# Optional provider keys:
+# ANTHROPIC_API_KEY=...
+# GEMINI_API_KEY=...
+# DEEPSEEK_API_KEY=...
 ```
 
-### YAML Configuration (Recommended)
+4. The first OpenAI-backed run will prompt you to sign in with ChatGPT if there is no cached Codex session yet. After that, the session is reused automatically until expiry.
 
-For complex audits or reusable configurations, use YAML config files:
+5. Copy the example config and point it at a Solidity repository.
 
-1. **Create a configuration file** (e.g., `audit-config.yaml`):
+```bash
+cp examples/audit-config.example.yaml audit-config.yaml
+```
+
+Minimal example:
 
 ```yaml
-# Git repository URL (required)
-repo: "https://github.com/Cyfrin/4-puppy-raffle-audit.git"
-
-# Audit platform type (Code4rena, Sherlock, etc)
-audit_type: "Code4rena"
-
-# Optional: Project subfolder
-# subfolder: "contracts"
-
-# Optional: Source code folders (defaults to ["src"])
-# code_folders:
-#   - "src"
-#   - "contracts"
-
-# Optional: Custom documentation
-# custom_doc: "audit-docs/protocol-docs.md"
-
-# Optional: Scoped files list
-# scoped_files: "audit-docs/scope.txt"
-
-# Optional: Audit scope documentation
-# audit_scope: "audit-docs/scope.md"
-
-# Optional: Builder configuration
-# builder: "Custom"
-# build_cmd: "pnpm install && pnpm build"
-
-# Optional: PoC configuration
-# poc_instructions: "poc-instructions.md"
-# poc_template: "poc-template.sol"
-# test_folder: "test"
-
-# Optional: Exclude folders
-# exclude_folders:
-#   - "test"
-#   - "script"
-
-# Optional: Force rebuild
-# force_rebuild: false
-
-# Optional: Foundry via-ir flag
-# via_ir: false
+repo: "https://github.com/example/protocol.git"
+audit_type: "Client"
+code_folders:
+  - "src"
 ```
 
-2. **Run the audit with config file**:
+6. Build and run the tool.
 
 ```bash
+cargo build --release
 cargo run --release -- --config audit-config.yaml
 ```
 
-### CLI Arguments
-
-All YAML options can also be specified via command-line arguments:
+If you prefer not to use YAML for a simple run:
 
 ```bash
-cargo run --release -- https://github.com/example/solidity-project.git \
-  --subfolder contracts \
-  --custom-doc protocol-docs.md \
-  --code-folders src,contracts \
-  --scoped-files scope.txt \
-  --audit-scope scope.md \
-  --builder custom \
-  --build-cmd "pnpm install && pnpm build" \
-  --poc-instructions poc-guide.md \
-  --exclude-folders test,script \
-  --force-rebuild
+cargo run --release -- https://github.com/example/protocol.git --audit-type Client
 ```
 
-**Note**: CLI arguments override YAML configuration values.
+For repos that keep contracts under `contracts/` instead of `src/`, set `code_folders` accordingly.
 
-### Example YAML Configurations
+## Private Repositories
 
-#### Simple Foundry Project
-```yaml
-repo: "https://github.com/Cyfrin/4-puppy-raffle-audit.git"
-audit_type: "Code4rena"
-poc_instructions: "poc-guide.md"
-```
-
-#### Complex Monorepo with Custom Build
-```yaml
-repo: "https://github.com/example/complex-project.git"
-subfolder: "contracts"
-audit_type: "Sherlock"
-code_folders:
-  - "src"
-  - "contracts"
-custom_doc: "audit-docs/protocol-docs.md"
-scoped_files: "audit-docs/scope.txt"
-audit_scope: "audit-docs/scope.md"
-builder: "Custom"
-build_cmd: "pnpm install && pnpm build"
-poc_instructions: "audit-docs/poc-guide.md"
-poc_template: "audit-docs/poc-template.sol"
-test_folder: "test"
-exclude_folders:
-  - "test"
-  - "script"
-  - "mock"
-via_ir: true
-```
-
-#### Private Repository
-```yaml
-repo: "https://github.com/private-org/private-repo.git"
-audit_type: "Immunefi"
-# Set GITHUB_TOKEN environment variable before running
-```
-
-### Private Repository Support
-
-To audit private GitHub repositories, set the `GITHUB_TOKEN` environment variable:
-
-1. **Create a GitHub Personal Access Token**:
-   - Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
-   - Click "Generate new token (classic)"
-   - Select scopes: `repo` (for private repositories)
-   - Copy the generated token
-
-2. **Set the environment variable**:
+If the target repository is private, set `GITHUB_TOKEN` before running the tool. The clone path uses that token for GitHub HTTPS URLs.
 
 ```bash
-# Option 1: Add to .env file
-echo "GITHUB_TOKEN=ghp_your_token_here" >> .env
-
-# Option 2: Export in your shell
-export GITHUB_TOKEN=ghp_your_token_here
-
-# Option 3: Inline with command
-GITHUB_TOKEN=ghp_your_token_here cargo run --release -- --config audit-config.yaml
-```
-
-**Note**: The token is automatically injected into the git clone URL for authentication.
-
-### Complete 7-Phase Workflow
-
-The application performs a comprehensive audit workflow:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    PHASE 1: PREPARATION                         │
-│  Repository Clone → Build → Slither Analysis → Code Slicing    │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│              PHASE 2: PATTERN DISCOVERY (29 types)              │
-│  Parallel AI Agents → Vulnerability Detection → Initial Findings│
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│           PHASE 3: VERIFICATION & DEDUPLICATION                 │
-│  AI Verification → Confidence Scoring → Similarity Analysis     │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                  PHASE 4: QUALITY CHECK                         │
-│  Quality Assurance → Enhanced Details → Impact Analysis         │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│              PHASE 5: POC GENERATION (H/M only)                 │
-│  Generate Test → Compile → Run → Retry (up to 5x) → Validate   │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│         PHASE 6: PROFESSIONAL REPORT WRITING                    │
-│  Competition Format → GitHub URLs → Impact → Mitigation         │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│            PHASE 7: VECTOR DATABASE POPULATION                  │
-│  Embeddings → Qdrant Storage → Semantic Search Ready            │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-#### Phase 1: Repository Preparation & Static Analysis
-- Clone the repository using Docker for security isolation
-- Auto-detect and build with Foundry, Hardhat, or custom build commands
-- Intelligent workspace caching (reuses build artifacts if available)
-- Extract call graphs and inheritance hierarchies using Slither
-- Generate intermediate representation (IR) for all functions
-- Analyze storage layouts and variable mappings
-- Create semantic databases for efficient querying
-
-#### Phase 2: Pattern Discovery
-- Generate contextual code slices with call graph traversal
-- Run parallel security analysis using multiple LLM providers
-- Detect vulnerabilities across 73 distinct patterns (49 syntactic + 24 semantic)
-- **Randomize pattern order** per run to reduce LLM position bias and increase finding diversity
-- Use specialized prompts for each vulnerability type with dynamic actor and invariant context
-
-#### Phase 3: Verification & Deduplication
-- AI-powered verification of discovered findings with pre-gate sanity checks
-- **Hallucination detection**: Verify bugs actually exist in code before proceeding
-- **Invariant validation**: Confirm claimed invariants are real and documented
-- Semantic similarity analysis to detect duplicates (threshold: 0.5 for high confidence)
-- Confidence scoring for each finding
-- Filter out false positives and low-confidence findings
-
-#### Phase 4: Quality Check
-- Final quality assurance on verified findings
-- Enhance findings with improved details and impact analysis
-- Ensure findings meet professional audit standards
-- Add comprehensive mitigation strategies
-
-#### Phase 5: Automated PoC Generation
-- Generate Solidity test files for High and Medium severity findings
-- Automatically compile and run tests using Forge
-- Retry up to 5 times with AI-guided fixes if tests fail
-- Validate that PoCs successfully demonstrate the vulnerability
-
-#### Phase 6: Professional Report Writing
-- Generate competition-grade markdown reports for validated findings
-- **Deterministic ordering**: Findings use consistent order across summary and full reports
-- Format according to audit platform (Code4rena, Sherlock, etc.)
-- Include GitHub URLs with line numbers for all relevant code
-- Add detailed impact analysis and mitigation recommendations
-- Track which patterns were checked via `PatternChecked` metadata
-
-#### Phase 7: Vector Database Population
-- Create semantic embeddings for all code and analysis results
-- Store in Qdrant for intelligent search and retrieval
-- Enable future context-aware analysis
-
-#### Cost Tracking
-- Monitor and report total inference costs across all LLM providers
-- Track costs per phase and per finding
-
-## Project Structure
-
-```
-src/
-├── ai_bot/                    # AI agent implementations
-│   ├── agent.rs              # Core AI audit agent with vector search
-│   └── retrieve_slice.rs     # Context retrieval for AI analysis
-├── build_brain/              # Core analysis and data processing
-│   ├── callgraph.rs          # Call graph analysis and traversal
-│   ├── embeddings.rs         # Vector embeddings generation
-│   ├── enrichment.rs         # Slither analysis integration
-│   ├── fn_summaries.rs       # Function summarization
-│   ├── graph_db.rs           # Graph database operations
-│   ├── inheritance.rs        # Contract inheritance analysis
-│   ├── parsers.rs            # Code parsing utilities
-│   ├── slither_ffi.rs        # Slither static analyzer interface
-│   ├── summarize.rs          # Protocol and file summarization
-│   └── vector_db.rs          # Qdrant vector database operations
-├── cli_args/                 # Command-line argument parsing
-│   └── parse.rs              # CLI and YAML config parsing
-├── cost/                     # Cost tracking and management
-│   └── cost_data.rs          # LLM inference cost calculation
-├── enumerator/               # Code slicing and enumeration
-│   ├── codeblock_cache.rs    # Caching for generated code blocks
-│   ├── codeblock_db.rs       # Database for code block storage
-│   ├── codeblock_maker.rs    # Code block generation logic
-│   ├── codeblocks.rs         # Core code slicing functionality
-│   ├── parse_library_file.rs # Library file parsing
-│   ├── parse_solidity.rs     # Solidity source parsing
-│   └── utils.rs              # Enumeration utilities
-├── llm_review/               # AI-powered security analysis
-│   ├── agent_factory.rs      # AI agent initialization
-│   ├── code_review_v2.rs     # Main security review orchestration (7-phase)
-│   ├── config.rs             # LLM configuration and models
-│   ├── context_state.rs      # Global context management
-│   ├── enums.rs              # AI agent and vulnerability type enums
-│   ├── findings.rs           # Finding data structures
-│   ├── semaphore.rs          # Concurrency control
-│   ├── phases/               # 7-phase analysis workflow
-│   │   ├── discover_patterns.rs    # Phase 1: Pattern discovery
-│   │   ├── verify_findings.rs      # Phase 2: Verification
-│   │   ├── deduplicate_findings.rs # Phase 3: Deduplication
-│   │   ├── quality_check.rs        # Phase 4: Quality assurance
-│   │   ├── add_poc_findings.rs     # Phase 5: PoC generation
-│   │   ├── create_report.rs        # Phase 6: Report writing
-│   │   └── mod.rs                  # Phase module exports
-│   ├── prompt_support/       # Prompt engineering modules
-│   │   ├── create_report_prompt.rs # Report generation prompts
-│   │   ├── make_poc_prompt.rs      # PoC generation prompts
-│   │   ├── post_qualify.rs         # Quality check post-prompts
-│   │   ├── qualify_prompt.rs       # Quality check prompts
-│   │   └── verify_prompt.rs        # Verification prompts
-│   └── utils/                # LLM review utilities
-│       └── prompt_context.rs # Context generation for prompts
-├── prepare_code/             # Repository preparation
-│   └── git_clone.rs          # Git cloning, building, and workspace caching
-├── reporting/                # Report generation
-│   ├── audit.rs              # Audit report generation
-│   ├── contract_data.rs      # Contract data export
-│   └── save_file.rs          # File saving utilities
-├── prompts/                  # Vulnerability-specific prompts (21 types)
-├── master_prompts/           # Master security analysis prompts
-├── invariant_prompts/        # Protocol invariant prompts (6 types)
-├── config/                   # Configuration management
-│   └── mod.rs                # Audit type and config
-├── error/                    # Error handling
-│   └── mod.rs                # Custom error types
-├── utils/                    # Shared utilities
-├── lib.rs                    # Library exports
-└── main.rs                   # Application entry point (7-phase workflow)
-```
-
-## Vulnerability Detection
-
-The tool analyzes smart contracts for **73 distinct vulnerability patterns** organized into two tiers:
-
-### Pattern Organization (v2.0)
-- **R1_PATTERNS (Syntactic)**: 49 patterns detected through code structure analysis
-- **R2_PATTERNS (Semantic)**: 24 patterns requiring deeper semantic understanding
-- **Invariant Types**: 6 protocol invariant categories (Arithmetic, Balance, Permission, Temporal, Referential, StateMachine)
-
-All patterns are tracked via the `PatternChecked` struct with `Option<bool>` tri-state logic:
-- `Some(true)`: Pattern checked and vulnerability found
-- `Some(false)`: Pattern checked but no vulnerability found
-- `None`: Pattern not checked in this analysis
-
-### Core Vulnerability Categories
-
-### Core Security Categories (16 types)
-1. **Access Control** - Missing/mis-scoped auth, ownership loss
-2. **Denial of Service (DoS)** - Gas exhaustion, revert griefing, block gas limit
-3. **Integer Overflow** - Overflow/underflow, div-by-zero
-4. **Signature Malleability** - EIP-2 `s` checks, EIP-712 domain separation
-5. **Unexpected ETH** - Ether stuck/overly strict balance checks
-6. **Storage Layout** - Slot collisions, struct packing, uninitialized storage
-7. **Front-run/MEV** - Front-run/sandwich/back-run/latency arbitrage vectors
-8. **Oracle Manipulation** - Price-feed spoofing, stale data, missing sanity checks
-9. **Randomness** - Predictable entropy, miner influence
-10. **Reentrancy** - State update after external call, cross-function
-11. **Delegatecall/Low-level Ops** - Unsafe `delegatecall`, inline assembly
-12. **Replay Attack** - Sig replay, chain-ID mix-ups
-13. **Upgradeability/Initializer Safety** - Proxy init gaps, `initializer()` abuse
-14. **Self-Destruct** - Griefing/forced-ETH via `selfdestruct`
-15. **Zero-Code** - Constructor-phase contract bypasses
-16. **Flash Loan Economic Manipulation** - State checked & used within same tx
-
-### Additional Security Issues (13 types)
-17. **tx.origin** - Auth that trusts `tx.origin`
-18. **Array Limits** - OOB reads/writes, dynamic-array gas bombs
-19. **Pragma** - Floating pragma, outdated compiler bugs
-20. **Inheritance** - Bad overrides, diamond ambiguity
-21. **Integer Math** - Rounding, precision div-by-zero
-22. **Confidential Data** - Private info leak via events/public vars
-23. **Default Visibility** - Funcs/vars defaulting to `public`
-24. **Pausable Emergency Stop** - Missing pause guards or bypasses
-25. **Timestamp Dependent Logic** - Miner-controlled `block.timestamp`/`number`
-26. **Unchecked Return** - Ignoring `call`, ERC-20 `transfer` boolean
-27. **Event Consistency** - Critical state changes not emitted/mis-ordered
-28. **Short Address** - Calldata truncation on L1/L2 bridges
-29. **Gas Grief Block Limit** - User-scaling loops, heavy SSTORE in hot paths
-
-## How It Works
-
-### 1. Secure Repository Processing
-- Clone repositories in isolated Docker containers using Trail of Bits security toolbox
-- Auto-detect and build with Foundry (`forge build`), Hardhat (`npx hardhat compile`), or custom build commands
-- Intelligent workspace caching: reuses build artifacts if available, rebuilds only when necessary
-- Extract and filter Solidity source files and documentation
-- Support for monorepos, subfolders, and custom source directories
-
-### 2. Advanced Static Analysis
-- Generate comprehensive call graphs and inheritance hierarchies using Slither
-- Extract SlithIR (intermediate representation) for every function
-- Analyze storage layouts and variable mappings
-- Create semantic databases for efficient querying
-- Let Slither handle compilation automatically for maximum reliability
-
-### 3. Intelligent Code Slicing
-- Perform breadth-first search through call graphs
-- Generate contextual code blocks with configurable depth and token budgets
-- Include parent contracts, called contracts, and deployment scripts
-- Cache results for efficient reprocessing
-
-### 4. Multi-LLM Security Analysis (7-Phase Workflow)
-- **Phase 1**: Deploy multiple AI agents in parallel for pattern discovery across 73 vulnerability patterns with randomized ordering
-- **Phase 2**: AI-powered verification with confidence scoring, semantic similarity analysis, and hallucination detection
-- **Phase 3**: Intelligent deduplication using vector embeddings and similarity thresholds (< 0.25 = different, > 0.5 = duplicate)
-- **Phase 4**: Quality assurance with enhanced details, impact analysis, and mitigation strategies
-- **Phase 5**: Automated PoC generation with up to 5 retry attempts and automatic compilation
-- **Phase 6**: Professional report writing formatted for Code4rena, Sherlock, and other platforms with deterministic ordering
-- **Phase 7**: Vector database population for semantic search and context retrieval
-
-### 5. Vector-Based Context Retrieval
-- Create high-quality embeddings using OpenAI's text-embedding-3-small
-- Store in Qdrant with rich metadata for semantic search
-- Enable AI agents to retrieve relevant context dynamically
-- Unique collections per repository for isolated analysis
-
-### 6. Professional Report Generation
-- Generate competition-grade Markdown audit reports with severity classifications
-- Include GitHub URLs with line numbers for all relevant code
-- Add detailed impact analysis, PoC tests, and mitigation recommendations
-- Support both comprehensive (paid) and limited (free) report formats
-- Export contract data and metadata for further analysis
-
-## Output Files
-
-After analysis, the tool generates several output files:
-
-### Audit Reports
-- `{repo-name}-audit-{hash}-audit-report.md` - Comprehensive audit report with all findings
-- `{repo-name}-audit-{hash}-free-audit-report.md` - Limited audit report (free version)
-- Individual finding reports with PoC tests and GitHub URLs
-
-### Contract Analysis Data
-- `{ContractName}-{repo-name}-audit-{hash}.md` - Individual contract analysis
-- `metadata-{repo-name}-audit-{hash}.md` - Protocol metadata and context
-
-### PoC Test Files
-- `test/{Severity}-{Finding-Title}.t.sol` - Generated Solidity test files
-- Automatically compiled and validated using Forge
-- Includes setup, exploit demonstration, and assertions
-
-### Analysis Artifacts
-- `callgraph.json` - Complete call graph data
-- `inheritance.json` - Contract inheritance relationships
-- `graph.json` - Semantic graph database
-- `sarif.json` - SARIF format analysis results
-
-### Workspace Artifacts
-- `/tmp/audit-analysis/{repo-name}-{hash}/` - Cached workspace with build artifacts
-- `.chainshield_build_ok` - Build stamp for workspace reuse validation
-
-## Querying the Vector Database
-
-The tool creates unique vector collections for each repository. You can query them using the Qdrant API:
-
-```python
-from qdrant_client import QdrantClient
-
-# Connect to Qdrant
-client = QdrantClient(url="http://localhost:6334")
-
-# List all collections
-collections = client.get_collections()
-print("Available collections:", [c.name for c in collections.collections])
-
-# Search for semantically similar content
-# Collection name format: {repo_hash}-contract_chunks
-search_result = client.search(
-    collection_name="your_repo_hash-contract_chunks",
-    query_vector=your_query_vector,  # Vector from embedding your query text
-    limit=5,
-    with_payload=True
-)
-
-# Print results with metadata
-for result in search_result:
-    print(f"Score: {result.score}")
-    print(f"Content: {result.payload.get('content', '')[:200]}...")
-    print(f"Source: {result.payload.get('meta', {})}")
+export GITHUB_TOKEN=...
 ```
 
 ## Configuration
 
-### LLM Provider Configuration
+`--config <file>` loads YAML, and explicit CLI flags override YAML values. The current example file lives at [examples/audit-config.example.yaml](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/examples/audit-config.example.yaml:1).
 
-The tool supports multiple LLM providers with different cost profiles:
+### Supported `audit_type` Values
 
-| Provider | Input Cost (per 1M tokens) | Output Cost (per 1M tokens) | Models |
-|----------|----------------------------|------------------------------|---------|
-| OpenAI | $2.00 | $8.00 | GPT-4o, O3-mini |
-| Anthropic | $3.00 | $15.00 | Claude 3.7 Sonnet, Claude 4.0 Sonnet |
-| Gemini | $1.25 | $10.00 | Gemini 2.0 Flash Thinking |
-| DeepSeek | $0.07 | $1.10 | DeepSeek Chat |
+- `Code4rena`
+- `Sherlock`
+- `Cantina`
+- `Client`
 
-### Analysis Parameters
+Use `Client` for internal or client-style audits. Use the contest values when you want severity handling and report language aligned more closely with those platforms. In the current beta, report formatting is still closest to a Code4rena-style Markdown layout even when using other audit types.
 
-Key configuration constants (in source code):
-- `MAX_DEPTH`: Call graph traversal depth (default: 3)
-- `TOKEN_BUDGET`: Maximum tokens per code block (default: 150,000)
-- `RUNS`: Number of discovery rounds per contract (default: 3)
-- `MAX_CONCURRENTS_REVIEW`: Concurrent pattern discovery agents (default: 3)
-- `MAX_CONCURRENTS_VERIFY`: Concurrent verification agents (default: 10)
-- `MAX_CONCURRENTS_POC`: Concurrent PoC generation (default: 1)
+### YAML And CLI Fields
 
-### Audit Platform Types
+| YAML key / CLI flag | Purpose |
+| --- | --- |
+| `repo` / positional `repo` | Required HTTP(S) Git repository URL. |
+| `config` / `--config` | Load a YAML config file. |
+| `subfolder` / `--subfolder` | Analyze a subdirectory inside the cloned repo, useful for monorepos. |
+| `code_folders` / `--code-folders` | Source roots to scan for contracts. Defaults to `["src"]`. |
+| `audit_scope` / `--audit-scope` | Local Markdown file containing scope notes or reviewer guidance. |
+| `doc_folder` / `--doc-folder` | Repo-relative folder containing Markdown docs to ingest. |
+| `custom_doc` / `--custom-doc` | Local Markdown file to use instead of auto-discovered root docs. |
+| `monorepo_folders` / `--monorepo-folders` | Local text file listing repo-relative package roots for monorepo-aware analysis. |
+| `exclude_folders` / `--exclude-folders` | Repo-relative folders to exclude from scope. |
+| `scoped_files` / `--scoped-files` | Local text file listing repo-relative files that should be treated as in scope. |
+| `context` | YAML-only block for generated audit scope/docs context. Defaults to `README.md`, `audit-docs`, `force_regenerate: true`, and 5000 tokens per generated Markdown file. |
+| `poc_instructions` / `--poc-instructions` | Local file with PoC-writing instructions. Present in config surface, but automated PoC generation is currently disabled. |
+| `poc_template` / `--poc-template` | Local template used for PoC generation when that feature is enabled. |
+| `test_folder` / `--test-folder` | Repo-relative test directory for PoC output when PoC generation is enabled. |
+| `audit_type` / `--audit-type` | One of `Code4rena`, `Sherlock`, `Cantina`, `Client`. |
+| `builder` / `--builder` | One of `Foundry`, `Hardhat`, `HardhatYarn`, `Custom`, `Auto`. Default is `Auto`. |
+| `build_cmd` / `--build-cmd` | Required when `builder: "Custom"` is used. |
+| `via_ir` / `--via-ir` | Adds `--via-ir` to the Foundry build command. |
+| `force_rebuild` / `--force-rebuild` | Re-clone and rebuild even if a cached workspace already exists. |
 
-Supported audit platforms (configured via `audit_type` in YAML or CLI):
-- `Code4rena` - Code4rena bug bounty platform
-- `Sherlock` - Sherlock audit contests
-- `Cantina` - Cantina security competitions
-- `Hats` - Hats Finance bug bounties
-- `Immunefi` - Immunefi bug bounty program
+### Path Conventions
 
-## Performance and Costs
+- `custom_doc`, `audit_scope`, `scoped_files`, `monorepo_folders`, `poc_instructions`, and `poc_template` are read from local files you provide on the machine running the tool.
+- `subfolder`, `code_folders`, `doc_folder`, `exclude_folders`, and `test_folder` are interpreted relative to the cloned target repository.
+- If no manual `custom_doc`, `audit_scope`, or `scoped_files` are provided, the tool generates `<repo-folder>-docs.md`, `<repo-folder>-scope.md`, and `<repo-folder>-scope.txt` in `audit-docs/`.
+- The generated filename prefix preserves the cloned repo folder identity, including date/contest prefixes such as `2026-04-monetrix`.
+- `context.force_regenerate` defaults to `true` for generated context. Legacy YAMLs that already provide all three manual context files are left alone when no `context` block is present.
 
-### Typical Analysis Times
-- Small projects (< 10 contracts): 10-20 minutes
-- Medium projects (10-50 contracts): 20-60 minutes
-- Large projects (50+ contracts): 60+ minutes
+### Generated Context
 
-**Note**: Times include all 7 phases (pattern discovery, verification, deduplication, quality check, PoC generation, report writing, and vector storage).
+Minimal generated-context config:
 
-### Cost Estimation
-- Small project: $2-10 USD
-- Medium project: $10-30 USD
-- Large project: $30+ USD
+```yaml
+context:
+  files:
+    - README.md
+  output_dir: "audit-docs"
+  force_regenerate: true
+  max_tokens_per_file: 5000
+```
 
-**Cost Breakdown by Phase**:
-- Phase 1 (Pattern Discovery): ~40% of total cost
-- Phase 2 (Verification): ~20% of total cost
-- Phase 3 (Deduplication): ~5% of total cost
-- Phase 4 (Quality Check): ~15% of total cost
-- Phase 5 (PoC Generation): ~10% of total cost
-- Phase 6 (Report Writing): ~10% of total cost
-- Phase 7 (Vector Storage): Minimal cost (embeddings only)
+The generator copies `scope.txt` from the cloned repo when present. If no `scope.txt` exists, it extracts in-scope Solidity paths from entry context files. By default the only entry file is `README.md`; `context.files` can add or replace entry files. Links found in those entry files are treated as second-level candidates and fetched only when they look relevant to scope, known issues, protocol documentation, prior audits, or Code4rena V12 reports. Fetched second-level pages do not emit more links. If generated `scope.md` or `docs.md` exceeds `max_tokens_per_file`, Codex summarizes it down to the limit; the generator refuses to silently truncate final Markdown.
 
-*Costs vary significantly based on LLM provider choice, project complexity, and number of findings*
+### Environment Variables
 
-### Workspace Caching Benefits
-- **First run**: Full analysis with all phases
-- **Subsequent runs**: Reuses build artifacts, ~30% faster
-- **Force rebuild**: Use `--force-rebuild` flag to ignore cache
+| Variable | Required | Notes |
+| --- | --- | --- |
+| ChatGPT/Codex sign-in | Yes for the default pipeline | Performed interactively once at startup when needed, then cached locally until expiry. |
+| `OPENAI_API_KEY` | Legacy only | Not used by the default OpenAI path. |
+| `GEMINI_API_KEY` | No | Supported by the agent layer, not required by the default path. |
+| `GOOGLE_AI_API_KEY` | Legacy alias | Accepted as a fallback for Gemini. |
+| `ANTHROPIC_API_KEY` | No | Supported by the agent layer, not required by the default path. |
+| `DEEPSEEK_API_KEY` | No | Supported by the agent layer, not required by the default path. |
+| `GITHUB_TOKEN` | No | Used for private GitHub repo cloning. |
+| `AI_AGENT_AUDIT_DATA_DIR` | No | Overrides the local cache directory. Defaults to `.ai-agent-audit`. |
+| `AI_AGENT_AUDIT_WORKSPACE_ROOT` | No | Overrides where target repos are cloned and built. Defaults to `~/Desktop/Audit`. |
+| `RUST_LOG` | No | Standard Rust log level, defaults to `info`. |
+
+The shipped template is [`.env.example`](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/.env.example:1).
+
+Discovery provider/model defaults now live in [src/config.rs](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/src/config.rs:35). Edit `DISCOVERY_PROVIDER`, `GEMINI_DISCOVERY_MODEL`, and `DISCOVERY_GEMINI_THINKING_LEVEL` there if you want to switch discovery between OpenAI and Gemini.
+
+## How The Pipeline Works
+
+1. Repository preparation. The tool validates the repo URL, resolves the current `HEAD` commit, clones the target into a local workspace under `~/Desktop/Audit/<project-id>/`, and builds it with Foundry, Hardhat, or a custom command.
+
+2. Audit context generation. The tool reads README/configured entry files, follows relevant second-level links, copies or extracts scope, and writes generated scope/docs files under `audit-docs/`.
+
+3. Semantic extraction. It runs the Slither-based enrichment path to build a local semantic SQLite database with function metadata and call graph edges.
+
+4. Metadata context. It generates protocol-level context used later by the audit prompts and saves a metadata Markdown artifact.
+
+5. Solidity indexing. It builds inheritance information from source and then derives an interface-implementation index.
+
+6. Codeblock generation. It slices the codebase into contextual per-contract codeblocks using call graph depth and token-budget settings.
+
+7. AI review. Verification, deduplication, summaries, and report-writing stay on the OpenAI/Codex path. Discovery-style phases (patterns, actors, invariants) use the provider configured in [src/config.rs](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/src/config.rs:35). Findings are aggregated across contracts and deduplicated at the end.
+
+8. Report export and local persistence. The tool writes Markdown outputs, records findings in local SQLite databases, and keeps cached repo metadata for later runs.
+
+## Outputs And Local State
+
+Outputs are written relative to the current working directory. The main output folder is named after the target repo, or `repo/subfolder` if `subfolder` is configured.
+
+### Generated Markdown
+
+- `<repo_name>/report/audit-report.md`
+  The main aggregated audit report.
+- `<repo_name>/report/<sanitized-finding-title>.md`
+  One file per finding when a detailed competition-style report was generated for that finding. Filenames are sanitized and truncated.
+- `<repo_name>/metadata-<unique_repo_hash>.md`
+  Saved metadata context used during analysis.
+- `<repo_name>/<ContractType>-<Contract>-<Category>-size-<tokens>.md`
+  Exported codeblocks for in-scope contracts.
+
+### Local SQLite State
+
+By default, the tool stores local state under `.ai-agent-audit/`:
+
+- `.ai-agent-audit/semantic.db`
+- `.ai-agent-audit/summary.db`
+- `.ai-agent-audit/codeblock.db`
+- `.ai-agent-audit/findings.db`
+- `.ai-agent-audit/repo_data.db`
+
+Set `AI_AGENT_AUDIT_DATA_DIR` if you want those files elsewhere.
+
+## Analysis Coverage
+
+The analysis system combines several sources of context:
+
+- Pattern libraries covering access control, reentrancy, accounting and invariant drift, oracle and AMM behavior, governance and timelocks, upgradeability, bridging, token standards, marketplace flows, and more.
+- Invariant analysis across arithmetic, balance, permission, temporal, referential, and state-machine categories.
+- Contract categorization and actor-oriented prompt context.
+- Contest-aware severity handling for `Code4rena`, `Sherlock`, and `Cantina`, plus a more open-ended `Client` mode.
+
+The exact prompts and pattern catalogs continue to evolve, so the README intentionally describes this at the capability level instead of freezing brittle counts.
+
+## Safety And Limitations
+
+- This project sends code and documentation to external AI providers. Do not use it on repositories you are not allowed to share with those providers.
+- The tool is designed for defensive review support. It can miss real issues and it can produce false positives.
+- The current default path depends on a valid cached ChatGPT/Codex session for OpenAI work.
+- `audit_type` affects severity and rubric behavior more than it changes the overall pipeline.
+- Automatic PoC generation is present in code but disabled in the current public beta.
+- If the target repo does not build cleanly on the local machine, analysis quality will degrade or the run may fail.
+- Automatic build commands do not install package dependencies. Because execution is host-local rather than Docker-isolated, run `npm install`, `yarn install`, `pnpm install`, or `forge install` yourself only when you trust the target repo, or provide an explicit `build_cmd`.
+- If Slither cannot extract semantic data, the tool falls back to a reduced analysis path with less Slither-derived context.
 
 ## Troubleshooting
 
-### Common Issues
+### Missing API Keys
 
-1. **Docker Permission Errors**
-   ```bash
-   sudo usermod -aG docker $USER
-   # Log out and back in
-   ```
+If startup cannot authenticate OpenAI access, rerun the tool and complete the ChatGPT/Codex sign-in prompt. The default path does not require `OPENAI_API_KEY`.
 
-2. **Qdrant Connection Issues**
-   ```bash
-   docker-compose down
-   docker-compose up -d
-   # Verify Qdrant is running
-   curl http://localhost:6334/collections
-   ```
+### Build System Not Detected
 
-3. **Slither Build Artifacts Issues**
-   - The tool automatically lets Slither handle compilation for maximum reliability
-   - If you encounter build errors, use `--force-rebuild` to clear cached artifacts
-   - For custom build systems, specify `--builder custom --build-cmd "your build command"`
+If the build output shows `No build system detected`, the target repo likely does not expose a recognizable `foundry.toml` or `hardhat.config.*` at the analyzed root. Set `subfolder`, `monorepo_folders`, or `builder: "Custom"` plus `build_cmd`.
 
-4. **Out of Memory Errors**
-   - Reduce `TOKEN_BUDGET` in source code (default: 150,000)
-   - Use fewer concurrent LLM agents (reduce `MAX_CONCURRENTS_*` values)
-   - Increase Docker memory limits in Docker Desktop settings
+### Missing Runtime Dependencies
 
-5. **API Rate Limits**
-   - The tool uses semaphores to control concurrency
-   - Reduce `MAX_CONCURRENTS_REVIEW` and `MAX_CONCURRENTS_VERIFY` in source code
-   - Use multiple API keys with rotation
-   - Choose providers with higher rate limits (e.g., DeepSeek)
+The Docker execution path has been removed. If `git`, `slither`, `forge`, `node`, `npm`, `npx`, `yarn`, or `pnpm` is required and missing or incompatible, startup/build/static-analysis will fail with an install note for the missing command. Node-based builds require Node.js 18 or newer.
 
-6. **PoC Generation Failures**
-   - The tool retries up to 5 times with AI-guided fixes
-   - Check that Forge is installed and accessible in Docker
-   - Verify `poc_instructions` file exists and contains valid guidance
-   - Review PoC test output in terminal for compilation errors
+### Wrong Source Folder
 
-7. **YAML Configuration Errors**
-   - Ensure YAML file uses correct syntax (spaces, not tabs)
-   - Use PascalCase for enum values (e.g., `builder: "Custom"`)
-   - Verify all file paths in YAML are relative to current directory
-   - Check that `repo` field is provided either in YAML or CLI
+If the run finishes but contract coverage looks wrong, check `code_folders`. The default is `src`, but many repos use `contracts`, `src/contracts`, or multiple package roots.
 
-8. **Workspace Caching Issues**
-   - Use `--force-rebuild` to ignore cached build artifacts
-   - Delete workspace manually: `rm -rf /tmp/audit-analysis/{repo-name}-{hash}`
-   - Check for `.chainshield_build_ok` stamp file in workspace
+### Stale Cached Workspace
 
-## Advanced Features
+If a rerun is clearly using stale build artifacts, set `force_rebuild: true` or pass `--force-rebuild`.
 
-### Semantic Similarity Deduplication (v2.0 Enhanced)
-The tool uses vector embeddings to detect duplicate findings with clear thresholds:
-- **Similarity score < 0.25**: Completely different issues (keep both)
-- **Similarity score 0.25-0.5**: Gray zone (manual review recommended)
-- **Similarity score > 0.5**: Highly likely same issue (automatically deduplicated)
+### Slither Fails But The Run Continues
 
-The deduplication system now uses deterministic ordering to ensure consistent results across summary and full reports.
+That is expected behavior. The tool can continue in a reduced mode, but some Slither-derived metadata will be skipped.
 
-### Intelligent PoC Retry Logic
-When PoC tests fail, the tool:
-1. Captures compilation errors and test output
-2. Feeds errors back to AI agent for analysis
-3. Generates improved PoC with fixes
-4. Retries up to 5 times total
-5. Marks finding with PoC status (AllTestPass, SomeTestPass, NoTestPass, CannotCreate)
+## Project Structure
 
-### Multi-Stage Verification (v2.0 Enhanced)
-Each finding goes through multiple verification stages with improved quality gates:
-1. **Initial Discovery**: Pattern-based detection across 73 patterns with randomized ordering
-2. **Pre-Gate Sanity Check (NEW)**: Verify bug exists in code, invariant is real, and execution path is possible
-3. **Verification**: AI-powered validation with confidence scoring and hallucination detection
-4. **Deduplication**: Semantic similarity analysis with clear thresholds (< 0.25 = different, > 0.5 = duplicate)
-5. **Quality Check**: Final quality assurance and enhancement
-6. **PoC Validation**: Automated test generation and execution (up to 5 retries)
-7. **Report Generation**: Professional markdown report writing with deterministic ordering
+The current codebase is organized around these modules:
 
-### Workspace Management
-The tool intelligently manages build artifacts:
-- Checks for existing workspace at `/tmp/audit-analysis/{repo-name}-{hash}`
-- Validates build artifacts (`out/`, `artifacts/`, or `build/` directories)
-- Reuses workspace if artifacts are valid and `--force-rebuild` not set
-- Rebuilds if artifacts missing, corrupted, or force rebuild requested
-- Logs detailed reasons for rebuild decisions
+```text
+src/
+  main.rs                 CLI entrypoint and top-level orchestration
+  config.rs               environment/config loading and constants
+  cli_args/               clap/YAML argument parsing
+  prepare_code/           repo cloning, generated context, filtering, native builds, repo metadata
+  build_brain/            Slither enrichment, summaries, graph DB
+  enumerator/             codeblock generation, Solidity parsing, interface indexing
+  llm_review/             prompt generation, agent setup, findings, review phases
+  reporting/              audit reports, finding reports, exported artifacts
+  cost/                   inference cost tracking
+  utils/                  shared helpers
+tests/                    hermetic and manual integration tests
+scripts/run_ci_tests.sh   curated public CI test runner
+```
 
-## Contributing
+## Testing And CI
 
-Contributions are welcome! Areas for improvement:
-- Additional vulnerability detection patterns beyond the current 29 categories
-- New LLM provider integrations (GPT-5, Claude 4.5, etc.)
-- Performance optimizations for large codebases
-- Enhanced reporting formats and visualization
-- Advanced prompt engineering for better detection accuracy
-- Improved PoC generation strategies
-- Additional audit platform support
+Public CI currently runs:
 
-Please feel free to submit a Pull Request.
+- `cargo fmt --check`
+- `cargo check --tests`
+- `bash scripts/run_ci_tests.sh`
 
-## Acknowledgments
+That hermetic test runner is defined in [scripts/run_ci_tests.sh](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/scripts/run_ci_tests.sh:1) and wired through [`.github/workflows/ci.yml`](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/.github/workflows/ci.yml:1).
 
-This tool builds upon excellent open-source projects:
-- [Slither](https://github.com/crytic/slither) - Static analysis framework by Trail of Bits
-- [Qdrant](https://qdrant.tech/) - Vector similarity search engine
-- [Foundry](https://github.com/foundry-rs/foundry) - Ethereum development toolkit
-- [OpenAI](https://openai.com/) - GPT models and embeddings
-- [Anthropic](https://www.anthropic.com/) - Claude models
-- [Google AI](https://ai.google.dev/) - Gemini models
-- [DeepSeek](https://www.deepseek.com/) - Cost-effective AI models
+For local development:
+
+```bash
+cargo fmt
+cargo check
+bash scripts/run_ci_tests.sh
+```
+
+Manual or live-provider diagnostics are kept behind ignored tests:
+
+```bash
+cargo test -- --ignored
+```
+
+See [CONTRIBUTING.md](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/CONTRIBUTING.md:1) for contribution expectations and [SECURITY.md](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/SECURITY.md:1) for private vulnerability reporting.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License. See [LICENSE](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/LICENSE:1).

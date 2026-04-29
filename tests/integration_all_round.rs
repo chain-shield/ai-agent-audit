@@ -17,6 +17,7 @@ use std::{path::PathBuf, sync::Arc};
 /// Integration test for single-round verification with real AI
 /// This test requires ANTHROPIC_API_KEY to be set
 #[tokio::test]
+#[ignore = "requires live Anthropic credentials"]
 async fn test_all_round_integration_with_ai() -> Result<()> {
     // Skip if no API key
     if std::env::var("ANTHROPIC_API_KEY").is_err() {

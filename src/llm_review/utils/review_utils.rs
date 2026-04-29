@@ -10,7 +10,9 @@ use rig::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::llm_review::agent::agent_enums::{AIAgent, AIExtractor, AgentMetadata};
+use crate::llm_review::agent::agent_enums::{
+    AIAgent, AIExtractor, AgentMetadata, OpenaiAgentBackend,
+};
 
 pub fn build_anthropic_agent(
     client: &anthropic::Client,
@@ -85,11 +87,15 @@ pub fn build_openai_agent(
 
     match context {
         Some(added_context) => AIAgent::Openai {
-            agent: builder.context(added_context).build(),
+            backend: OpenaiAgentBackend::Direct {
+                agent: builder.context(added_context).build(),
+            },
             metadata,
         },
         None => AIAgent::Openai {
-            agent: builder.build(),
+            backend: OpenaiAgentBackend::Direct {
+                agent: builder.build(),
+            },
             metadata,
         },
     }

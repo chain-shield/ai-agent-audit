@@ -48,6 +48,7 @@ fn anthropic_key_present() -> bool {
 }
 
 #[tokio::test]
+#[ignore = "requires live Anthropic credentials"]
 async fn test_claude_4_5_with_thinking_enabled() {
     // Skip if no Anthropic API key present
     if !anthropic_key_present() {
@@ -238,6 +239,7 @@ Return your response in this JSON format:
 }
 
 #[tokio::test]
+#[ignore = "requires live Anthropic credentials"]
 async fn test_claude_thinking_vs_disabled() {
     // Skip if no Anthropic API key present
     if !anthropic_key_present() {
@@ -321,6 +323,7 @@ async fn test_claude_thinking_vs_disabled() {
 }
 
 #[test]
+#[ignore = "requires live Anthropic credentials"]
 fn test_anthropic_thinking_config_validation() {
     // Load environment variables
     dotenv().ok();
@@ -347,6 +350,7 @@ fn test_anthropic_thinking_config_validation() {
 }
 
 #[test]
+#[ignore = "requires live Anthropic credentials"]
 #[should_panic(expected = "Invalid thinking")]
 fn test_anthropic_thinking_invalid_value() {
     // Load environment variables

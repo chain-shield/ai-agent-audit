@@ -1,0 +1,87 @@
+{
+  "benchmark": "2026-04-monetrix",
+  "results": [
+    {
+      "finding_id": "M-2",
+      "notes": "CoreWriter fills only the spot leg and silently drops the perp leg while executeHedge emits HedgeExecuted.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-2-NonAtomicHedgeBatchPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "cd /Users/apmfree/Desktop/Audit/2026-04-monetrix && forge test --match-path 'test/c4/M-2-NonAtomicHedgeBatchPoC.t.sol' -vvv",
+      "test_result": "passed",
+      "title": "Non-atomic hedge batches can leave MonetrixVault with one-sided spot or perp exposure"
+    },
+    {
+      "finding_id": "H-4",
+      "notes": "Old yield exceeds pre-attack APR cap, late stake raises live cap, then captures pro-rata old yield.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/H-4-LiveSupplyAprCapPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path \"test/H-4-LiveSupplyAprCapPoC.t.sol\" -vvv",
+      "test_result": "passed",
+      "title": "Live supply APR cap lets late stakers front-run settlement and capture yield accrued before they joined"
+    },
+    {
+      "finding_id": "M-5",
+      "notes": "Multisig L1 USDC is recorded as outstanding principal while bridgePrincipalFromL1 reads the Vault L1 account and leaves the redemption shortfall unfunded.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-5-MultisigPrincipalReturnabilityPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path test/c4/M-5-MultisigPrincipalReturnabilityPoC.t.sol --match-test testMultisigPrincipalCannotBridgeBackForRedemptions -vvv",
+      "test_result": "passed",
+      "title": "Multisig keeperBridge records principal that Vault cannot bridge back for redemptions"
+    },
+    {
+      "finding_id": "M-9",
+      "notes": "Later 300 USDC claim drains escrow funded for earlier 500 USDC claim, causing older matured claim to revert.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-9-RedemptionClaimOrderingPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path \"test/c4/M-9-RedemptionClaimOrderingPoC.t.sol\" -vvv",
+      "test_result": "passed",
+      "title": "Redemption claims are first-come-first-served, letting later requests drain scarce escrow liquidity before earlier redeemers"
+    },
+    {
+      "finding_id": "M-15",
+      "notes": "Action 15 is accepted without activating 0x811 supply, then the stale registry makes totalBackingSigned revert.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-15-BlpSupplyStaleRegistrationPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path 'test/c4/M-15-BlpSupplyStaleRegistrationPoC.t.sol' -vvv",
+      "test_result": "passed",
+      "title": "Supplying to BLP registers accountant slots even when the HyperCore supply action is silently dropped"
+    },
+    {
+      "finding_id": "M-19",
+      "notes": "PM supplied USDC is counted as bridgeable spot, reducing outstanding principal while the redemption shortfall remains unfunded.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/M-19-BridgeBackFreeBalanceMismatchPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "cd /Users/apmfree/Desktop/Audit/2026-04-monetrix && forge test --match-path test/M-19-BridgeBackFreeBalanceMismatchPoC.t.sol -vvv",
+      "test_result": "passed",
+      "title": "L1 bridge-back accounting can be reduced using held or supplied balances that cannot satisfy SEND_ASSET"
+    },
+    {
+      "finding_id": "M-23",
+      "notes": "Single test shows PM supplied USDC lets bridgePrincipalFromL1 debit outstanding principal with zero free L1 spot while the simulator drops the bridge and redemption stays unfunded.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-23-PmSuppliedBridgeAccountingPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "cd /Users/apmfree/Desktop/Audit/2026-04-monetrix && forge test --match-path 'test/c4/M-23-PmSuppliedBridgeAccountingPoC.t.sol' -vvv",
+      "test_result": "passed",
+      "title": "PM supplied USDC is treated as bridgeable spot balance, allowing bridge-back accounting to decrease without funds arriving"
+    },
+    {
+      "finding_id": "M-24",
+      "notes": "Held L1 spot USDC satisfies the total-balance precheck, dispatches bridge action, and clears outstanding principal while redemption shortfall remains unfunded.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/M-24-HeldUsdcBridgePrincipalMismatchPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path 'test/c4/M-24-HeldUsdcBridgePrincipalMismatchPoC.t.sol' -vvv",
+      "test_result": "passed",
+      "title": "Held HyperCore USDC can falsely reduce outstanding principal in MonetrixVault.bridgePrincipalFromL1"
+    },
+    {
+      "finding_id": "H-30",
+      "notes": "One-wei stake makes supply nonzero, user share enters sUSDM, attacker claims over half while foundation misses reroute.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2026-04-monetrix/test/c4/H-30-DustStakeEmptyVaultRerouteBypassPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path \"test/c4/H-30-DustStakeEmptyVaultRerouteBypassPoC.t.sol\" -vvv",
+      "test_result": "passed",
+      "title": "Dust sUSDM stake bypasses empty-vault reroute and captures pending user yield in MonetrixVault.distributeYield"
+    }
+  ],
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/submission-candidates/v2/2026-04-monetrix-run-001.md"
+}

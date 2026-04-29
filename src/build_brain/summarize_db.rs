@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::{
     build_brain::summarize::{FileSummaryType, SrcFileSummary},
-    config::{CHAINSHIELD_DB_FOLDER, SUMMARY_DB},
+    config::{SUMMARY_DB, app_db_path},
     llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::RepoPaths,
 };
@@ -17,6 +17,9 @@ impl SummaryDb {
     ///
     /// Initializes SQLite database with tables for functions, call edges,
     fn create(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let conn = Connection::open(path)?;
         conn.execute_batch(
             r#"
@@ -130,10 +133,8 @@ impl SummaryDb {
 }
 
 pub fn insert_file_summaries_to_db(summaries: &[SrcFileSummary], repo: &RepoPaths) -> Result<()> {
-    let summary_db = SummaryDb::create(Path::new(&format!(
-        "{}/{}",
-        CHAINSHIELD_DB_FOLDER, SUMMARY_DB
-    )))?;
+    let db_path = app_db_path(SUMMARY_DB);
+    let summary_db = SummaryDb::create(&db_path)?;
 
     for summary in summaries {
         summary_db.insert_summary(
@@ -148,20 +149,16 @@ pub fn insert_file_summaries_to_db(summaries: &[SrcFileSummary], repo: &RepoPath
 }
 
 pub fn insert_file_summary_to_db(filename: &str, summary: &str, repo: &RepoPaths) -> Result<()> {
-    let summary_db = SummaryDb::create(Path::new(&format!(
-        "{}/{}",
-        CHAINSHIELD_DB_FOLDER, SUMMARY_DB
-    )))?;
+    let db_path = app_db_path(SUMMARY_DB);
+    let summary_db = SummaryDb::create(&db_path)?;
 
     summary_db.insert_summary(filename, summary, None, None, repo)?;
     Ok(())
 }
 
 pub fn get_summaries_from_db(repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
-    let summary_db = SummaryDb::create(Path::new(&format!(
-        "{}/{}",
-        CHAINSHIELD_DB_FOLDER, SUMMARY_DB
-    )))?;
+    let db_path = app_db_path(SUMMARY_DB);
+    let summary_db = SummaryDb::create(&db_path)?;
 
     summary_db.get_summaries(repo)
 }
@@ -170,10 +167,8 @@ pub fn get_file_summary_from_db(
     filename: &str,
     repo: &RepoPaths,
 ) -> Result<Option<SrcFileSummary>> {
-    let summary_db = SummaryDb::create(Path::new(&format!(
-        "{}/{}",
-        CHAINSHIELD_DB_FOLDER, SUMMARY_DB
-    )))?;
+    let db_path = app_db_path(SUMMARY_DB);
+    let summary_db = SummaryDb::create(&db_path)?;
 
     summary_db.get_summary_file(filename, repo)
 }

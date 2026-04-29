@@ -8,7 +8,7 @@ use crate::{
         threat_models::{
             pattern_category,
             patterns::{
-                VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY,
+                VULNERABILITY_PATTERN_LIBRARY, VulnerabilityPattern, VulnerabilityPatternSpec,
             },
         },
     },

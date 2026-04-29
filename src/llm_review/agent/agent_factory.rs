@@ -1,11 +1,12 @@
-use super::agent_enums::{AIAgent, AgentMetadata};
+use super::agent_enums::{AIAgent, AgentMetadata, OpenaiAgentBackend};
 /// AI Agent Factory for centralized agent creation across LLM providers.
 ///
 /// This module provides a unified interface for creating AI agents from different
 /// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) with consistent configuration
 /// and error handling.
-use crate::config::{OPENAI_MODEL, audit_config};
+use crate::config::{OPENAI_MODEL, OPENAI_REASONING_EFFORT, audit_config};
 use crate::error::{AuditError, Result};
+use crate::llm_review::agent::codex_app_server;
 use crate::prepare_code::git_clone::RepoPaths;
 use rig::{
     agent::AgentBuilderSimple,
@@ -14,12 +15,9 @@ use rig::{
         anthropic::{self, CLAUDE_3_7_SONNET},
         deepseek::{self, DEEPSEEK_CHAT},
         gemini::{self},
-        openai::{self},
     },
 };
 use serde_json::json;
-
-// use rig_qdrant::QdrantVectorStore;  // Temporarily disabled due to version conflicts
 use std::{str::FromStr, sync::OnceLock};
 
 /// Antrophic thinking
@@ -28,20 +26,15 @@ const VALID_THINKING_SETTING: &[&str] = &["enabled", "disabled"];
 /// Default OpenAI model for agents
 const DEFAULT_OPENAI_MODEL: &str = OPENAI_MODEL;
 
-/// Valid OpenAI service tiers (for most accounts)
-/// - "auto": Let OpenAI choose automatically
-/// - "default": Standard rates and speed
-/// - "flex": Half the cost, slower responses
-///
-/// Note: "priority" tier requires special account approval
-/// rig-core 0.17.0 supports only: auto, default, flex
-const VALID_SERVICE_TIERS: &[&str] = &["auto", "default", "flex"];
+/// Valid OpenAI/Codex service tiers.
+/// - "default": normal speed
+/// - "flex": lower-priority processing
+/// - "fast": ChatGPT fast mode (explicitly opt-in only)
+const VALID_SERVICE_TIERS: &[&str] = &["default", "flex", "fast"];
 
 /// Valid OpenAI reasoning effort levels
-/// OpenAI docs for reasoning models use "none", "low", "medium", "high".
-/// Internally we treat "none" as a request for the lowest non-zero effort and
-/// map it to "low" when calling the API.
-const VALID_REASONING_EFFORTS: &[&str] = &["none", "low", "medium", "high"];
+/// GPT-5.4 supports these reasoning effort levels in Codex/app-server.
+const VALID_REASONING_EFFORTS: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh"];
 
 /// Valid Gemini thinking levels (for Gemini 3 Pro models)
 const VALID_THINKING_LEVELS: &[&str] = &["low", "high"];
@@ -79,7 +72,7 @@ impl LlmProvider {
     /// Returns the environment variable name for the API key.
     pub fn api_key_env_var(&self) -> &'static str {
         match self {
-            LlmProvider::OpenAI => "OPENAI_API_KEY",
+            LlmProvider::OpenAI => "CODEX_CHATGPT_AUTH",
             LlmProvider::Anthropic => "ANTHROPIC_API_KEY",
             LlmProvider::Gemini => "GEMINI_API_KEY",
             LlmProvider::DeepSeek => "DEEPSEEK_API_KEY",
@@ -88,7 +81,10 @@ impl LlmProvider {
 
     /// Checks if this provider is available based on environment variables.
     pub fn is_available(&self) -> bool {
-        std::env::var(self.api_key_env_var()).is_ok()
+        match self {
+            LlmProvider::OpenAI => true,
+            _ => std::env::var(self.api_key_env_var()).is_ok(),
+        }
     }
 }
 
@@ -152,7 +148,7 @@ impl Default for OpenAIConfig {
     fn default() -> Self {
         Self {
             service_tier: Some("default".to_string()),
-            reasoning_effort: Some("medium".to_string()),
+            reasoning_effort: Some(OPENAI_REASONING_EFFORT.to_string()),
         }
     }
 }
@@ -428,26 +424,17 @@ impl AgentConfig {
 }
 
 /// Singleton clients for LLM providers
-static OPENAI_CLIENT: OnceLock<openai::Client> = OnceLock::new();
+static CODEX_AUTH_VERIFIED: OnceLock<()> = OnceLock::new();
 static ANTHROPIC_CLIENT: OnceLock<anthropic::Client> = OnceLock::new();
 static GEMINI_CLIENT: OnceLock<gemini::Client> = OnceLock::new();
 static DEEPSEEK_CLIENT: OnceLock<deepseek::Client> = OnceLock::new();
 
-/// Initializes all LLM clients from environment variables.
+/// Initializes API-key-based LLM clients from environment variables.
 ///
-/// This function should be called once during application startup to initialize
-/// all available LLM clients. Clients are only created if their API keys are available.
+/// OpenAI/Codex OAuth is verified separately so provider-specific callers can
+/// still initialize Anthropic/Gemini/DeepSeek without being blocked on ChatGPT
+/// sign-in.
 pub fn init_llm_clients() -> Result<()> {
-    // Initialize OpenAI client if API key is available
-    if audit_config().has_openai_key() && OPENAI_CLIENT.get().is_none() {
-        log::info!("Initializing OpenAI client...");
-        let client = openai::Client::from_env();
-        OPENAI_CLIENT.set(client).map_err(|_| {
-            AuditError::configuration("openai_client", "OpenAI client already initialized")
-        })?;
-        log::info!("OpenAI client initialized successfully");
-    }
-
     // Initialize Anthropic client if API key is available
     if audit_config().has_anthropic_key() && ANTHROPIC_CLIENT.get().is_none() {
         let client = anthropic::Client::from_env();
@@ -477,16 +464,21 @@ pub fn init_llm_clients() -> Result<()> {
     Ok(())
 }
 
-/// Returns the OpenAI client instance.
-fn openai_client() -> Result<&'static openai::Client> {
-    OPENAI_CLIENT.get().ok_or_else(|| {
-        AuditError::configuration(
-            "openai_client",
-            "OpenAI client not initialized or API key not configured",
-        )
-    })
-}
+/// Verifies that the cached ChatGPT/Codex OAuth session is ready for OpenAI work.
+///
+/// The first successful call performs interactive login if needed; later calls
+/// reuse the cached session and are idempotent.
+pub fn ensure_codex_chatgpt_auth() -> Result<()> {
+    if CODEX_AUTH_VERIFIED.get().is_none() {
+        log::info!("Verifying Codex ChatGPT authentication...");
+        codex_app_server::ensure_chatgpt_auth()
+            .map_err(|err| AuditError::configuration("codex_chatgpt_auth", format!("{err:#}")))?;
+        let _ = CODEX_AUTH_VERIFIED.set(());
+        log::info!("Codex ChatGPT authentication verified");
+    }
 
+    Ok(())
+}
 /// Returns the Anthropic client instance.
 fn anthropic_client() -> Result<&'static anthropic::Client> {
     ANTHROPIC_CLIENT.get().ok_or_else(|| {
@@ -499,10 +491,14 @@ fn anthropic_client() -> Result<&'static anthropic::Client> {
 
 /// Returns the Gemini client instance, initializing it if necessary.
 fn gemini_client() -> Result<&'static gemini::Client> {
+    if !audit_config().has_google_ai_key() {
+        return Err(AuditError::configuration(
+            "gemini_client",
+            "Gemini API key not configured",
+        ));
+    }
+
     GEMINI_CLIENT.get_or_init(|| {
-        if !audit_config().has_google_ai_key() {
-            panic!("Gemini API key not configured");
-        }
         log::info!("Lazy-initializing Gemini client...");
         gemini::Client::from_env()
     });
@@ -531,10 +527,8 @@ pub struct AgentFactory;
 impl AgentFactory {
     /// Creates an OpenAI agent with the specified configuration.
     ///
-    /// Uses rig's additional_params to pass OpenAI-specific parameters like
-    /// service_tier and reasoning_effort directly to the OpenAI API.
+    /// OpenAI-backed agents run through Codex app-server using cached ChatGPT auth.
     pub fn create_openai_agent(config: &AgentConfig) -> Result<AIAgent> {
-        let client = openai_client()?;
         let model = if config.model == "default" {
             DEFAULT_OPENAI_MODEL
         } else {
@@ -549,58 +543,21 @@ impl AgentFactory {
             OpenAIConfig::validate_reasoning_effort(effort)?;
         }
 
-        let mut builder = AgentBuilderSimple::new(client.completion_model(model))
-            .preamble(&config.preamble)
-            .temperature(config.temperature);
-
-        // Add OpenAI-specific parameters using additional_params
-        // Only send non-default values to avoid unnecessary API overhead
-        let mut additional_params = serde_json::Map::new();
-
-        if let Some(service_tier) = &config.openai_config.service_tier {
-            // Only send if not default
-            if service_tier != "default" {
-                additional_params.insert("service_tier".to_string(), json!(service_tier));
+        let service_tier = match config.openai_config.service_tier.as_deref() {
+            Some("default") | None => None,
+            Some("flex") => Some("flex".to_string()),
+            Some("fast") => Some("fast".to_string()),
+            Some(other) => {
+                return Err(AuditError::configuration(
+                    "openai_service_tier",
+                    format!("Unsupported Codex service tier: {other}"),
+                ));
             }
-        }
-
-        if let Some(reasoning_effort) = &config.openai_config.reasoning_effort {
-            // Only send if not default (medium)
-            if reasoning_effort != "medium" {
-                // OpenAI expects nested structure: { "reasoning": { "effort": "low" } }
-                // Docs expose: "none" | "low" | "medium" | "high". To keep behavior simple
-                // across the app, we treat "none" as an alias for the lowest non-zero setting
-                // and send "low" on the wire.
-                let effective_effort = if reasoning_effort == "none" {
-                    "low"
-                } else {
-                    reasoning_effort.as_str()
-                };
-                additional_params.insert(
-                    "reasoning".to_string(),
-                    json!({ "effort": effective_effort }),
-                );
-            }
-        }
-
-        if !additional_params.is_empty() {
-            builder = builder.additional_params(serde_json::Value::Object(additional_params));
-        }
-
-        if let Some(context) = &config.context {
-            builder = builder.context(context);
-        }
-
-        // Add dynamic context if enabled
-        // Temporarily disabled due to rig-qdrant version conflicts
-        // if config.enable_dynamic_context {
-        //     let vector_store = create_vector_store(&config.repo_paths)?;
-        //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
-        // }
+        };
 
         // Create metadata for pricing calculations
         let metadata = AgentMetadata {
-            model: config.model.clone(),
+            model: model.to_string(),
             temperature: config.temperature,
             service_tier: config.openai_config.service_tier.clone(),
             reasoning_effort: config.openai_config.reasoning_effort.clone(),
@@ -610,7 +567,15 @@ impl AgentFactory {
         };
 
         Ok(AIAgent::Openai {
-            agent: builder.build(),
+            backend: OpenaiAgentBackend::Codex {
+                config: codex_app_server::CodexAgentConfig {
+                    model: model.to_string(),
+                    preamble: config.preamble.clone(),
+                    context: config.context.clone(),
+                    reasoning_effort: config.openai_config.reasoning_effort.clone(),
+                    service_tier,
+                },
+            },
             metadata,
         })
     }
@@ -632,8 +597,8 @@ impl AgentFactory {
             builder = builder.max_tokens(max_tokens);
         }
 
-        // Add dynamic context if enabled
-        // Temporarily disabled due to rig-qdrant version conflicts
+        // Add dynamic context if enabled.
+        // This integration is currently disabled.
         // if config.enable_dynamic_context {
         //     let vector_store = create_vector_store(&config.repo_paths)?;
         //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
@@ -748,8 +713,8 @@ impl AgentFactory {
             builder = builder.context(context);
         }
 
-        // Add dynamic context if enabled
-        // Temporarily disabled due to rig-qdrant version conflicts
+        // Add dynamic context if enabled.
+        // This integration is currently disabled.
         // if config.enable_dynamic_context {
         //     let vector_store = create_vector_store(&config.repo_paths)?;
         //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
@@ -789,8 +754,8 @@ impl AgentFactory {
             builder = builder.context(context);
         }
 
-        // Add dynamic context if enabled
-        // Temporarily disabled due to rig-qdrant version conflicts
+        // Add dynamic context if enabled.
+        // This integration is currently disabled.
         // if config.enable_dynamic_context {
         //     let vector_store = create_vector_store(&config.repo_paths)?;
         //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);

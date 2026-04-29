@@ -1,37 +1,29 @@
 use ai_agent_audit::config::init_config;
-use ai_agent_audit::llm_review::agent::agent_factory::init_llm_clients;
+use ai_agent_audit::llm_review::agent::{
+    agent_factory::{ensure_codex_chatgpt_auth, init_llm_clients},
+    codex_app_server::cached_chatgpt_account,
+};
 use dotenvy::dotenv;
-use std::env;
 
-/// Returns true if at least one LLM API key is present in the environment
-fn any_llm_key_present() -> bool {
-    [
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY",
-        "DEEPSEEK_API_KEY",
-    ]
-    .into_iter()
-    .any(|k| env::var(k).ok().filter(|v| !v.is_empty()).is_some())
-}
-
-/// Mirrors main.rs startup sequence and verifies behavior when init_llm_clients() is called twice.
+/// Mirrors main.rs startup sequence and verifies behavior when init_llm_clients()
+/// and ensure_codex_chatgpt_auth() are called twice.
 ///
 /// This reproduces the exact order:
 ///  - dotenv().ok()
 ///  - init_config()?
 ///  - env_logger::init()  (we use try_init() to avoid panics when tests run in parallel)
 ///  - init_llm_clients()? (first time should succeed)
+///  - ensure_codex_chatgpt_auth()? (first time should succeed)
 ///  - init_llm_clients()? (second time should also succeed - idempotent)
+///  - ensure_codex_chatgpt_auth()? (second time should also succeed - idempotent)
 #[test]
 fn test_main_style_startup_double_init_llm_clients() {
     // Load env
     dotenv().ok();
 
-    // Skip if no keys present (init_config() would fail validation otherwise)
-    if !any_llm_key_present() {
+    if cached_chatgpt_account().ok().flatten().is_none() {
         eprintln!(
-            "⚠️ Skipping test_main_style_startup_double_init_llm_clients - no LLM API key found"
+            "⚠️ Skipping test_main_style_startup_double_init_llm_clients - no cached ChatGPT/Codex auth found"
         );
         return;
     }
@@ -42,14 +34,23 @@ fn test_main_style_startup_double_init_llm_clients() {
     // Initialize configuration from environment
     init_config().expect("init_config() should succeed when at least one API key is present");
 
-    // Initialize LLM clients - first call should succeed
+    // Initialize API-key-backed LLM clients - first call should succeed
     init_llm_clients().expect("first init_llm_clients() should succeed");
 
-    // Initialize LLM clients - second call should also succeed (idempotent behavior)
+    // Initialize ChatGPT/Codex OAuth - first call should succeed
+    ensure_codex_chatgpt_auth().expect("first ensure_codex_chatgpt_auth() should succeed");
+
+    // Initialize API-key-backed LLM clients - second call should also succeed
     // The implementation checks if clients are already initialized and skips them
     let second = init_llm_clients();
     assert!(
         second.is_ok(),
         "second init_llm_clients() should succeed (idempotent)"
+    );
+
+    let second_oauth = ensure_codex_chatgpt_auth();
+    assert!(
+        second_oauth.is_ok(),
+        "second ensure_codex_chatgpt_auth() should succeed (idempotent)"
     );
 }
