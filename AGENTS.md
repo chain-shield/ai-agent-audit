@@ -9,7 +9,7 @@ AI Agent Audit is a Rust-based smart contract security analysis tool that combin
 ## Core Architecture
 
 ### High-Level Workflow
-1. **Repository Preparation** (`prepare_code/`) - Clone and build repositories in Docker containers
+1. **Repository Preparation** (`prepare_code/`) - Clone and build repositories in a local audit workspace
 2. **Static Analysis** (`build_brain/`) - Extract call graphs, IR, and storage layouts using Slither
 3. **Code Enumeration** (`enumerator/`) - Generate contextual code slices for focused analysis
 4. **AI Analysis** (`llm_review/`) - Multi-phase security analysis with 80+ vulnerability patterns
@@ -138,9 +138,9 @@ The tool uses a multi-phase analysis workflow:
 - **`add_poc_findings.rs`** - Generates Proof-of-Concept tests for findings
 - **`create_report.rs`** - Creates professional audit reports
 
-### Docker Integration
-- **`entrypoint.sh`** - Repository building script (supports Foundry and Hardhat)
-- **`prepare_code/git_clone.rs`** - Docker-based repository cloning and building
+### Native Toolchain Integration
+- **`prepare_code/git_clone.rs`** - Local repository cloning and building
+- **`build_brain/slither_ffi.rs`** - Native Slither execution
 
 ## Output Files
 
@@ -174,7 +174,7 @@ After analysis, the tool generates:
 This tool is designed for defensive security analysis only:
 - All prompts focus on vulnerability detection and mitigation
 - No offensive security capabilities
-- Secure Docker-based repository processing
+- Local workspace processing under `~/Desktop/Audit` by default
 - Input validation for repository URLs and paths
 
 ## Cost Management

@@ -79,8 +79,7 @@ pub fn generate_rewrite_poc_prompt(
     let repo = repo.as_ref();
     let instructions = &repo.poc.instructions;
 
-    // Convert absolute path to relative path from project root
-    // This is critical because the Docker container has a different filesystem layout
+    // Convert absolute path to relative path from project root.
     let code_root = repo.root.join(&repo.repo_name);
     let file_location = poc_test
         .poc_test_file

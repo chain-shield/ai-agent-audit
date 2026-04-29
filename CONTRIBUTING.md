@@ -10,9 +10,9 @@ Thanks for helping improve AI Agent Audit.
 
 ## Local Setup
 
-1. Install Rust and Docker.
+1. Install Rust, Git, Slither, and the local Solidity build tools you need (`forge`, Node.js/npm, Yarn, or pnpm).
 2. Copy `.env.example` to `.env`.
-3. Start Qdrant with `docker-compose up -d`.
+3. Start Qdrant on `localhost:6334` if you are using vector search features.
 4. Run `cargo check`.
 5. Run `bash scripts/run_ci_tests.sh` for the hermetic CI suite.
 

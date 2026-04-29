@@ -60,6 +60,8 @@ fn hardhat_repo_pref_over_foundry_yarn() {
     );
     let args = build_slither_args(&repo, Some("slithir-ssa"), None, false, false);
     let joined = args.join(" ");
+    assert!(!joined.contains("docker"));
+    assert!(!joined.contains("eth-security-toolbox"));
     assert!(joined.contains("--compile-force-framework hardhat"));
     assert!(joined.contains("--hardhat-ignore-compile"));
     assert!(joined.contains("--hardhat-artifacts-directory artifacts"));
