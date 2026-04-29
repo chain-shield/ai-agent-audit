@@ -33,6 +33,8 @@ pub mod build_brain {
 
 /// Repository preparation and building
 pub mod prepare_code {
+    /// Generated audit scope/docs context
+    pub mod audit_context;
     /// Git cloning and native repository building
     pub mod git_clone;
     pub mod repo_data;

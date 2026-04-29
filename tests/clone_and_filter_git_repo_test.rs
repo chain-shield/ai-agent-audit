@@ -19,6 +19,8 @@ builder: "Custom"
 via_ir: false
 force_rebuild: false
 build_cmd: "npm -v"
+context:
+  force_regenerate: false
 "#
     .to_string()
 }
@@ -31,9 +33,9 @@ fn repo_root_from_url(url: &str) -> String {
         .to_string()
 }
 
-#[test]
+#[tokio::test]
 #[ignore] // Network + git clone + large repo; run explicitly with `cargo test -- --ignored`
-fn test_clone_and_filter_git_repo_counts_all_files() {
+async fn test_clone_and_filter_git_repo_counts_all_files() {
     // 1) Prepare a local workspace with a shallow git clone
     let yaml_str = build_test_cli_yaml();
     let cli: ai_agent_audit::cli_args::parse::Cli =
@@ -64,7 +66,9 @@ fn test_clone_and_filter_git_repo_counts_all_files() {
     }
 
     // 3) Execute the code under test
-    let repo_paths = clone_and_filter_git_repo(&cli).expect("clone_and_filter_git_repo ok");
+    let repo_paths = clone_and_filter_git_repo(&cli)
+        .await
+        .expect("clone_and_filter_git_repo ok");
 
     // 4) Independently count all files WalkDir should scan (same filters)
     let root = repo_paths.root.clone();

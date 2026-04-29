@@ -30,6 +30,122 @@ fn default_force_rebuild() -> bool {
     false
 }
 
+fn default_context_files() -> Vec<String> {
+    vec!["README.md".to_string()]
+}
+
+fn default_context_output_dir() -> String {
+    "audit-docs".to_string()
+}
+
+fn default_force_regenerate() -> bool {
+    true
+}
+
+fn default_context_token_limit() -> usize {
+    5_000
+}
+
+fn default_v12_source() -> V12Source {
+    V12Source::Auto
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum V12Source {
+    Auto,
+    Disabled,
+    Url(String),
+}
+
+impl Default for V12Source {
+    fn default() -> Self {
+        default_v12_source()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for V12Source {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = V12Source;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str(r#""auto", false, "disabled", or a V12 URL"#)
+            }
+
+            fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(if value {
+                    V12Source::Auto
+                } else {
+                    V12Source::Disabled
+                })
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let trimmed = value.trim();
+                if trimmed.eq_ignore_ascii_case("auto") {
+                    Ok(V12Source::Auto)
+                } else if trimmed.eq_ignore_ascii_case("disabled")
+                    || trimmed.eq_ignore_ascii_case("none")
+                    || trimmed.eq_ignore_ascii_case("false")
+                {
+                    Ok(V12Source::Disabled)
+                } else {
+                    Ok(V12Source::Url(trimmed.to_string()))
+                }
+            }
+
+            fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_str(&value)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContextConfig {
+    #[serde(default = "default_context_files")]
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub urls: Vec<String>,
+    #[serde(default = "default_v12_source")]
+    pub v12_url: V12Source,
+    #[serde(default = "default_context_output_dir")]
+    pub output_dir: String,
+    #[serde(default = "default_force_regenerate")]
+    pub force_regenerate: bool,
+    #[serde(default = "default_context_token_limit")]
+    pub max_tokens_per_file: usize,
+}
+
+impl Default for ContextConfig {
+    fn default() -> Self {
+        Self {
+            files: default_context_files(),
+            urls: Vec::new(),
+            v12_url: default_v12_source(),
+            output_dir: default_context_output_dir(),
+            force_regenerate: default_force_regenerate(),
+            max_tokens_per_file: default_context_token_limit(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, ValueEnum, Deserialize, strum_macros::EnumString)]
 #[clap(rename_all = "kebab-case")]
 pub enum BuilderType {
@@ -124,6 +240,11 @@ pub struct Cli {
     /// Custom build command for `custom` builder
     #[arg(long)]
     pub build_cmd: Option<String>,
+
+    /// Optional generated audit context configuration. YAML-only for now.
+    #[arg(skip)]
+    #[serde(default)]
+    pub context: Option<ContextConfig>,
 }
 
 fn validate_repo_url(s: &str) -> std::result::Result<String, String> {
@@ -195,6 +316,9 @@ impl Cli {
             if config_values.build_cmd.is_some() {
                 config_cli.build_cmd = config_values.build_cmd;
             }
+            if config_values.context.is_some() {
+                config_cli.context = config_values.context;
+            }
 
             // Always use YAML values for these fields if present
             config_cli.audit_type = config_values.audit_type;
@@ -221,7 +345,8 @@ impl Cli {
     }
 
     pub fn generate_build_command(&self) -> String {
-        let base_forge = "forge install && forge build --build-info --skip test --skip script";
+        let copy_env = "[ -f .env.example ] && cp .env.example .env || true";
+        let base_forge = "forge build --build-info --skip test --skip script";
 
         let forge_build_cmd = if self.via_ir {
             format!("{base_forge} --via-ir")
@@ -231,10 +356,10 @@ impl Cli {
 
         match self.builder {
             BuilderType::Hardhat => {
-                "[ -f .env.example ] && cp .env.example .env; npm install hardhat --legacy-peer-deps && npm install --legacy-peer-deps && npx hardhat compile".to_string()
+                format!("{copy_env}; npx --no-install hardhat compile")
             }
             BuilderType::HardhatYarn => {
-                "[ -f .env.example ] && cp .env.example .env; yarn install && yarn hardhat compile".to_string()
+                format!("{copy_env}; yarn hardhat compile")
             }
             BuilderType::Custom => self
                 .build_cmd
@@ -245,9 +370,10 @@ impl Cli {
                 format!(
                     "if [ -f foundry.toml ]; then {forge_build_cmd}; \
              elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ]; then \
-             if [ -f yarn.lock ]; then [ -f .env.example ] && cp .env.example .env; yarn install && yarn hardhat compile; \
-             elif [ -f pnpm-lock.yaml ]; then [ -f .env.example ] && cp .env.example .env; pnpm install && pnpm hardhat compile; \
-             else [ -f .env.example ] && cp .env.example .env; npm install hardhat --legacy-peer-deps && npm install --legacy-peer-deps && npx hardhat compile; fi; \
+             {copy_env}; \
+             if [ -f yarn.lock ]; then yarn hardhat compile; \
+             elif [ -f pnpm-lock.yaml ]; then pnpm hardhat compile; \
+             else npx --no-install hardhat compile; fi; \
              else echo 'No build system detected'; exit 1; fi"
                 )
             }
@@ -266,5 +392,72 @@ impl fmt::Display for BuilderType {
             BuilderType::Auto => "auto",
         };
         f.write_str(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_config_defaults_regenerate_with_5000_token_limit() {
+        let config = ContextConfig::default();
+        assert_eq!(config.files, vec!["README.md"]);
+        assert_eq!(config.output_dir, "audit-docs");
+        assert!(config.force_regenerate);
+        assert_eq!(config.max_tokens_per_file, 5_000);
+        assert_eq!(config.v12_url, V12Source::Auto);
+    }
+
+    #[test]
+    fn v12_source_deserializes_common_forms() {
+        assert_eq!(
+            serde_yaml::from_str::<V12Source>("auto").unwrap(),
+            V12Source::Auto
+        );
+        assert_eq!(
+            serde_yaml::from_str::<V12Source>("false").unwrap(),
+            V12Source::Disabled
+        );
+        assert_eq!(
+            serde_yaml::from_str::<V12Source>("https://v12.sh/runs/1/public").unwrap(),
+            V12Source::Url("https://v12.sh/runs/1/public".to_string())
+        );
+    }
+
+    #[test]
+    fn generated_build_commands_do_not_install_packages() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+builder: "Auto"
+"#,
+        )
+        .unwrap();
+        let command = cli.generate_build_command();
+        for forbidden in [
+            "forge install",
+            "npm install",
+            "yarn install",
+            "pnpm install",
+        ] {
+            assert!(
+                !command.contains(forbidden),
+                "generated command unexpectedly contains `{forbidden}`: {command}"
+            );
+        }
+        assert!(command.contains("forge build"));
+        assert!(command.contains("npx --no-install hardhat compile"));
+
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+builder: "HardhatYarn"
+"#,
+        )
+        .unwrap();
+        let command = cli.generate_build_command();
+        assert!(!command.contains("yarn install"));
+        assert!(command.contains("yarn hardhat compile"));
     }
 }

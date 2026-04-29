@@ -19,6 +19,7 @@ This repository is being released as a GitHub-first public beta. It is meant to 
 ## What It Does
 
 - Clones and builds Foundry or Hardhat repositories under `~/Desktop/Audit` by default.
+- Generates audit scope and protocol docs from README/configured entry files into `audit-docs/`.
 - Uses Slither-derived call graph and semantic data when static analysis succeeds.
 - Builds inheritance and interface-implementation indexes from Solidity source.
 - Generates contextual codeblocks for each in-scope contract.
@@ -136,6 +137,7 @@ Use `Client` for internal or client-style audits. Use the contest values when yo
 | `monorepo_folders` / `--monorepo-folders` | Local text file listing repo-relative package roots for monorepo-aware analysis. |
 | `exclude_folders` / `--exclude-folders` | Repo-relative folders to exclude from scope. |
 | `scoped_files` / `--scoped-files` | Local text file listing repo-relative files that should be treated as in scope. |
+| `context` | YAML-only block for generated audit scope/docs context. Defaults to `README.md`, `audit-docs`, `force_regenerate: true`, and 5000 tokens per generated Markdown file. |
 | `poc_instructions` / `--poc-instructions` | Local file with PoC-writing instructions. Present in config surface, but automated PoC generation is currently disabled. |
 | `poc_template` / `--poc-template` | Local template used for PoC generation when that feature is enabled. |
 | `test_folder` / `--test-folder` | Repo-relative test directory for PoC output when PoC generation is enabled. |
@@ -149,7 +151,24 @@ Use `Client` for internal or client-style audits. Use the contest values when yo
 
 - `custom_doc`, `audit_scope`, `scoped_files`, `monorepo_folders`, `poc_instructions`, and `poc_template` are read from local files you provide on the machine running the tool.
 - `subfolder`, `code_folders`, `doc_folder`, `exclude_folders`, and `test_folder` are interpreted relative to the cloned target repository.
-- If no `custom_doc` or `doc_folder` is provided, the tool ingests root-level Markdown files from the analyzed project root.
+- If no manual `custom_doc`, `audit_scope`, or `scoped_files` are provided, the tool generates `<repo-folder>-docs.md`, `<repo-folder>-scope.md`, and `<repo-folder>-scope.txt` in `audit-docs/`.
+- The generated filename prefix preserves the cloned repo folder identity, including date/contest prefixes such as `2026-04-monetrix`.
+- `context.force_regenerate` defaults to `true` for generated context. Legacy YAMLs that already provide all three manual context files are left alone when no `context` block is present.
+
+### Generated Context
+
+Minimal generated-context config:
+
+```yaml
+context:
+  files:
+    - README.md
+  output_dir: "audit-docs"
+  force_regenerate: true
+  max_tokens_per_file: 5000
+```
+
+The generator copies `scope.txt` from the cloned repo when present. If no `scope.txt` exists, it extracts in-scope Solidity paths from entry context files. By default the only entry file is `README.md`; `context.files` can add or replace entry files. Links found in those entry files are treated as second-level candidates and fetched only when they look relevant to scope, known issues, protocol documentation, prior audits, or Code4rena V12 reports. Fetched second-level pages do not emit more links. If generated `scope.md` or `docs.md` exceeds `max_tokens_per_file`, Codex summarizes it down to the limit; the generator refuses to silently truncate final Markdown.
 
 ### Environment Variables
 
@@ -174,17 +193,19 @@ Discovery provider/model defaults now live in [src/config.rs](/Users/apmfree/Des
 
 1. Repository preparation. The tool validates the repo URL, resolves the current `HEAD` commit, clones the target into a local workspace under `~/Desktop/Audit/<project-id>/`, and builds it with Foundry, Hardhat, or a custom command.
 
-2. Semantic extraction. It runs the Slither-based enrichment path to build a local semantic SQLite database with function metadata and call graph edges.
+2. Audit context generation. The tool reads README/configured entry files, follows relevant second-level links, copies or extracts scope, and writes generated scope/docs files under `audit-docs/`.
 
-3. Metadata context. It generates protocol-level context used later by the audit prompts and saves a metadata Markdown artifact.
+3. Semantic extraction. It runs the Slither-based enrichment path to build a local semantic SQLite database with function metadata and call graph edges.
 
-4. Solidity indexing. It builds inheritance information from source and then derives an interface-implementation index.
+4. Metadata context. It generates protocol-level context used later by the audit prompts and saves a metadata Markdown artifact.
 
-5. Codeblock generation. It slices the codebase into contextual per-contract codeblocks using call graph depth and token-budget settings.
+5. Solidity indexing. It builds inheritance information from source and then derives an interface-implementation index.
 
-6. AI review. Verification, deduplication, summaries, and report-writing stay on the OpenAI/Codex path. Discovery-style phases (patterns, actors, invariants) use the provider configured in [src/config.rs](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/src/config.rs:35). Findings are aggregated across contracts and deduplicated at the end.
+6. Codeblock generation. It slices the codebase into contextual per-contract codeblocks using call graph depth and token-budget settings.
 
-7. Report export and local persistence. The tool writes Markdown outputs, records findings in local SQLite databases, and keeps cached repo metadata for later runs.
+7. AI review. Verification, deduplication, summaries, and report-writing stay on the OpenAI/Codex path. Discovery-style phases (patterns, actors, invariants) use the provider configured in [src/config.rs](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/src/config.rs:35). Findings are aggregated across contracts and deduplicated at the end.
+
+8. Report export and local persistence. The tool writes Markdown outputs, records findings in local SQLite databases, and keeps cached repo metadata for later runs.
 
 ## Outputs And Local State
 
@@ -232,6 +253,7 @@ The exact prompts and pattern catalogs continue to evolve, so the README intenti
 - `audit_type` affects severity and rubric behavior more than it changes the overall pipeline.
 - Automatic PoC generation is present in code but disabled in the current public beta.
 - If the target repo does not build cleanly on the local machine, analysis quality will degrade or the run may fail.
+- Automatic build commands do not install package dependencies. Because execution is host-local rather than Docker-isolated, run `npm install`, `yarn install`, `pnpm install`, or `forge install` yourself only when you trust the target repo, or provide an explicit `build_cmd`.
 - If Slither cannot extract semantic data, the tool falls back to a reduced analysis path with less Slither-derived context.
 
 ## Troubleshooting
@@ -246,7 +268,7 @@ If the build output shows `No build system detected`, the target repo likely doe
 
 ### Missing Runtime Dependencies
 
-The Docker execution path has been removed. If `git`, `slither`, `forge`, `node`, `npm`, `npx`, `yarn`, or `pnpm` is required and missing, startup/build/static-analysis will fail with an install note for the missing command.
+The Docker execution path has been removed. If `git`, `slither`, `forge`, `node`, `npm`, `npx`, `yarn`, or `pnpm` is required and missing or incompatible, startup/build/static-analysis will fail with an install note for the missing command. Node-based builds require Node.js 18 or newer.
 
 ### Wrong Source Folder
 
@@ -269,7 +291,7 @@ src/
   main.rs                 CLI entrypoint and top-level orchestration
   config.rs               environment/config loading and constants
   cli_args/               clap/YAML argument parsing
-  prepare_code/           repo cloning, filtering, native builds, repo metadata
+  prepare_code/           repo cloning, generated context, filtering, native builds, repo metadata
   build_brain/            Slither enrichment, summaries, graph DB
   enumerator/             codeblock generation, Solidity parsing, interface indexing
   llm_review/             prompt generation, agent setup, findings, review phases
