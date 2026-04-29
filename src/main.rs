@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
     info!("test folder => {:?}", &repo.poc.test_folder);
     info!("test folder exist? => {:?}", &repo.poc.test_folder.exists());
 
+    return Ok(());
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
     // ────────────────────────────────
