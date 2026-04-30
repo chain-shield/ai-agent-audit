@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cobalt2 Markdown Theme Test</title>
+  <style>
+    :root {
+      --bg: #193549;
+      --panel: #122738;
+      --panel-2: #0d3a58;
+      --text: #ffffff;
+      --muted: #80fcff;
+      --yellow: #ffc600;
+      --pink: #ff628c;
+      --cyan: #9effff;
+      --blue: #0088ff;
+      --green: #3ad900;
+      --orange: #ff9d00;
+      --line: rgba(158, 255, 255, 0.22);
+      color-scheme: dark;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 18px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(920px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 56px 0 72px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p,
+    blockquote,
+    pre {
+      margin: 0 0 24px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.15;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      color: var(--yellow);
+      font-size: 44px;
+    }
+
+    h2 {
+      color: var(--pink);
+      font-size: 34px;
+    }
+
+    h3 {
+      color: var(--cyan);
+      font-size: 26px;
+    }
+
+    p {
+      color: rgba(255, 255, 255, 0.88);
+    }
+
+    a {
+      color: var(--cyan);
+      font-style: italic;
+      text-decoration-color: rgba(158, 255, 255, 0.45);
+      text-underline-offset: 0.18em;
+    }
+
+    strong {
+      color: #ffffff;
+      font-weight: 800;
+    }
+
+    em {
+      color: var(--yellow);
+    }
+
+    code,
+    pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    :not(pre) > code {
+      display: inline-block;
+      padding: 0.05em 0.38em;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel-2);
+      color: var(--yellow);
+      font-size: 0.9em;
+      line-height: 1.55;
+    }
+
+    blockquote {
+      padding: 18px 22px;
+      border-left: 5px solid var(--blue);
+      background: rgba(13, 58, 88, 0.62);
+      color: var(--muted);
+    }
+
+    blockquote p {
+      margin: 0;
+      color: inherit;
+    }
+
+    pre {
+      overflow-x: auto;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.6;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    pre code {
+      color: inherit;
+    }
+
+    .token-keyword {
+      color: var(--pink);
+    }
+
+    .token-fn {
+      color: var(--cyan);
+    }
+
+    .token-var {
+      color: var(--yellow);
+    }
+
+    .token-string {
+      color: var(--green);
+    }
+
+    .token-macro {
+      color: var(--orange);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Cobalt2 H1 should be yellow</h1>
+
+    <h2>Cobalt2 H2 should be pink</h2>
+
+    <h3>Cobalt2 H3 should be cyan</h3>
+
+    <p>This paragraph has an <a href="https://example.com">italic cyan link</a>, some <code>inline code</code>, <strong>strong text</strong>, and <em>emphasis</em>.</p>
+
+    <blockquote>
+      <p>This blockquote should have a Cobalt2 left border and muted cyan text.</p>
+    </blockquote>
+
+    <pre><code><span class="token-keyword">fn</span> <span class="token-fn">main</span>() {
+    <span class="token-keyword">let</span> <span class="token-var">accent</span> = <span class="token-string">"#FFC600"</span>;
+    <span class="token-macro">println!</span>(<span class="token-string">"{accent}"</span>);
+}</code></pre>
+  </main>
+</body>
+</html>

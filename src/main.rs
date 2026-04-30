@@ -13,7 +13,7 @@ use ai_agent_audit::{
     prepare_code::{self},
     reporting::{
         audit::{self},
-        competition_reports, contract_data, save_file,
+        competition_reports, contract_data, save_file, three_shot_config,
     },
 };
 use dotenvy::dotenv;
@@ -67,7 +67,6 @@ async fn main() -> Result<()> {
     info!("test folder => {:?}", &repo.poc.test_folder);
     info!("test folder exist? => {:?}", &repo.poc.test_folder.exists());
 
-    return Ok(());
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
     // ────────────────────────────────
@@ -130,8 +129,9 @@ async fn main() -> Result<()> {
     // 6. File Export
     // ────────────────────────────────
     // Save all reports and analysis data to markdown files
-    save_file::save_audit_report("audit-report.md", &audit_report, &repo)?;
+    let audit_report_path = save_file::save_audit_report("audit-report.md", &audit_report, &repo)?;
     competition_reports::generate_and_save_pro_reports(&security_findings, &repo)?;
+    three_shot_config::write_protocol_config(&repo, &audit_report_path)?;
 
     // Display total inference cost across all LLM providers
     let total_cost = get_total_inference_cost().await;

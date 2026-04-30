@@ -77,6 +77,9 @@ def report_path(benchmark: str) -> Path:
     configured = config_path_value(["paths", "audit_report"])
     if configured:
         return resolve_configured_path(configured)
+    audit_root = config_path_value(["paths", "audit_root"])
+    if audit_root:
+        return resolve_configured_path(audit_root) / "report" / "audit-report.md"
     return REPO_ROOT / benchmark / "report" / "audit-report.md"
 
 

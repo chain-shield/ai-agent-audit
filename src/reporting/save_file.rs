@@ -3,7 +3,11 @@ use crate::prepare_code::git_clone::RepoPaths;
 ///
 /// This module provides functions to save audit reports and other analysis
 /// outputs to the local filesystem with appropriate naming conventions.
-use std::{fs::File, io::Write, path::Path};
+use std::{
+    fs::File,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 /// Saves an audit report to a file with appropriate naming.
 ///
@@ -14,13 +18,17 @@ use std::{fs::File, io::Write, path::Path};
 /// * `markdown` - The audit report content in Markdown format
 /// * `repo` - Repository paths and metadata for naming
 /// * `report_type` - Report type (Free/Paid) for filename suffix
-pub fn save_audit_report(filename: &str, markdown: &str, repo: &RepoPaths) -> anyhow::Result<()> {
+pub fn save_audit_report(
+    filename: &str,
+    markdown: &str,
+    repo: &RepoPaths,
+) -> anyhow::Result<PathBuf> {
     let dir = format!("{}/report", repo.repo_name);
     let output_dir = Path::new(&dir);
     let full_path = output_dir.join(filename);
     save_file_locally(markdown, &full_path)?;
 
-    Ok(())
+    Ok(full_path)
 }
 
 /// Saves content to a local file.

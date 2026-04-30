@@ -50,6 +50,8 @@ pub mod reporting {
     pub mod patterns;
     /// File saving and formatting
     pub mod save_file;
+    /// Three-shot validation workflow config export
+    pub mod three_shot_config;
 }
 
 /// Code slicing and enumeration for focused analysis

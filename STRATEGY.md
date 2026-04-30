@@ -2,7 +2,7 @@
 
 Living strategy doc. Updated during founder office-hours discussions.
 
-Last updated: 2026-04-28
+Last updated: 2026-04-30
 
 ## One-Line Thesis
 
@@ -16,8 +16,12 @@ Evidence so far:
 
 - AI Agent Audit can run large Solidity protocol audits in roughly 1-2 days.
 - The workflow produces validated High/Medium findings with PoCs.
-- Operating cost is low, using only a small fraction of the monthly Codex plan limit.
+- Marginal compute/tooling cost per audit is currently near $0.
+- Earlier versions cost roughly $50-$600 per audit depending on codebase size.
+- Current runs use a $200/month Codex Pro subscription that is also used for other work; a large audit barely dents the weekly limit.
+- Human time per audit is currently about 1 hour, mostly final sanity check.
 - The founder has achieved SR Warden status on Code4rena using this app.
+- Current public Code4rena profile proof: SR Warden, 8 High findings, 7 Medium findings, 52 signal, and 8th-place finishes in SukukFi and Brix Money.
 - The app is finding valid security issues in real competitive audit settings.
 - Recent product work added automated validation for security findings.
 
@@ -65,6 +69,579 @@ Investor proof needed before raise:
 - Runtime and cost metrics proving the automation advantage.
 - Evidence that findings survive professional review.
 - Evidence that the system is not dependent on one founder manually steering every result.
+
+## YC Acceptance Plan
+
+Current timing:
+
+- As of 2026-04-30, YC is accepting applications for the Summer 2026 batch.
+- The on-time deadline is 2026-05-04 at 8pm PT.
+- On-time applicants get a decision by 2026-06-05.
+- Interviews are expected in May and June.
+- The Summer 2026 batch runs July to September in San Francisco.
+
+### Goal
+
+Maximize odds of YC acceptance by turning ChainShield from "impressive technical automation" into "a scary-fast company with third-party proof and emerging customer pull."
+
+### What YC Should Believe
+
+YC should leave the application thinking:
+
+1. This founder can build unusually hard technical systems.
+2. The market pain is real: smart contract audits are slow, expensive, and still miss serious bugs.
+3. ChainShield has rare proof: live Code4rena results, not self-reported benchmarks.
+4. The product is already producing professional-grade findings with PoCs in 1-2 days.
+5. The next step is obvious: sell 48-hour pre-launch discovery runs to budget-constrained DeFi teams.
+6. If this works in Solidity, it can expand into the security layer for AI-generated software.
+
+### Application Story
+
+Do not lead with the $3M-$4M raise. Lead with proof and speed.
+
+Best one-liner:
+
+> ChainShield automates professional-grade smart contract security audits, producing validated High/Medium findings with PoCs in 48 hours instead of weeks.
+
+Sharper YC version:
+
+> We use AI agents to find and validate serious smart contract vulnerabilities. The proof is not a private benchmark: our system has helped produce live Code4rena results under a public SR Warden profile.
+
+### Application Proof Points
+
+Use concrete facts:
+
+- Public Code4rena SR Warden status.
+- 8 High and 7 Medium valid findings on the public profile as of 2026-04-30.
+- 8th-place finishes in SukukFi and Brix Money.
+- Large protocol audit runtime: roughly 1-2 days.
+- Findings include PoCs.
+- Cost per audit run is low relative to human audit cost.
+- Automated validation was recently added to reduce false positives.
+- Website is live at chainshield.ai.
+
+Avoid vague claims:
+
+- "AI will change security."
+- "The market is huge."
+- "Everyone needs this."
+- "We can replace all audits."
+
+Translate those into specifics:
+
+- "Traditional audits can cost tens or hundreds of thousands and take weeks."
+- "Our initial wedge is pre-launch DeFi teams that cannot afford a six-figure audit but cannot safely skip review."
+- "We are selling a 48-hour discovery pass before a full audit, contest, or mainnet launch."
+
+### Before Applying
+
+The application should be submitted by the YC deadline if applying to Summer 2026. Do not wait for perfect customer traction if the deadline is days away.
+
+Before submission:
+
+1. Rewrite the application in short, specific sentences.
+2. Include the Code4rena profile link.
+3. Include the ChainShield website link.
+4. Include one short demo video or walkthrough if available.
+5. Explain exactly how the audit pipeline works at a high level: repo ingest, static context, agent discovery, validation, PoC, report.
+6. State what is automated versus human-reviewed today.
+7. State the current wedge pricing.
+8. State the next 30-day traction plan.
+
+### 30-Day Traction Sprint Before Interviews
+
+If YC interviews happen in May/June, the highest-leverage work before interview is customer proof.
+
+Targets:
+
+- 30 pre-launch DeFi teams researched.
+- 30 personalized outbound messages sent.
+- 10 founder conversations.
+- 5 repo-access conversations.
+- 2 pilots started.
+- 1 paid pilot or signed design-partner commitment.
+- 1 customer quote, even if anonymized.
+
+The best interview update would be:
+
+> Since applying, we ran ChainShield on two customer repos, found X validated H/M issues, got one paid pilot, and one team wants us in their pre-launch process.
+
+### What To Say If Asked About Competitors
+
+Do not say competitors are fake or bad. Say:
+
+> Most AI audit tools show self-reported historical benchmarks. Our wedge is live third-party validation: Code4rena rankings, accepted findings, PoCs, and customer acceptance. We are building the feedback loop from raw candidate finding to judged validity to customer patch.
+
+### What To Say If Asked About Defensibility
+
+Answer:
+
+> The moat is the validation corpus and workflow. Every run captures candidate findings, rejected findings, duplicate decisions, severity decisions, PoC outcomes, customer acceptance, and patch results. That data improves future validation and becomes hard to recreate without doing real audits at scale.
+
+Then add:
+
+> Long term, ChainShield becomes continuous security infrastructure: every PR is audited before merge.
+
+### What To Say If Asked "Why Now?"
+
+Answer:
+
+> AI agents are making software creation much faster. Security review is still manual, expensive, and slow. If code volume increases 10x, human audit capacity cannot scale linearly. ChainShield is the security layer for that new software supply chain, starting with smart contracts because failures are immediate and expensive.
+
+### What To Say If Asked "Why You?"
+
+Answer with specific proof:
+
+> We built the system, used it in live Code4rena competitions, and reached SR Warden status with accepted High/Medium findings. We are not theorizing about AI audits. We are proving it in adversarial public markets.
+
+### Biggest Application Risk
+
+The biggest risk is sounding like a technical demo instead of a company.
+
+Fix:
+
+- Make the buyer specific.
+- Make the wedge specific.
+- Make the price specific.
+- Show customer conversations in progress.
+- Show that the founders are learning from sales, not hiding in the product.
+
+### YC Interview Prep
+
+Prepare crisp answers to:
+
+1. What do you do?
+2. Who uses it?
+3. What have users done so far?
+4. How do you find customers?
+5. Why is this 10x better?
+6. Why is this not just a services business?
+7. What is automated today?
+8. How accurate is it?
+9. How do you know findings are valid?
+10. Why won't OpenAI or an audit firm build this?
+11. How big can this get beyond Solidity?
+12. What did you learn from your last 5 customer conversations?
+
+The answer to "what did you learn from users?" must be real. Get those conversations now.
+
+## YC Differentiation
+
+The likely applicant field will include other AI security, AI code review, and AI audit startups.
+
+ChainShield's differentiation should be framed as:
+
+> We are not another AI audit tool with private benchmarks. We have live third-party validation, paying customers, happy pilots, 24-hour delivery, near-zero marginal run cost, and a mostly automated pipeline with human sanity check at the end.
+
+### Differentiation Stack
+
+#### 1. Third-Party Validated
+
+Most competitors can claim they reproduced historical bugs. ChainShield can point to public Code4rena proof:
+
+- SR Warden status.
+- Public accepted High/Medium findings.
+- Public contest placements.
+- Independent judging.
+- Duplicate and invalid-finding pressure.
+- A leaderboard that cannot be edited by ChainShield.
+
+YC-safe phrasing:
+
+> Our benchmark is not a private spreadsheet. It is live Code4rena competition performance under third-party judging.
+
+#### 2. Paying Clients And Happy Pilots
+
+By Winter application time, this should be the biggest upgrade from the current story.
+
+Target proof:
+
+- 3-5 paying clients or signed paid pilots.
+- Customer quotes.
+- Repeat-run requests.
+- Repo-access willingness.
+- One team asking for continuous audit before merge.
+
+YC-safe phrasing:
+
+> We have moved from contest proof to buyer proof: teams give us repo access, pay for runs, and ask us to check future changes.
+
+#### 3. Speed
+
+If ChainShield can reliably deliver in 24 hours, make that the headline. If 24 hours is only true for some scopes, phrase carefully.
+
+Good:
+
+> We deliver validated H/M findings with PoCs in as little as 24 hours.
+
+Better if consistently true:
+
+> Our standard pre-launch discovery run delivers in 24 hours.
+
+Avoid:
+
+> We fully replace a manual audit in 24 hours.
+
+That invites unnecessary skepticism.
+
+#### 4. Near-Zero Marginal Cost
+
+Do not say only "it costs almost nothing." Convert it into business metrics.
+
+Current operating economics:
+
+- Marginal compute/tooling cost per audit: near $0.
+- Historical variable LLM/tooling cost before current Codex workflow: roughly $50-$600 per audit depending on codebase size.
+- Current cost basis: $200/month Codex Pro subscription used across all founder work.
+- Current large-audit usage: barely dents the weekly Codex Pro limit.
+- Human time per audit: about 1 hour.
+- Human role: final sanity check and customer-facing judgment.
+
+Track:
+
+- Model/API/tooling cost per run.
+- Human review minutes per run.
+- Gross margin at design-partner pricing.
+- Cost per accepted H/M finding.
+- Cost per 24 hours of delivery.
+
+YC-safe phrasing:
+
+> A run that would cost a team tens of thousands in manual review currently costs us near $0 in marginal tooling and about one hour of human sanity-check time.
+
+More precise investor phrasing:
+
+> Earlier versions cost us about $50-$600 per audit in model spend. The current Codex-based workflow runs under a $200/month subscription I already use for all work; even a large audit barely affects the weekly limit, so the marginal cost of an additional audit is effectively near zero.
+
+#### 5. 98% Automated
+
+This is powerful only if measured.
+
+Define automation as:
+
+- Repo ingestion.
+- Build/static context extraction.
+- Candidate finding generation.
+- Validation.
+- Deduplication.
+- PoC generation.
+- Report drafting.
+- Patch/retest workflow.
+
+Then define the human role:
+
+- Final sanity check.
+- Customer-facing judgment.
+- Edge-case escalation.
+- Legal/scope-sensitive review.
+
+YC-safe phrasing:
+
+> The pipeline is about 98% automated by elapsed workflow steps. A human performs the final sanity check before customer delivery.
+
+Even better:
+
+> We average X human minutes per completed audit run and Y human minutes per accepted H/M finding.
+
+Current metric:
+
+> We currently spend about 1 hour of human time per audit, mostly final sanity check.
+
+### The Interview Answer
+
+If YC asks, "How are you different from other AI audit startups?"
+
+Answer:
+
+> Three things. First, third-party proof: we compete in Code4rena and have public accepted H/M findings, not just private historical benchmarks. Second, customer pull: teams are paying us and giving repo access because audits are too slow and expensive. Third, economics: our run is about 98% automated, takes about 24 hours, and has near-zero marginal cost, with a human only doing final sanity check before delivery.
+
+Then stop. Let them ask follow-ups.
+
+### The Metrics To Bring
+
+By application/interview time, have one table with:
+
+| Metric | Target |
+| --- | --- |
+| Completed runs | 10+ |
+| Paid pilots/customers | 3-5 |
+| Delivery time | 24 hours standard, or range by scope |
+| Human review time per run | About 1 hour today |
+| Human review time per accepted H/M | Track and report actual |
+| Model/tooling cost per run | Near $0 today |
+| Gross margin | Track and report actual |
+| Validated H/M findings | Track and report actual |
+| Customer acceptance rate | Track and report actual |
+| Repeat-run requests | 1-2+ |
+
+The application should use actual numbers, not adjectives.
+
+## Bug Bounty Proof
+
+Bug bounty wins can materially strengthen the YC application if they are connected directly to ChainShield's product capability.
+
+Good proof:
+
+- ChainShield finds a valid bounty issue.
+- The issue is accepted by the program.
+- The payout is meaningful, especially $25k-$100k+.
+- The finding includes a clear root cause and PoC.
+- The workflow is documented: time to find, time to validate, human minutes, cost, payout.
+- The same pipeline that serves customers produced the bounty result.
+
+Weak proof:
+
+- Founder manually found bugs using personal skill with little product involvement.
+- Bounty findings are unrelated to the audit pipeline.
+- Results cannot be shared, even in anonymized form.
+- The story sounds like consulting or solo researcher work rather than product leverage.
+
+YC-safe phrasing:
+
+> We also started running ChainShield against bug bounty targets. If a bounty is accepted, it gives another form of third-party validation: a real protocol accepted the vulnerability and paid for it.
+
+If ChainShield wins a $25k+ bounty:
+
+> ChainShield found a bounty accepted for $25k. The run took X hours, cost effectively near $0, required Y human review minutes, and produced a PoC accepted by the program.
+
+If ChainShield wins a $100k+ bounty:
+
+> ChainShield found a critical bug bounty accepted for $100k+. That is direct economic proof that the system finds vulnerabilities valuable enough for real teams to pay for, outside of contests and customer pilots.
+
+### Bug Bounty Strategy
+
+Use bounty hunting as a proof lane, not as the company strategy.
+
+Targets:
+
+- High-quality DeFi bounty programs.
+- Protocols with public code and meaningful payout tables.
+- Programs with clear scope and acceptance criteria.
+- Targets similar to ChainShield's initial ICP: vaults, lending, staking, bridges, AMMs, perps, rewards, and oracle-heavy protocols.
+
+Track:
+
+- Target protocol.
+- Scope.
+- Run time.
+- Human review minutes.
+- Model/tooling cost.
+- Candidate findings.
+- Submitted findings.
+- Accepted findings.
+- Rejected findings and reasons.
+- Payout.
+- Whether disclosure can be anonymized or public.
+
+Do not let bounty hunting replace customer development. The YC story is strongest when bounty wins sit beside paying customers:
+
+> Code4rena proves public contest performance. Bug bounties prove accepted economic value. Customers prove buyer demand.
+
+## YC Winter Batch Prep Plan
+
+The founder is targeting a future Winter batch, not the immediate Summer 2026 batch.
+
+Important current-date note:
+
+- As of 2026-04-30, YC's public apply page is focused on Summer 2026.
+- YC says founders can apply to future batches including Fall, Winter, and Spring.
+- The exact next Winter deadline should be checked on the official YC application page when applications are open.
+- Historically, Winter batch applications tend to be due in the fall, but use the official YC date, not memory.
+
+Founder commitment:
+
+- Willing to relocate to San Francisco for the batch.
+- Willing to quit day job if accepted.
+
+This is good, but it is not the main proof point. YC will care more about velocity, user pull, and founder execution. Mention availability when asked, but do not make it the center of the application.
+
+### Objective
+
+By the time the Winter application is submitted, ChainShield should no longer look like "great technical potential." It should look like:
+
+> A fast-growing security company with public third-party validation, paying design partners, and a repeatable AI audit engine that gets better with every run.
+
+### Target Application State
+
+Best-case targets before applying:
+
+- 10+ completed audit runs across contests and customer repos.
+- 3-5 paying protocol customers or signed paid pilots.
+- $25k-$100k in paid or committed audit revenue.
+- 2+ customer quotes or anonymized case studies.
+- 1-2 teams asking for repeat runs or continuous monitoring.
+- Continued Code4rena ranking improvement, with at least one top-5 finish if possible.
+- Clear run metrics: time, cost, human review minutes, raw findings, validated findings, PoC success rate.
+- A short demo showing repo ingest to validated report.
+
+Minimum credible targets:
+
+- 3 paid pilots.
+- 1 strong case study.
+- 1 repeat customer or continuous-audit request.
+- Public Code4rena proof remains strong and current.
+- Founder can clearly explain what was learned from at least 20 customer conversations.
+
+### Monthly Plan
+
+#### May 2026: Customer Discovery And First Pilots
+
+Goal:
+
+- Prove who urgently wants this.
+
+Actions:
+
+- Build a 100-team pre-launch DeFi target list.
+- Send 100 personalized outbound messages.
+- Get 20 founder/CTO conversations.
+- Get 5 repo-access conversations.
+- Run 1-2 pilots, even if discounted.
+- Track every objection.
+
+Deliverable:
+
+- A spreadsheet/CRM of targets, conversations, objections, and outcomes.
+- One updated offer based on what buyers actually say.
+
+#### June 2026: Paid Design Partners
+
+Goal:
+
+- Convert interest into payment.
+
+Actions:
+
+- Close 2-3 design partners.
+- Use the design-partner pricing model.
+- Get permission for anonymized metrics.
+- Produce polished reports and post-fix retests.
+- Ask every customer for one intro.
+
+Deliverable:
+
+- First paid revenue.
+- First case study draft.
+- Customer quote, even if anonymized.
+
+#### July 2026: Repeatability
+
+Goal:
+
+- Prove the system is not founder magic.
+
+Actions:
+
+- Instrument every audit run.
+- Track human minutes per accepted H/M finding.
+- Track cost per audit and cost per valid H/M.
+- Document runbooks.
+- Have another team member run the process with minimal founder intervention.
+
+Deliverable:
+
+- Repeatability dashboard.
+- "What is automated today" document.
+- "What still requires human review" document.
+
+#### August 2026: Continuous Audit Prototype
+
+Goal:
+
+- Show the path from services to product.
+
+Actions:
+
+- Build a lightweight GitHub/CI or commit-diff workflow.
+- Run it on one customer or internal repo.
+- Produce weekly security summaries.
+- Validate patches after fixes.
+
+Deliverable:
+
+- Demo: PR or commit enters, ChainShield produces validated security output.
+- One customer says they want this before merge.
+
+#### September 2026: Defensibility Package
+
+Goal:
+
+- Make the moat legible.
+
+Actions:
+
+- Assemble validation corpus stats.
+- Publish or prepare benchmark methodology.
+- Summarize Code4rena live proof.
+- Build a private benchmark dashboard.
+- Collect rejected-finding categories and false-positive reductions.
+
+Deliverable:
+
+- Investor-ready defensibility memo.
+- One slide or page: "No trust-me benchmarks. Live third-party proof."
+
+#### October 2026: YC Application Drafting
+
+Goal:
+
+- Make the application impossible to misunderstand.
+
+Actions:
+
+- Draft YC application answers.
+- Record a direct founder video.
+- Record a short product demo.
+- Ask 3-5 trusted founders/investors to review the application for clarity.
+- Remove all hype and replace it with metrics.
+
+Deliverable:
+
+- Final application draft.
+- Interview prep answers.
+- Updated metrics snapshot.
+
+#### November/Deadline Month: Submit And Keep Shipping
+
+Goal:
+
+- Apply with momentum, then create updates before interview.
+
+Actions:
+
+- Submit before the official deadline.
+- Continue customer outreach.
+- Continue audits.
+- Send meaningful updates if YC allows.
+
+Best update:
+
+> Since applying, we added two paid pilots, found X validated H/M issues, and one customer asked for continuous monitoring.
+
+### The Application Should Emphasize
+
+1. Public proof: Code4rena SR Warden profile, accepted H/M findings, contest placements.
+2. Customer proof: paid pilots, repo access, repeat requests, testimonials.
+3. Speed: 48-hour audit discovery versus weeks/months.
+4. Economics: low run cost versus high audit spend.
+5. Repeatability: human minutes per accepted finding trending down.
+6. Market expansion: Solidity first, then continuous security for AI-generated software.
+
+### The Application Should Avoid
+
+- Overclaiming that human audits are obsolete today.
+- Sounding like a consultancy.
+- Hiding the current human-in-the-loop pieces.
+- Talking about raising $3M-$4M before showing customer pull.
+- Claiming defensibility from prompts or model access.
+
+### Interview Strengthener
+
+By interview time, the founder should be able to say:
+
+> I am ready to quit my job and relocate to SF for the batch. More importantly, customers are already pulling us in: we have X paid pilots, Y repo-access conversations, Z validated H/M findings, and one team wants ChainShield in their release process.
+
+Commitment matters, but pull matters more.
 
 ## Positioning
 
@@ -211,6 +788,58 @@ Ask crypto investors, accelerators, devrel teams, and infra companies:
 Do not ask:
 
 > Do you know anyone who needs security?
+
+### 5. Public Repo Teaser Audits
+
+This can be an effective outbound motion if handled as responsible disclosure, not as "pay us or you do not get the bug."
+
+Safe version:
+
+1. Only analyze public source code passively and offline.
+2. Do not interact with production systems, mainnet contracts, user funds, private APIs, or anything outside published scope.
+3. Check for a security policy, bug bounty program, security.txt, or preferred disclosure channel first.
+4. If a finding is serious and exploitable, disclose through the official security channel with enough detail for the team to understand and mitigate.
+5. Use the finding to open a relationship and offer a paid full discovery run, retest, or continuous monitoring.
+
+Unsafe version:
+
+- Send exploit details over cold email.
+- Withhold a critical live vulnerability unless they pay.
+- Run active tests against production without authorization.
+- Publicly name the team before coordinated disclosure.
+- Make the message sound like a threat or ransom.
+
+Recommended teaser:
+
+> I ran a passive review of your public Solidity repo and found a candidate issue in the [module/category] area that looks like it could affect [high-level impact]. I do not want to send exploit details over email. Is there a security contact we should use for responsible disclosure? Separately, ChainShield can run a full 24-hour discovery pass with validated findings, PoCs, and patch retest.
+
+What to share in the first email:
+
+- Repo/module reviewed.
+- High-level bug class.
+- High-level impact category.
+- Evidence of seriousness without copy-paste exploit steps.
+- Code4rena proof link.
+- Offer to disclose privately.
+- Offer for full paid report or 24-hour discovery run.
+
+What not to share in the first email:
+
+- Complete exploit path.
+- Mainnet exploit recipe.
+- PoC that can be pasted and run.
+- Public accusations.
+- Pricing framed as the cost to receive an already-discovered critical vulnerability.
+
+The full-report offer should be framed as:
+
+> We can run the complete ChainShield discovery workflow across the repo and deliver a full validated report.
+
+Not:
+
+> Pay us to learn about this bug.
+
+If a critical live issue is found, do the right thing and coordinate disclosure. Trust is the business.
 
 ## Pricing Strategy
 

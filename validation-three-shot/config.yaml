@@ -4,6 +4,7 @@
 # - benchmark
 # - run_id
 # - paths.source_root
+# - paths.audit_root
 # - paths.audit_report
 # - prompt_version, only when testing a new validation prompt
 
@@ -16,6 +17,10 @@ paths:
   # {{SOURCE_ROOT}} to point at README.md, scope/docs files, prior findings,
   # and any other contest-specific context workers must read.
   source_root: /absolute/path/to/contest/source-root
+  # Full path to this tool's output folder for the benchmark. If
+  # paths.audit_report is omitted, the workflow reads
+  # <audit_root>/report/audit-report.md.
+  audit_root: /absolute/path/to/ai-agent-audit-output-root
   # Full path to the AI audit report containing findings in `## [H-1]. Title`
   # format.
   audit_report: /absolute/path/to/audit-report.md
