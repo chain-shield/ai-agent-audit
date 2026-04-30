@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use log::{debug, info, warn};
 use regex::Regex;
 use schemars::JsonSchema;
@@ -131,7 +131,7 @@ pub struct ScopeFileEntry {
 pub enum ScopeFileSource {
     CopiedScopeTxt,
     ExtractedFromReadme,
-    ExtractedByCodex,
+    FallbackCodeFolders,
 }
 
 #[derive(Debug, Clone)]
@@ -143,12 +143,6 @@ struct SourceContent {
     content: String,
     decision: SourceDecision,
     reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct ScopeFileExtraction {
-    files: Vec<String>,
-    warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -361,14 +355,14 @@ async fn collect_context_sources(
     let explicit_v12_url = matches!(config.v12_url, V12Source::Url(_));
 
     let configured_files = context_files(config);
-    info!(
+    debug!(
         "Codex context discovery: reading configured context files: {}",
         configured_files.join(", ")
     );
     for file in configured_files {
         let path = protocol_root.join(&file);
         if path.exists() {
-            info!(
+            debug!(
                 "Codex context discovery: loading local context file {}",
                 path.display()
             );
@@ -390,12 +384,12 @@ async fn collect_context_sources(
     }
 
     let known_issue_files = discover_known_issue_files(protocol_root);
-    info!(
+    debug!(
         "Codex context discovery: found {} possible known-issues/security/audit markdown files",
         known_issue_files.len()
     );
     for path in known_issue_files {
-        info!(
+        debug!(
             "Codex context discovery: loading possible known-issues file {}",
             path.display()
         );
@@ -410,7 +404,7 @@ async fn collect_context_sources(
     }
 
     if protocol_root.join("scope.txt").exists() {
-        info!(
+        debug!(
             "Codex context discovery: found repository scope.txt at {}",
             protocol_root.join("scope.txt").display()
         );
@@ -427,26 +421,26 @@ async fn collect_context_sources(
     let mut links = Vec::new();
     for source in &sources {
         if !should_extract_links_from_source(source) {
-            info!(
+            debug!(
                 "Codex context discovery: not extracting links from non-entry source {}; second-level link traversal is terminal",
                 source.location
             );
             continue;
         }
         let source_links = extract_links(&source.content, &source.location);
-        info!(
+        debug!(
             "Codex context discovery: extracted {} links from {}",
             source_links.len(),
             source.location
         );
         links.extend(source_links);
     }
-    info!(
+    debug!(
         "Codex context discovery: collected {} second-level candidates from entry context files",
         links.len()
     );
     for url in &config.urls {
-        info!(
+        debug!(
             "Codex context discovery: adding configured context URL {}",
             url
         );
@@ -461,20 +455,20 @@ async fn collect_context_sources(
         .filter(|link| classify_link(&link.url, &link.label) == LinkClassification::V12)
         .count();
     let v12_links = if !code4rena_audit && matches!(config.v12_url, V12Source::Auto) {
-        info!(
+        debug!(
             "Codex context discovery: skipping V12 auto lookup because audit_type={:?}; V12 context is Code4rena-only",
             audit_type
         );
         Vec::new()
     } else if matches!(config.v12_url, V12Source::Auto) && source_v12_link_count > 0 {
-        info!(
+        debug!(
             "Codex context discovery: found {source_v12_link_count} V12 report links in entry context sources; skipping external V12 search"
         );
         Vec::new()
     } else {
         v12_candidate_links(config, repo_name).await
     };
-    info!(
+    debug!(
         "Codex context discovery: found {} V12 candidate links",
         v12_links.len()
     );
@@ -486,7 +480,7 @@ async fn collect_context_sources(
         .build()?;
 
     let deduped_links = dedupe_links(links);
-    info!(
+    debug!(
         "Codex context discovery: evaluating {} unique second-level/configured URL candidates",
         deduped_links.len()
     );
@@ -562,7 +556,7 @@ async fn collect_context_sources(
             }
         }
 
-        info!(
+        debug!(
             "Codex context discovery: following second-level link classification={:?}, url={}",
             classification, link.url
         );
@@ -582,7 +576,7 @@ async fn collect_context_sources(
         .await
         {
             Ok(Some(source)) => {
-                info!(
+                debug!(
                     "Codex context discovery: accepted second-level link as {:?}: {}",
                     source.kind, source.location
                 );
@@ -602,7 +596,7 @@ async fn collect_context_sources(
                 if seen_locations.insert(source.location.clone()) {
                     sources.push(source);
                 } else {
-                    info!(
+                    debug!(
                         "Codex context discovery: skipped duplicate linked source {}",
                         source.location
                     );
@@ -625,7 +619,7 @@ async fn collect_context_sources(
             }
             Err(err) => {
                 failed_count += 1;
-                warn!(
+                debug!(
                     "Codex context discovery: failed link classification={:?}, url={}, error={}",
                     classification, link.url, err
                 );
@@ -640,7 +634,7 @@ async fn collect_context_sources(
         }
     }
     if !skipped_by_reason.is_empty() {
-        info!(
+        debug!(
             "Codex context discovery: skipped link summary: {}",
             skipped_by_reason
                 .iter()
@@ -649,7 +643,7 @@ async fn collect_context_sources(
                 .join("; ")
         );
     }
-    info!(
+    debug!(
         "Codex context discovery: link follow summary: accepted={}, failed={}, remote_fetches={}, prior_audit_remote_fetches={}",
         accepted_count, failed_count, remote_fetch_count, prior_audit_remote_fetch_count
     );
@@ -1027,7 +1021,7 @@ async fn resolve_or_fetch_link(
         classification,
         LinkClassification::Social | LinkClassification::Marketing | LinkClassification::Unknown
     ) {
-        info!(
+        debug!(
             "Codex context discovery: not following low-signal link classification={:?}, url={}",
             classification, url
         );
@@ -1036,7 +1030,7 @@ async fn resolve_or_fetch_link(
 
     if let Some(local_path) = resolve_local_link(workspace_root, protocol_root, url) {
         if local_path.exists() && local_path.is_file() {
-            info!(
+            debug!(
                 "Codex context discovery: resolving local link {} -> {}",
                 url,
                 local_path.display()
@@ -1069,7 +1063,7 @@ async fn resolve_or_fetch_link(
                 reason: "Resolved from second-level entry context link".to_string(),
             }));
         }
-        info!(
+        debug!(
             "Codex context discovery: local link target not found or not a file: {} -> {}",
             url,
             local_path.display()
@@ -1084,14 +1078,14 @@ async fn resolve_or_fetch_link(
             None
         }
     }) else {
-        info!(
+        debug!(
             "Codex context discovery: cannot resolve non-HTTP/non-local link {}",
             url
         );
         return Ok(None);
     };
 
-    info!(
+    debug!(
         "Codex context discovery: fetching remote link classification={:?}, url={}",
         classification, fetch_url
     );
@@ -1184,11 +1178,11 @@ fn github_raw_url(url: &str) -> Option<String> {
 async fn v12_candidate_links(config: &ContextConfig, repo_name: &str) -> Vec<ExtractedLink> {
     match &config.v12_url {
         V12Source::Disabled => {
-            info!("Codex context discovery: V12 lookup disabled by config");
+            debug!("Codex context discovery: V12 lookup disabled by config");
             Vec::new()
         }
         V12Source::Url(url) => {
-            info!(
+            debug!(
                 "Codex context discovery: using configured V12 report URL {}",
                 url
             );
@@ -1199,7 +1193,7 @@ async fn v12_candidate_links(config: &ContextConfig, repo_name: &str) -> Vec<Ext
             }]
         }
         V12Source::Auto => {
-            info!(
+            debug!(
                 "Codex context discovery: last-resort public V12 search for {} after entry sources yielded no V12 links",
                 repo_name
             );
@@ -1211,7 +1205,7 @@ async fn v12_candidate_links(config: &ContextConfig, repo_name: &str) -> Vec<Ext
 async fn search_v12_links(repo_name: &str) -> Vec<ExtractedLink> {
     let query = format!("site:v12.sh/runs OR site:v12.zellic.io {}", repo_name);
     let url = format!("https://duckduckgo.com/html/?q={}", percent_encode(&query));
-    info!("Codex context discovery: V12 search query: {}", query);
+    debug!("Codex context discovery: V12 search query: {}", query);
     let Ok(response) = reqwest::Client::new()
         .get(&url)
         .header(
@@ -1221,11 +1215,11 @@ async fn search_v12_links(repo_name: &str) -> Vec<ExtractedLink> {
         .send()
         .await
     else {
-        warn!("Codex context discovery: V12 search request failed");
+        debug!("Codex context discovery: V12 search request failed");
         return Vec::new();
     };
     let Ok(text) = response.text().await else {
-        warn!("Codex context discovery: failed to read V12 search response");
+        debug!("Codex context discovery: failed to read V12 search response");
         return Vec::new();
     };
     let links = extract_links(&text, "v12-search")
@@ -1237,7 +1231,7 @@ async fn search_v12_links(repo_name: &str) -> Vec<ExtractedLink> {
         .take(5)
         .collect::<Vec<_>>();
     for link in &links {
-        info!(
+        debug!(
             "Codex context discovery: V12 candidate discovered: {}",
             link.url
         );
@@ -1282,73 +1276,37 @@ async fn generate_scope_txt(
         "Deterministic entry-context scope extraction found {} candidate Solidity files",
         extracted.len()
     );
-    if extracted.is_empty() {
-        info!(
-            "Codex task: deterministic scope extraction found no files; asking Codex to create scope.txt from entry context sources"
-        );
-        let agent = build_context_agent()?;
-        let bundle = sources_for_prompt(sources);
-        let prompt = format!(
-            r#"
-Extract the machine-readable Solidity audit scope file list from the source material.
-
-Return JSON with:
-- files: repo-relative Solidity paths, one per in-scope file
-- warnings: ambiguity or missing evidence
-
-Rules:
-- Prefer explicitly listed contest scope.
-- Include only Solidity files.
-- Use paths relative to the protocol root, prefixed with ./ when possible.
-- Do not invent files absent from source material.
-
-Audit type: {:?}
-Source material:
-{}
-"#,
-            cli.audit_type, bundle
-        );
-        let llm_scope: ScopeFileExtraction = agent.extract_with_retry(&prompt).await?;
-        info!(
-            "Codex task: scope.txt extraction returned {} files and {} warnings",
-            llm_scope.files.len(),
-            llm_scope.warnings.len()
-        );
-        warnings.extend(llm_scope.warnings);
-        extracted = llm_scope
-            .files
-            .into_iter()
-            .map(|path| normalize_scope_path(&path, protocol_root, None))
-            .collect();
-        source = ScopeFileSource::ExtractedByCodex;
-    }
 
     extracted.sort_by(|a, b| a.path.cmp(&b.path));
     extracted.dedup_by(|a, b| a.path == b.path);
-    if extracted.is_empty() {
-        anyhow::bail!(
-            "Could not generate {} from entry context files. Provide context.files or a scope.txt.",
-            output_path.display()
-        );
-    }
-    if matches!(source, ScopeFileSource::ExtractedByCodex) {
-        let missing = extracted
-            .iter()
-            .filter(|entry| !entry.exists)
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            warn!(
-                "Codex task: generated scope.txt includes {} paths that were not found locally",
-                missing.len()
+    let existing_count = extracted.iter().filter(|entry| entry.exists).count();
+    if extracted.is_empty() || existing_count == 0 {
+        let fallback = fallback_scope_from_code_folders(cli, protocol_root);
+        if fallback.is_empty() {
+            anyhow::bail!(
+                "Could not generate {} from entry context files and found no Solidity files under configured code_folders {:?}. Provide context.files or a scope.txt.",
+                output_path.display(),
+                cli.code_folders
             );
-            warnings.push(format!(
-                "Some Codex-extracted scope paths were not found locally: {}",
-                missing.join(", ")
-            ));
         }
-    }
 
+        let message = if extracted.is_empty() {
+            format!(
+                "No explicit scope.txt or README scope file list was found; falling back to all Solidity files under configured code_folders {:?}",
+                cli.code_folders
+            )
+        } else {
+            format!(
+                "Extracted {} scope candidates but none resolved locally; falling back to all Solidity files under configured code_folders {:?}",
+                extracted.len(),
+                cli.code_folders
+            )
+        };
+        warn!("{message}");
+        warnings.push(message);
+        extracted = fallback;
+        source = ScopeFileSource::FallbackCodeFolders;
+    }
     write_scope_lines(output_path, &extracted)?;
     let missing_count = extracted.iter().filter(|entry| !entry.exists).count();
     info!(
@@ -1378,6 +1336,7 @@ fn deterministic_scope_extract(
     protocol_root: &Path,
 ) -> Vec<ScopeFileEntry> {
     let sol_path_re = Regex::new(r#"(?x)(?:\.?/)?[A-Za-z0-9_./-]+\.sol"#).unwrap();
+    let scope_dir_re = Regex::new(r#"(?x)(?:^|[\s`|])((?:\.?/)?[A-Za-z0-9_./-]+/)\s*$"#).unwrap();
     let mut entries = Vec::new();
     for source in sources {
         if !matches!(
@@ -1391,18 +1350,102 @@ fn deterministic_scope_extract(
             continue;
         }
         for section in likely_scope_sections(&source.content) {
-            for m in sol_path_re.find_iter(&section) {
-                entries.push(normalize_scope_path(
-                    m.as_str(),
-                    protocol_root,
-                    Some("Extracted from scope section".to_string()),
-                ));
+            let mut current_scope_dir: Option<String> = None;
+            for line in section.lines() {
+                if let Some(captures) = scope_dir_re.captures(line)
+                    && let Some(dir) = captures.get(1)
+                {
+                    current_scope_dir = Some(dir.as_str().to_string());
+                    continue;
+                }
+
+                for m in sol_path_re.find_iter(line) {
+                    let raw = m.as_str();
+                    let scoped_path = if raw.contains('/') {
+                        raw.to_string()
+                    } else if let Some(dir) = &current_scope_dir {
+                        format!("{}/{}", dir.trim_end_matches('/'), raw)
+                    } else {
+                        raw.to_string()
+                    };
+                    entries.push(normalize_scope_path(
+                        &scoped_path,
+                        protocol_root,
+                        Some("Extracted from scope section".to_string()),
+                    ));
+                }
             }
         }
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     entries.dedup_by(|a, b| a.path == b.path);
     entries
+}
+
+fn fallback_scope_from_code_folders(cli: &Cli, protocol_root: &Path) -> Vec<ScopeFileEntry> {
+    let mut entries = Vec::new();
+
+    for folder in &cli.code_folders {
+        let trimmed_folder = folder.trim();
+        if trimmed_folder.is_empty() {
+            continue;
+        }
+
+        let folder_path = protocol_root.join(trimmed_folder);
+        if !folder_path.exists() {
+            warn!(
+                "Scope fallback skipped missing configured code folder: {}",
+                folder_path.display()
+            );
+            continue;
+        }
+
+        for entry in WalkDir::new(&folder_path)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("sol") {
+                continue;
+            }
+
+            let Ok(relative) = path.strip_prefix(protocol_root) else {
+                continue;
+            };
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            if scope_fallback_excludes(&relative, cli) {
+                continue;
+            }
+
+            entries.push(ScopeFileEntry {
+                path: format!("./{}", relative.trim_start_matches("./")),
+                exists: true,
+                reason: Some(format!(
+                    "Fallback from configured code folder `{trimmed_folder}`"
+                )),
+            });
+        }
+    }
+
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    entries.dedup_by(|a, b| a.path == b.path);
+    entries
+}
+
+fn scope_fallback_excludes(relative: &str, cli: &Cli) -> bool {
+    let Some(excluded_folders) = &cli.exclude_folders else {
+        return false;
+    };
+    let relative = relative.trim_start_matches("./");
+
+    excluded_folders.iter().any(|folder| {
+        let folder = folder.trim().trim_start_matches("./").trim_end_matches('/');
+        !folder.is_empty() && (relative == folder || relative.starts_with(&format!("{folder}/")))
+    })
 }
 
 fn likely_scope_sections(content: &str) -> Vec<String> {
@@ -1483,7 +1526,6 @@ Create `{artifact_prefix}-scope.md` for a Solidity security audit.
 
 Hard requirements:
 - Markdown only.
-- Include a table of contents.
 - Be highly discriminating: include only material that changes audit scope, threat model, assumptions, exclusions, or reviewer priorities.
 - Include ALL relevant audit scope context from the source material, but summarize aggressively when the raw source is long.
 - Include public known issues, files in/out of scope, areas of concern, invariants, trusted roles, and V12/prior findings when present.
@@ -1535,7 +1577,6 @@ Create `{artifact_prefix}-docs.md` for a Solidity security audit.
 
 Hard requirements:
 - Markdown only.
-- Include a table of contents.
 - Explain what the protocol does and how it works.
 - Focus on architecture, main flows, accounting/value flow, external integrations, trust boundaries, and security-relevant assumptions.
 - Pull only useful protocol documentation from entry and second-level sources.
@@ -1709,14 +1750,6 @@ fn build_context_bundle(
         MAX_PROMPT_SOURCE_TOKENS_PER_ITEM
     );
     bundle
-}
-
-fn sources_for_prompt(sources: &[SourceContent]) -> String {
-    let mut out = String::new();
-    for source in sources {
-        out.push_str(&render_source_for_prompt(source));
-    }
-    out
 }
 
 #[derive(Debug, Default)]
@@ -2023,6 +2056,140 @@ mod tests {
         assert!(lines[0].exists);
         assert_eq!(lines[1].path, "./src/B.sol");
         assert!(!lines[1].exists);
+    }
+
+    #[test]
+    fn deterministic_scope_extract_preserves_directory_tree_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::write(tmp.path().join("src/PuppyRaffle.sol"), "").unwrap();
+        let sources = vec![SourceContent {
+            id: "source-1".to_string(),
+            kind: ContextSourceKind::LocalReadme,
+            location: "README.md".to_string(),
+            title: None,
+            content: r#"
+# Audit Scope Details
+
+```
+./src/
+└── PuppyRaffle.sol
+```
+"#
+            .to_string(),
+            decision: SourceDecision::UsedForBoth,
+            reason: ENTRY_CONTEXT_REASON.to_string(),
+        }];
+
+        let entries = deterministic_scope_extract(&sources, tmp.path());
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "./src/PuppyRaffle.sol");
+        assert!(entries[0].exists);
+    }
+
+    #[test]
+    fn fallback_scope_uses_configured_code_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("src/nested")).unwrap();
+        fs::create_dir_all(tmp.path().join("test")).unwrap();
+        fs::write(tmp.path().join("src/A.sol"), "").unwrap();
+        fs::write(tmp.path().join("src/nested/B.sol"), "").unwrap();
+        fs::write(tmp.path().join("test/OutOfScope.t.sol"), "").unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+code_folders:
+  - "src"
+"#,
+        )
+        .unwrap();
+
+        let entries = fallback_scope_from_code_folders(&cli, tmp.path());
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["./src/A.sol", "./src/nested/B.sol"]);
+        assert!(entries.iter().all(|entry| entry.exists));
+    }
+
+    #[tokio::test]
+    async fn scope_txt_falls_back_to_code_folders_when_extracted_paths_do_not_exist() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::write(tmp.path().join("src/PuppyRaffle.sol"), "").unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+code_folders:
+  - "src"
+"#,
+        )
+        .unwrap();
+        let sources = vec![SourceContent {
+            id: "source-1".to_string(),
+            kind: ContextSourceKind::LocalReadme,
+            location: "README.md".to_string(),
+            title: None,
+            content: r#"
+# Audit Scope Details
+
+- In Scope: `PuppyRaffle.sol`
+"#
+            .to_string(),
+            decision: SourceDecision::UsedForBoth,
+            reason: ENTRY_CONTEXT_REASON.to_string(),
+        }];
+        let output_path = tmp.path().join("generated-scope.txt");
+
+        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &sources)
+            .await
+            .unwrap();
+
+        assert!(matches!(list.source, ScopeFileSource::FallbackCodeFolders));
+        assert_eq!(
+            fs::read_to_string(output_path).unwrap(),
+            "./src/PuppyRaffle.sol\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn scope_txt_uses_code_folders_when_readme_has_no_explicit_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("contracts/core")).unwrap();
+        fs::write(tmp.path().join("contracts/Token.sol"), "").unwrap();
+        fs::write(tmp.path().join("contracts/core/Vault.sol"), "").unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+code_folders:
+  - "contracts"
+"#,
+        )
+        .unwrap();
+        let sources = vec![SourceContent {
+            id: "source-1".to_string(),
+            kind: ContextSourceKind::LocalReadme,
+            location: "README.md".to_string(),
+            title: None,
+            content: "# Protocol\n\nGeneral protocol docs without an audit scope section."
+                .to_string(),
+            decision: SourceDecision::UsedForBoth,
+            reason: ENTRY_CONTEXT_REASON.to_string(),
+        }];
+        let output_path = tmp.path().join("generated-scope.txt");
+
+        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &sources)
+            .await
+            .unwrap();
+
+        assert!(matches!(list.source, ScopeFileSource::FallbackCodeFolders));
+        assert_eq!(
+            fs::read_to_string(output_path).unwrap(),
+            "./contracts/Token.sol\n./contracts/core/Vault.sol\n"
+        );
     }
 
     #[test]

@@ -37,8 +37,9 @@ Each validation round should be run by a separate spawned minimal Codex worker w
 Configuration:
 
 - `validation-three-shot/config.yaml` is the default production config.
-- Change `benchmark`, `run_id`, `paths.source_root`, and `paths.audit_report` there for a new contest.
+- Change `benchmark`, `run_id`, `paths.source_root`, `paths.audit_root`, and `paths.audit_report` there for a new contest.
 - `paths.source_root` is the full path to the contest source/workspace bundle. It is not assumed to live under `~/Desktop/Audit/<benchmark>`.
+- `paths.audit_root` is the full path to this tool's output folder for the benchmark. If `paths.audit_report` is omitted, the workflow reads `report/audit-report.md` under `paths.audit_root`.
 - `paths.audit_report` is the full path to the AI audit results file containing `## [H-1]. Title` style finding headings. It is not assumed to live under this repository.
 - Optional `paths.truth_file` can be configured for local benchmark scoring when a truth artifact is available.
 - `context_docs` is the authoritative YAML list of files every three-shot worker must read. It supports exact paths and glob patterns, including `{{SOURCE_ROOT}}` and `{{THREE_SHOT_ROOT}}` placeholders.
