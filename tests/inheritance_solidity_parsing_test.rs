@@ -7,7 +7,7 @@ use ai_agent_audit::{
     build_brain::inheritance_map::{get_children_with_file, get_parents_with_file},
     config::AuditType,
     enumerator::utils::contracts_in_source_folder,
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
     utils::remapping::parse_and_store_remappings,
 };
 use std::path::{Path, PathBuf};
@@ -54,7 +54,6 @@ async fn test_covenant_inheritance_parsing() {
         monorepo_folders: None,
         commit_hash: "d5ebe4".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     };
 
     // Load remappings first (required for import resolution)
@@ -241,7 +240,7 @@ async fn test_complete_inheritance_hierarchy() {
     use ai_agent_audit::build_brain::inheritance_map::get_children_with_file;
     use ai_agent_audit::config::AuditType;
     use ai_agent_audit::enumerator::utils::contracts_in_source_folder;
-    use ai_agent_audit::prepare_code::git_clone::{PocConfig, RepoPaths};
+    use ai_agent_audit::prepare_code::git_clone::RepoPaths;
     use ai_agent_audit::utils::remapping::parse_and_store_remappings;
     use std::collections::HashSet;
     use std::path::PathBuf;
@@ -278,7 +277,6 @@ async fn test_complete_inheritance_hierarchy() {
         monorepo_folders: None,
         commit_hash: "d5ebe4".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     };
 
     // Load remappings first

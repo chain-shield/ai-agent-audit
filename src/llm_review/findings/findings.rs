@@ -7,21 +7,26 @@ use crate::llm_review::{
 use crate::{
     config::{OPENAI_DEDUP_MODEL, OPENAI_DEDUP_REASONING_EFFORT},
     cost::cost_data::{TokenType, add_to_inference_cost_by_type},
-    llm_review::phases::{add_poc_findings::PocStatus, create_report::CompetitionReport},
     utils::semantic_compare,
 };
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::{collections::HashMap, path::PathBuf};
 use strum_macros::EnumIter;
 use tokio::sync::Mutex;
 
 pub const CLAUDE_4_0_SONNET: &str = "claude-sonnet-4-0";
 pub const CLAUDE_4_5_SONNET: &str = "claude-sonnet-4-5";
 pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompetitionReport {
+    pub github_urls: Vec<String>,
+    pub report: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct Finding {
@@ -38,9 +43,6 @@ pub struct Finding {
     pub impact: Option<String>, // Impact of Issue
     pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker
     pub proof_of_code: Option<String>, // Write Foundry Unit test to prove issue exists
-    pub poc_test_file: Option<PathBuf>,
-    pub poc_test_command: Option<String>,
-    pub poc_test_status: Option<PocStatus>,
     #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,

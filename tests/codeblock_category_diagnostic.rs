@@ -12,7 +12,7 @@ use ai_agent_audit::{
         codeblock_db::CodeBlocksDb, codeblocks::extract_contract_category_from_contract,
         utils::SolFileType,
     },
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
 };
 use std::path::PathBuf;
 
@@ -75,7 +75,6 @@ async fn diagnose_contract_category_issue() {
         monorepo_folders: None,
         commit_hash: "test-commit".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     };
 
     // ────────────────────────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 use crate::{
     build_brain::summarize::{FileSummaryType, SrcFileSummary},
-    config::{app_db_path, SUMMARY_DB},
+    config::{SUMMARY_DB, app_db_path},
     llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::RepoPaths,
 };

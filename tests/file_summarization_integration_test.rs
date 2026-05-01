@@ -16,7 +16,7 @@ use ai_agent_audit::{
     },
     config::{AuditType, OPENAI_SUMMARY_MODEL},
     llm_review::contract::contract_category::ContractCategory,
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
     utils::remapping::parse_and_store_remappings,
 };
 use dotenvy::dotenv;
@@ -123,7 +123,6 @@ async fn test_file_summarization_and_categorization() {
         monorepo_folders: None,
         commit_hash: "main".to_string(),
         audit_type: AuditType::Code4rena,
-        poc: PocConfig::default(),
     };
 
     println!("\n📊 Repository Statistics:");

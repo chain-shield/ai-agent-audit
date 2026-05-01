@@ -7,7 +7,7 @@ use ai_agent_audit::{
         analysis::analysis_db::FindingsDb,
         phases::verify_rounds,
     },
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
 };
 use rig::providers::anthropic::CLAUDE_4_SONNET;
 use std::{path::PathBuf, sync::Arc};
@@ -55,7 +55,6 @@ async fn test_verify_rounds_puppy_raffle() -> Result<()> {
         monorepo_folders: None,
         commit_hash: "2a47715b30cf11ca82db148704e67652ad679cd8".to_string(),
         audit_type: AuditType::Code4rena,
-        poc: PocConfig::default(),
     };
 
     println!("📂 Repository: {}", repo.repo_name);

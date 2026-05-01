@@ -41,14 +41,8 @@ audit_type: "Code4rena"
 #   - "test"
 #   - "script"
 
-# Optional: PoC configuration
-poc_instructions: "audit-docs/sequence-test.md"
-poc_template: "audit-docs/covenant-poc-template.t.sol"
-# test_folder: "test"
-
 # Optional: Foundry via-ir flag
 # via_ir: false
 
 # Optional: Force rebuild even if cached
 # force_rebuild: false
-

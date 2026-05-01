@@ -119,11 +119,8 @@ pub mod llm_review {
         pub mod invariants;
     }
     pub mod phases {
-        pub mod add_poc_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_rounds;
-        // Phase 7: Create professaionl competition-grade report
-        pub mod create_report;
         pub mod rounds {
             pub mod all_rounds;
             pub mod utils;
@@ -145,16 +142,11 @@ pub mod llm_review {
         pub mod prompt_context;
         /// AI agent builders and utilities
         pub mod review_utils;
-        pub mod save_run_poc;
     }
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
-        pub mod create_report_prompt;
         /// Deduplication prompts
         pub mod dedup;
-        pub mod make_poc_prompt;
-        pub mod post_poc;
-        pub mod pre_poc;
         pub mod report_templates;
         pub mod severity_rubics;
     }

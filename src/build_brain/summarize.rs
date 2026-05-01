@@ -28,7 +28,7 @@ use crate::{
             agent_factory::{AgentConfig, AgentFactory},
         },
         contract::contract_category::{
-            generate_formated_list_of_contract_categories, ContractCategory,
+            ContractCategory, generate_formated_list_of_contract_categories,
         },
     },
     prepare_code::git_clone::RepoPaths,

@@ -55,7 +55,6 @@ async fn create_test_repo_with_scripts(
         repo_name,
         commit_hash,
         audit_type: AuditType::Code4rena,
-        poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     };
 
     (temp_dir, repo_paths)

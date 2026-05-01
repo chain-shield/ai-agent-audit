@@ -1,6 +1,6 @@
 use ai_agent_audit::config::AuditType;
 use ai_agent_audit::enumerator::interface_implementations::build_and_get_interface_implementation_index;
-use ai_agent_audit::prepare_code::git_clone::{PocConfig, RepoPaths};
+use ai_agent_audit::prepare_code::git_clone::RepoPaths;
 use std::fs;
 use tempfile::TempDir;
 
@@ -135,7 +135,6 @@ contract Token is IERC20 {
         monorepo_folders: None,
         commit_hash: "abc123".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     };
 
     // Debug: Print all files being scanned
@@ -294,7 +293,6 @@ contract Manager is IManager {
         monorepo_folders: None,
         commit_hash: "def456".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     };
 
     // First, build the inheritance map by scanning all Solidity files

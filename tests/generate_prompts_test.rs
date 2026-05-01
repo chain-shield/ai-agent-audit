@@ -14,7 +14,7 @@ use ai_agent_audit::{
         },
         utils::prompt_context,
     },
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
 };
 use std::path::PathBuf;
 
@@ -38,7 +38,6 @@ fn mock_repo_paths() -> RepoPaths {
         monorepo_folders: None,
         commit_hash: "test-commit-hash".to_string(),
         audit_type: AuditType::Code4rena,
-        poc: PocConfig::default(),
     }
 }
 

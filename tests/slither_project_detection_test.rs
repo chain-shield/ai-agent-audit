@@ -38,7 +38,6 @@ fn make_repo_layout(root: &Path, repo_name: &str, files: &[&str], dirs: &[&str])
         scoped_files: None,
         commit_hash: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
         audit_type: AuditType::Code4rena,
-        poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     }
 }
 

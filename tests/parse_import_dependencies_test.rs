@@ -13,7 +13,7 @@ use ai_agent_audit::{
     enumerator::{
         parse_solidity::parse_all_import_dependencies, utils::contracts_in_source_folder,
     },
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
     utils::remapping::parse_and_store_remappings,
 };
 use std::path::PathBuf;
@@ -60,7 +60,6 @@ async fn test_parse_covenant_curator_imports() {
         monorepo_folders: None,
         commit_hash: "d5ebe4".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     };
 
     // Load remappings first (required for import resolution)

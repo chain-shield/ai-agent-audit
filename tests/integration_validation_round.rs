@@ -14,7 +14,7 @@ use ai_agent_audit::{
         },
         phases::verify_rounds::{self, FindingStatus},
     },
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
 };
 use std::{env, path::PathBuf};
 
@@ -205,9 +205,6 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Follow checks-effects-interactions pattern. Update state before external call.".to_string()),
             status: Some(vec![FindingStatus::InvalidBugDoesNotExist]),
             status_justification: Some("Verification round incorrectly flagged this as non-existent".to_string()),
-            poc_test_file: None,
-            poc_test_command: None,
-            poc_test_status: None,
             competition_report: None,
             finding_complexity: Some(3),
             derived_from: Some("Reentrancy Pattern".to_string()),
@@ -229,9 +226,6 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Add timelock or multi-sig for critical parameter changes.".to_string()),
             status: Some(vec![FindingStatus::InvalidOutOfScope]),
             status_justification: Some("Centralization risks are out of scope for this audit".to_string()),
-            poc_test_file: None,
-            poc_test_command: None,
-            poc_test_status: None,
             competition_report: None,
             finding_complexity: Some(2),
             derived_from: Some("Access Control Pattern".to_string()),
@@ -255,9 +249,6 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Use uint256 for totalFees and remove unsafe casting.".to_string()),
             status: Some(vec![FindingStatus::InvalidGovernanceRisk]),
             status_justification: Some("Incorrectly marked as governance risk".to_string()),
-            poc_test_file: None,
-            poc_test_command: None,
-            poc_test_status: None,
             competition_report: None,
             finding_complexity: Some(4),
             derived_from: Some("Integer Math Pattern".to_string()),
@@ -284,9 +275,6 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
                 FindingStatus::LowSeverityDueToLowImpact,
             ]),
             status_justification: Some("Marked as non-existent and low impact, but bug exists and impact is medium".to_string()),
-            poc_test_file: None,
-            poc_test_command: None,
-            poc_test_status: None,
             competition_report: None,
             finding_complexity: Some(3),
             derived_from: Some("Randomness Pattern".to_string()),
@@ -316,7 +304,6 @@ fn create_mock_puppy_raffle_repo() -> RepoPaths {
         monorepo_folders: None,
         commit_hash: "3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960".to_string(),
         audit_type: AuditType::Code4rena,
-        poc: PocConfig::default(),
     }
 }
 

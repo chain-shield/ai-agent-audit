@@ -3,14 +3,14 @@
 
 Three-shot validation splits the full-report pass into:
 1. scope / known-issue screening
-2. unsupported-token screening
-3. full validation on the surviving findings
-4. optional canonicalization cleanup on the surviving H/M candidates
-4a. optional second V12 overlap sweep on post-canonicalization candidates
+2. unsupported-token screening, or bounty exploitability screening for Code4rena bounties
+3. full validation on the surviving findings, or Critical/High eligibility for Code4rena bounties
+4. optional canonicalization cleanup on the surviving reportable candidates
+4a. optional second V12 overlap sweep on post-canonicalization candidates for competition runs
 5. optional PoC generation and verification on submission candidates
 
 This is intended to cheaply strip obvious false positives before the expensive
-final gate analysis while preserving recall on approved H/M roots.
+final gate analysis while preserving recall on approved roots.
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRUTH_ROOT = Path("/Users/apmfree/.ai-agent-audit-validation-truth")
 APPEND_ANCHOR = "<!-- APPEND FINDING BLOCKS ABOVE THIS LINE -->"
-REPORT_FINDING_RE = re.compile(r"^## \[([HML]-\d+)\]\. (.+)$")
-RAW_FINDING_RE = re.compile(r"^### ([HML]-\d+) / `([^`]+)`")
+REPORT_FINDING_RE = re.compile(r"^## \[([CHML]-\d+)\]\. (.+)$")
+RAW_FINDING_RE = re.compile(r"^### ([CHML]-\d+) / `([^`]+)`")
 ACTIVE_CONFIG: dict[str, object] = {}
 
 
@@ -45,6 +45,7 @@ class Finding:
 THREE_SHOT_ROOT = REPO_ROOT / "validation-three-shot"
 THREE_SHOT_PROMPT_ROOT = THREE_SHOT_ROOT / "prompts"
 V12_CHECKLIST_PATH = THREE_SHOT_ROOT / "v12-checklist.md"
+BOUNTY_CRITERIA_PATH = THREE_SHOT_ROOT / "code4rena-bounty-criteria.md"
 DEFAULT_CONFIG_PATH = THREE_SHOT_ROOT / "config.yaml"
 STAGE_WORKER_MODEL = "gpt-5.5"
 STAGE_WORKER_REASONING = "xhigh"
@@ -256,7 +257,7 @@ def finding_title_from_block(block: str) -> str:
     match = re.search(r"^- Finding Title:\s*(.+)$", block, re.MULTILINE)
     if match:
         return match.group(1).strip()
-    heading = re.search(r"^###\s+[HML]-\d+\s*/\s*`[^`]+`\s*$", block, re.MULTILINE)
+    heading = re.search(r"^###\s+[CHML]-\d+\s*/\s*`[^`]+`\s*$", block, re.MULTILINE)
     if heading:
         return heading.group(0).strip("# `")
     return "finding-report"
@@ -449,6 +450,15 @@ def load_config(config_path: str | None) -> dict[str, object]:
     return load_simple_yaml(Path(config_path or DEFAULT_CONFIG_PATH))
 
 
+def validation_profile(config: dict[str, object] | None = None) -> str:
+    source = config if config is not None else ACTIVE_CONFIG
+    return nested_get(source, ["validation_profile"], "default")
+
+
+def is_bounty_profile(config: dict[str, object] | None = None) -> bool:
+    return validation_profile(config) == "code4rena-bounty"
+
+
 def resolve_run_args(args: argparse.Namespace) -> dict[str, object]:
     global ACTIVE_CONFIG
     config = load_config(getattr(args, "config", None))
@@ -491,7 +501,11 @@ def worker_payload(config: dict[str, object], worker: str, default_model: str, d
             "--dangerously-bypass-approvals-and-sandbox - < <worker_prompt_path>"
         ),
         "requires_minimal_codex_worker": True,
-        "worker_launch_note": "Launch this unit with worker_launcher so plugins and MCP servers stay disabled.",
+        "worker_launch_note": (
+            "Launch this unit with worker_launcher. Minimal workers keep plugins and MCP servers "
+            "disabled for memory safety, but still have normal local file access and native Codex "
+            "web search for source-URL verification."
+        ),
     }
 
 
@@ -558,7 +572,10 @@ def benchmark_scope_docs(source_root: Path) -> list[Path]:
         paths = [source_root / "README.md"]
         paths.extend(sorted(source_root.glob("*-scope.md")))
         paths.extend(sorted(source_root.glob("*-docs.md")))
-        paths.extend([source_root / "v12-findings.md", V12_CHECKLIST_PATH])
+        if is_bounty_profile():
+            paths.append(BOUNTY_CRITERIA_PATH)
+        else:
+            paths.extend([source_root / "v12-findings.md", V12_CHECKLIST_PATH])
 
     deduped: list[Path] = []
     seen: set[str] = set()
@@ -631,6 +648,10 @@ def render_stage_prompt(template_name: str, replacements: dict[str, object]) -> 
     return text
 
 
+def profile_prompt(default_template: str, bounty_template: str, config: dict[str, object]) -> str:
+    return bounty_template if is_bounty_profile(config) else default_template
+
+
 def clean(value: str) -> str:
     value = " ".join(value.split())
     if not value:
@@ -648,7 +669,7 @@ def parse_truth_key(key_path: Path) -> dict[str, dict[str, str]]:
         if len(parts) < 5 or parts[0] in {"Finding", "---"}:
             continue
         fid = parts[0]
-        if not re.fullmatch(r"[HML]-\d+", fid):
+        if not re.fullmatch(r"[CHML]-\d+", fid):
             continue
         rows[fid] = {
             "finding_id": fid,
@@ -941,7 +962,7 @@ def parse_screen(path: Path) -> dict[str, dict[str, str]]:
             continue
         finding_cell = parts[0]
         fid = finding_cell.split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[HML]-\d+", fid):
+        if not re.fullmatch(r"[CHML]-\d+", fid):
             continue
         title = parts[1]
         decision = parts[2]
@@ -976,7 +997,7 @@ def parse_dedup_screen(path: Path) -> dict[str, dict[str, str]]:
         if parts[0] == "---" or len(parts) < 7:
             continue
         fid = parts[0].split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[HML]-\d+", fid):
+        if not re.fullmatch(r"[CHML]-\d+", fid):
             continue
         if header and len(parts) >= len(header):
             mapped = dict(zip(header, parts, strict=False))
@@ -1022,7 +1043,7 @@ def parse_v12_sweep_screen(path: Path) -> dict[str, dict[str, str]]:
         if parts[0] == "---" or len(parts) < 7:
             continue
         fid = parts[0].split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[HML]-\d+", fid):
+        if not re.fullmatch(r"[CHML]-\d+", fid):
             continue
         if header and len(parts) >= len(header):
             mapped = dict(zip(header, parts, strict=False))
@@ -1066,7 +1087,7 @@ def parse_poc_rows(path: Path) -> dict[str, dict[str, str]]:
         if parts[0] == "---" or len(parts) < 7:
             continue
         fid = parts[0].split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[HML]-\d+", fid):
+        if not re.fullmatch(r"[CHML]-\d+", fid):
             continue
         if header and len(parts) >= len(header):
             mapped = dict(zip(header, parts, strict=False))
@@ -1151,6 +1172,7 @@ def dedup_candidates(prompt_version: str, benchmark: str, run_id: str) -> list[t
 
     findings_by_id = {finding.fid: finding for finding in all_findings(benchmark)}
     blocks = raw_finding_blocks(run_path)
+    reportable_severities = {"Critical", "High"} if is_bounty_profile() else {"High", "Medium"}
     candidates: list[tuple[Finding, str]] = []
     for finding in all_findings(benchmark):
         block = blocks.get(finding.fid)
@@ -1158,7 +1180,7 @@ def dedup_candidates(prompt_version: str, benchmark: str, run_id: str) -> list[t
             continue
         if block_field(block, "Decision") != "Valid":
             continue
-        if block_field(block, "Severity Assessment") not in {"High", "Medium"}:
+        if block_field(block, "Severity Assessment") not in reportable_severities:
             continue
         candidates.append((findings_by_id[finding.fid], block))
     return candidates
@@ -1297,7 +1319,7 @@ def submission_candidate_blocks(prompt_version: str, benchmark: str, run_id: str
 
 
 def validate_finding_id(finding_id: str, blocks: dict[str, str]) -> str:
-    if not re.fullmatch(r"[HML]-\d+", finding_id):
+    if not re.fullmatch(r"[CHML]-\d+", finding_id):
         raise SystemExit(f"Invalid finding id: {finding_id}")
     if finding_id not in blocks:
         raise SystemExit(f"Finding {finding_id} is not present in the submission candidates file.")
@@ -1566,7 +1588,7 @@ def render_scope_prompt(prompt_version: str, benchmark: str, run_id: str, config
         all_findings(benchmark),
     )
     return render_stage_prompt(
-        "r1.md",
+        profile_prompt("r1.md", "r1-bounty.md", config),
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r1", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
@@ -1583,7 +1605,7 @@ def render_token_prompt(prompt_version: str, benchmark: str, run_id: str, config
         kept_after_scope(prompt_version, benchmark, run_id),
     )
     return render_stage_prompt(
-        "r2.md",
+        profile_prompt("r2.md", "r2-bounty.md", config),
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r2", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
@@ -1600,7 +1622,7 @@ def render_stage3_prompt(prompt_version: str, benchmark: str, run_id: str, confi
         kept_after_token(prompt_version, benchmark, run_id),
     )
     return render_stage_prompt(
-        "r3.md",
+        profile_prompt("r3.md", "r3-bounty.md", config),
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r3", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
@@ -1739,7 +1761,7 @@ def render_finding_report_prompt(
         blocks[finding_id],
     )
     return render_stage_prompt(
-        "r7.md",
+        profile_prompt("r7.md", "r7-bounty.md", config),
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r7", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
@@ -1769,7 +1791,7 @@ def render_finding_report_review_prompt(
         blocks[finding_id],
     )
     return render_stage_prompt(
-        "r8.md",
+        profile_prompt("r8.md", "r8-bounty.md", config),
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r8", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
@@ -1792,6 +1814,11 @@ def auto_scope_code_evidence(source_root: Path) -> str:
 
 def auto_token_code_evidence(source_root: Path) -> str:
     docs = ", ".join(f"`{path}`" for path in benchmark_scope_docs(source_root))
+    if is_bounty_profile():
+        return (
+            "Excluded during the stage 2 bounty exploitability screen using "
+            f"{docs}, and the stage 1 scope screen."
+        )
     return (
         "Excluded during the stage 2 unsupported-token screen using "
         f"{docs}, and the stage 1 scope screen."
@@ -1878,13 +1905,13 @@ def assemble_run(prompt_version: str, benchmark: str, run_id: str) -> dict[str, 
             f"Benchmark source root: `{source_root}`",
             f"Validation prompt: `{validation_prompt_path(prompt_version)}`",
             f"Stage 1 scope screen: `{scope_screen_path(prompt_version, benchmark, run_id)}`",
-            f"Stage 2 token screen: `{token_screen_path(prompt_version, benchmark, run_id)}`",
+            f"Stage 2 {'bounty exploitability' if is_bounty_profile() else 'token'} screen: `{token_screen_path(prompt_version, benchmark, run_id)}`",
             f"Stage 3 final validation run: `{stage3_run_path(prompt_version, benchmark, run_id)}`",
             "",
             "## Assembly Summary",
             "",
             f"- Excluded at stage 1 (scope / known issue): `{scope_excluded}`",
-            f"- Excluded at stage 2 (unsupported token): `{token_excluded}`",
+            f"- Excluded at stage 2 ({'bounty exploitability' if is_bounty_profile() else 'unsupported token'}): `{token_excluded}`",
             f"- Fully validated at stage 3: `{stage3_kept}`",
             "",
             "## Per-Finding Validation",
@@ -2234,9 +2261,13 @@ def cmd_prepare_scope(args: argparse.Namespace) -> None:
         "prompt_version": args.prompt_version,
         "run_id": args.run_id,
         "stage_path": str(path),
-        "worker_type": "three-shot-r1-scope",
+        "worker_type": "three-shot-r1-bounty-scope"
+        if is_bounty_profile(config)
+        else "three-shot-r1-scope",
         **worker_payload(config, "r1", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r1.md"),
+        "worker_prompt_source": str(
+            THREE_SHOT_PROMPT_ROOT / profile_prompt("r1.md", "r1-bounty.md", config)
+        ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2250,7 +2281,9 @@ def cmd_prepare_token(args: argparse.Namespace) -> None:
     input_findings = kept_after_scope(args.prompt_version, args.benchmark, args.run_id)
     path = init_screen(
         token_screen_path(args.prompt_version, args.benchmark, args.run_id),
-        "Three-Shot Stage 2 Unsupported-Token Screen",
+        "Three-Shot Stage 2 Bounty Exploitability Screen"
+        if is_bounty_profile(config)
+        else "Three-Shot Stage 2 Unsupported-Token Screen",
         args.benchmark,
         args.prompt_version,
     )
@@ -2261,9 +2294,13 @@ def cmd_prepare_token(args: argparse.Namespace) -> None:
         "run_id": args.run_id,
         "stage_path": str(path),
         "input_findings": len(input_findings),
-        "worker_type": "three-shot-r2-token",
+        "worker_type": "three-shot-r2-bounty-exploitability"
+        if is_bounty_profile(config)
+        else "three-shot-r2-token",
         **worker_payload(config, "r2", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r2.md"),
+        "worker_prompt_source": str(
+            THREE_SHOT_PROMPT_ROOT / profile_prompt("r2.md", "r2-bounty.md", config)
+        ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2283,9 +2320,13 @@ def cmd_prepare_final(args: argparse.Namespace) -> None:
         "run_id": args.run_id,
         "stage_path": str(path),
         "input_findings": len(input_findings),
-        "worker_type": "three-shot-r3-final-validation",
+        "worker_type": "three-shot-r3-bounty-critical-high-validation"
+        if is_bounty_profile(config)
+        else "three-shot-r3-final-validation",
         **worker_payload(config, "r3", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r3.md"),
+        "worker_prompt_source": str(
+            THREE_SHOT_PROMPT_ROOT / profile_prompt("r3.md", "r3-bounty.md", config)
+        ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2318,6 +2359,16 @@ def cmd_prepare_dedup(args: argparse.Namespace) -> None:
 
 def cmd_prepare_v12_sweep(args: argparse.Namespace) -> None:
     config = resolve_run_args(args)
+    if is_bounty_profile(config):
+        payload = {
+            "benchmark": args.benchmark,
+            "prompt_version": args.prompt_version,
+            "run_id": args.run_id,
+            "worker_type": "none",
+            "reason": "R4a V12 sweep is disabled for code4rena-bounty validation_profile.",
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
     blocks = submission_candidate_blocks(args.prompt_version, args.benchmark, args.run_id)
     path = init_v12_sweep_screen(args.prompt_version, args.benchmark, args.run_id, reset=args.reset)
     prompt_text = render_v12_sweep_prompt(args.prompt_version, args.benchmark, args.run_id, config)
@@ -2545,9 +2596,13 @@ def cmd_prepare_report(args: argparse.Namespace) -> None:
         "total_reportable_findings": len(reportable),
         "completed_findings": completed,
         "remaining_findings": len(reportable) - completed,
-        "worker_type": "three-shot-r7-c4-report-finding",
+        "worker_type": "three-shot-r7-c4-bounty-report-finding"
+        if is_bounty_profile(config)
+        else "three-shot-r7-c4-report-finding",
         **worker_payload(config, "r7", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r7.md"),
+        "worker_prompt_source": str(
+            THREE_SHOT_PROMPT_ROOT / profile_prompt("r7.md", "r7-bounty.md", config)
+        ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2648,9 +2703,13 @@ def cmd_prepare_report_review(args: argparse.Namespace) -> None:
         "total_reportable_findings": len(reviewable),
         "completed_findings": completed,
         "remaining_findings": len(reviewable) - completed,
-        "worker_type": "three-shot-r8-c4-report-review-finding",
+        "worker_type": "three-shot-r8-c4-bounty-report-review-finding"
+        if is_bounty_profile(config)
+        else "three-shot-r8-c4-report-review-finding",
         **worker_payload(config, "r8", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r8.md"),
+        "worker_prompt_source": str(
+            THREE_SHOT_PROMPT_ROOT / profile_prompt("r8.md", "r8-bounty.md", config)
+        ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2809,7 +2868,16 @@ def cmd_apply_dedup(args: argparse.Namespace) -> None:
 
 
 def cmd_apply_v12_sweep(args: argparse.Namespace) -> None:
-    resolve_run_args(args)
+    config = resolve_run_args(args)
+    if is_bounty_profile(config):
+        print(json.dumps({
+            "benchmark": args.benchmark,
+            "prompt_version": args.prompt_version,
+            "run_id": args.run_id,
+            "skipped": True,
+            "reason": "R4a V12 sweep is disabled for code4rena-bounty validation_profile.",
+        }, indent=2, sort_keys=True))
+        return
     print(json.dumps(apply_v12_sweep(args.prompt_version, args.benchmark, args.run_id), indent=2, sort_keys=True))
 
 

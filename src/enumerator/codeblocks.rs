@@ -1,7 +1,7 @@
 use crate::build_brain::graph_db::SmartContractFunction;
 use crate::build_brain::inheritance_map::{self, resolve_contract_file};
 use crate::build_brain::summarize_db::get_file_summary_from_db;
-use crate::config::{app_db_path, CODEBLOCK_DB};
+use crate::config::{CODEBLOCK_DB, app_db_path};
 use crate::cost::cost_data::get_token_count;
 /// Intelligent code slicing for focused AI analysis.
 ///
@@ -12,12 +12,11 @@ use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cac
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::extract_ir::robust_extract_fn_metadata_from_func_id;
 use crate::enumerator::parse_solidity::{
-    detect_scripts_connected_to_contract, detect_source_code_dependencies,
+    ImportDependencies, detect_scripts_connected_to_contract, detect_source_code_dependencies,
     is_standard_interface_name, is_standard_library_contract_name, should_exclude_this_library,
-    ImportDependencies,
 };
 use crate::enumerator::utils::{
-    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir, SolFileType,
+    SolFileType, get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
 };
 use crate::llm_review::contract::contract_category::ContractCategory;
 use crate::llm_review::contract::contract_file_map::{

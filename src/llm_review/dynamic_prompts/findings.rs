@@ -3,7 +3,8 @@ use crate::{
     llm_review::{
         dynamic_prompts::findings_template::get_pre_json_requirement_for_multipattern,
         prompt_support::severity_rubics::{
-            CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+            CANTINA_SEVERITY_RUBRIC, CODE4RENA_BOUNTY_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC,
+            SHERLOCK_SEVERITY_RUBRIC,
         },
         threat_models::{
             pattern_category,
@@ -18,6 +19,7 @@ use rand::seq::SliceRandom;
 
 fn severity_rubric_for_repo(repo: &RepoPaths) -> &'static str {
     match repo.audit_type {
+        AuditType::Code4renaBounty => CODE4RENA_BOUNTY_SEVERITY_RUBRIC,
         AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
         AuditType::Cantina => CANTINA_SEVERITY_RUBRIC,
         _ => CODE4RENA_SEVERITY_RUBRIC,

@@ -6,7 +6,7 @@
 use ai_agent_audit::{
     build_brain::inheritance_map::{get_parents_with_file, insert_inheritance_edge},
     config::AuditType,
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
 };
 use tempfile::TempDir;
 use tokio::fs;
@@ -70,11 +70,6 @@ contract Token is IToken {
         lib_config_files: vec![],
         source_code_folders: vec![contracts_dir.clone()],
         docs: vec![],
-        poc: PocConfig {
-            instructions: String::new(),
-            template: String::new(),
-            test_folder: temp_path.join("test"),
-        },
         repo_name: "test".to_string(),
         audit_scope: None,
         audit_type: AuditType::Client,
@@ -184,11 +179,6 @@ contract Jackpot is IJackpot {
         lib_config_files: vec![],
         source_code_folders: vec![contracts_dir.clone()],
         docs: vec![],
-        poc: PocConfig {
-            instructions: String::new(),
-            template: String::new(),
-            test_folder: temp_path.join("test"),
-        },
         repo_name: "jackpot".to_string(),
         audit_scope: None,
         audit_type: AuditType::Client,

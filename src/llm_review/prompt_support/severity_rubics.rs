@@ -89,6 +89,61 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 
 "#;
 
+pub const CODE4RENA_BOUNTY_SEVERITY_RUBRIC: &str = r#"
+
+------------ ## Code4rena Bug Bounty Severity Classifications ------------
+*NOTE*: Code4rena bug bounties accept only Critical and High risk issues unless the bounty repo explicitly says otherwise. The submit/no-submit bar is intentionally stricter than a contest H/M pass because each invalid bounty submission loses its deposit.
+
+### Threat Model
+
+Only report issues that are currently exploitable in the live/current in-scope code by an attacker who does not have privileged access, leaked keys, compromised credentials, or control of trusted operational roles.
+
+Reject or downgrade anything that depends on:
+- malicious or mistaken governance, admin, strategist, operator, maintainer, deployer, backend, or other privileged roles
+- leaked keys, compromised credentials, phishing, social manipulation, or UI deception
+- attacks on external services or external systems unless the in-scope code itself directly creates the exploitability
+- incorrect data supplied by third-party oracles, unless the attacker directly causes the bad data through an in-scope code bug
+- basic economic/governance attacks such as 51% attacks, Sybil attacks, lack of liquidity, or centralization risk
+- test files, configuration files, deployment mistakes, or code outside bounty scope unless explicitly included
+- best-practice recommendations, feature requests, automated tool output without a proven exploit, or speculative future integrations
+
+### Critical Severity
+
+A Critical severity bounty finding must be high impact with high likelihood and cause one of:
+- manipulation of governance voting results that deviates from the voted outcome and directly changes the intended effect
+- direct theft of user funds at rest or in motion, except unclaimed yield
+- direct theft of user NFTs at rest or in motion, except unclaimed royalties
+- permanent freezing of funds
+- permanent freezing of NFTs
+- unauthorized minting of NFTs
+- predictable or manipulable RNG causing abuse of principal or NFTs
+- unintended alteration of what an NFT represents, such as token URI, payload, or artistic content
+- protocol insolvency
+
+### High Severity
+
+A High severity bounty finding is high impact with any likelihood and must cause one of:
+- theft of unclaimed yield
+- theft of unclaimed royalties
+- permanent freezing of unclaimed yield
+- permanent freezing of unclaimed royalties
+- temporary freezing of funds
+- temporary freezing of NFTs
+
+### Submission Bar
+
+Accept only findings that meet all of the following:
+- bug exists in current in-scope code
+- exploit path is concrete and reproducible
+- attacker is unprivileged
+- impact maps directly to one Critical or High bounty criterion
+- finding is not excluded by the bounty README, known issues, previous audits, closed bounty reports, or Code4rena bounty criteria
+- runnable coded PoC can demonstrate the issue
+
+If the issue is real but does not meet Critical or High bounty criteria, mark it Low/Info/Internal only and do not prepare it for bounty submission.
+
+"#;
+
 pub const PRIVATE_CLIENT_SEVERITY_RUBRIC: &str = r#"
 
 # PRIVATE_CLIENT – Severity Classifications

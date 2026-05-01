@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 use ai_agent_audit::config::AuditType;
-use ai_agent_audit::prepare_code::git_clone::{PocConfig, RepoPaths};
+use ai_agent_audit::prepare_code::git_clone::RepoPaths;
 use ai_agent_audit::utils::remapping::{
     get_all_remappings, parse_and_store_remappings, resolve_import_path,
 };
@@ -29,11 +29,6 @@ fn create_test_repo(project_id: &str, root: PathBuf) -> RepoPaths {
         monorepo_folders: None,
         commit_hash: "0000000000000000000000000000000000000000".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig {
-            test_folder: PathBuf::from("test"),
-            template: String::new(),
-            instructions: String::new(),
-        },
     }
 }
 

@@ -1,5 +1,4 @@
 use crate::{
-    config::CREATE_TESTS,
     llm_review::{
         findings::findings::{Finding, Findings},
         threat_models::patterns::Pattern,
@@ -156,13 +155,6 @@ pub fn get_finding_summary_report(finding: &Finding, index: usize) -> String {
     ));
     findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege));
 
-    if CREATE_TESTS {
-        findings_summary.push_str(&format!(
-            "Poc Test Status: {}\n\n",
-            finding.poc_test_status.unwrap_or_default()
-        ));
-    }
-
     findings_summary
 }
 
@@ -220,10 +212,6 @@ pub fn get_finding_report(
             "### Finding Complexity: {}\n",
             finding.finding_complexity.unwrap_or_default()
         ));
-        findings_report.push_str(&format!(
-            "### PoC Test Status: {}\n",
-            finding.poc_test_status.unwrap_or_default()
-        ));
     }
 
     //privilege
@@ -243,12 +231,6 @@ pub fn get_finding_report(
     findings_report.push_str(&finding.impact.clone().unwrap_or_default());
     findings_report.push_str("\n\n");
 
-    // for final report include status, confidence, and complexity
-    if report_type == FindingReportType::Enhanced {
-        findings_report.push_str("## Command to Run Test\n");
-        findings_report.push_str(&finding.poc_test_command.clone().unwrap_or_default());
-        findings_report.push_str("\n\n");
-    }
     //POC
     findings_report.push_str("## Proof of Concept\n");
     findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
