@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use log::{debug, info, warn};
 use regex::Regex;
 use schemars::JsonSchema;
@@ -27,6 +27,8 @@ const HTTP_TIMEOUT_SECS: u64 = 20;
 const MAX_REMOTE_LINK_FETCHES: usize = 12;
 const MAX_REMOTE_PRIOR_AUDIT_FETCHES: usize = 2;
 const ENTRY_CONTEXT_REASON: &str = "Configured context file";
+const CODE4RENA_BOUNTY_GUIDE_URL: &str = "https://docs.code4rena.com/bounties";
+const CODE4RENA_BOUNTY_CRITERIA_URL: &str = "https://docs.code4rena.com/bounties/bounty-criteria";
 
 #[derive(Debug, Clone)]
 pub struct GeneratedAuditContext {
@@ -72,6 +74,8 @@ pub enum ContextSourceKind {
     WebMarkdown,
     WebHtml,
     V12Report,
+    Code4renaBountyGuide,
+    Code4renaBountyCriteria,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +103,7 @@ pub enum LinkClassification {
     KnownIssues,
     PriorAudit,
     V12,
+    BountyRules,
     SourceCode,
     Social,
     Marketing,
@@ -131,6 +136,7 @@ pub struct ScopeFileEntry {
 pub enum ScopeFileSource {
     CopiedScopeTxt,
     ExtractedFromReadme,
+    ExtractedFromBountyScope,
     FallbackCodeFolders,
 }
 
@@ -334,7 +340,7 @@ fn build_context_agent() -> Result<AIAgent> {
             .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
             .with_preamble(
                 "You generate concise, security-review-ready audit context for Solidity protocol audits. \
-                 Preserve scope, known issues, V12/prior findings, invariants, trusted roles, and protocol mechanics. \
+                 Preserve scope, known issues, V12/prior findings, Code4rena bounty criteria, invariants, trusted roles, and protocol mechanics. \
                  Do not invent facts. If source material is uncertain, say so briefly.",
             ),
     )
@@ -351,8 +357,8 @@ async fn collect_context_sources(
     let mut sources = Vec::new();
     let mut link_decisions = Vec::new();
     let mut seen_locations = HashSet::new();
-    let code4rena_audit = matches!(audit_type, AuditType::Code4rena);
-    let explicit_v12_url = matches!(config.v12_url, V12Source::Url(_));
+    let code4rena_competition = matches!(audit_type, AuditType::Code4rena);
+    let code4rena_bounty = matches!(audit_type, AuditType::Code4renaBounty);
 
     let configured_files = context_files(config);
     debug!(
@@ -450,13 +456,25 @@ async fn collect_context_sources(
             label: url.clone(),
         });
     }
+    if code4rena_bounty {
+        links.push(ExtractedLink {
+            from: "code4rena-bounty-defaults".to_string(),
+            url: CODE4RENA_BOUNTY_GUIDE_URL.to_string(),
+            label: "Code4rena bounty guide".to_string(),
+        });
+        links.push(ExtractedLink {
+            from: "code4rena-bounty-defaults".to_string(),
+            url: CODE4RENA_BOUNTY_CRITERIA_URL.to_string(),
+            label: "Code4rena bounty severity and out-of-scope criteria".to_string(),
+        });
+    }
     let source_v12_link_count = links
         .iter()
         .filter(|link| classify_link(&link.url, &link.label) == LinkClassification::V12)
         .count();
-    let v12_links = if !code4rena_audit && matches!(config.v12_url, V12Source::Auto) {
+    let v12_links = if !code4rena_competition {
         debug!(
-            "Codex context discovery: skipping V12 auto lookup because audit_type={:?}; V12 context is Code4rena-only",
+            "Codex context discovery: skipping V12 lookup because audit_type={:?}; V12 context is Code4rena competition-only",
             audit_type
         );
         Vec::new()
@@ -495,9 +513,9 @@ async fn collect_context_sources(
             "Codex context discovery: checking link from={}, classification={:?}, url={}",
             link.from, classification, link.url
         );
-        if classification == LinkClassification::V12 && !code4rena_audit && !explicit_v12_url {
+        if classification == LinkClassification::V12 && !code4rena_competition {
             let reason = format!(
-                "Skipped V12 link because audit_type={audit_type:?}; V12 is Code4rena-only"
+                "Skipped V12 link because audit_type={audit_type:?}; V12 is Code4rena competition-only"
             );
             *skipped_by_reason.entry(reason.clone()).or_default() += 1;
             link_decisions.push(LinkDecision {
@@ -522,7 +540,8 @@ async fn collect_context_sources(
         }
 
         let remote_link = is_remote_link(&link.url);
-        if remote_link {
+        let counts_against_remote_budget = remote_link_counts_against_fetch_budget(&classification);
+        if remote_link && counts_against_remote_budget {
             if remote_fetch_count >= MAX_REMOTE_LINK_FETCHES {
                 let reason = format!(
                     "Skipped remote link after reaching fetch budget of {MAX_REMOTE_LINK_FETCHES}"
@@ -560,7 +579,7 @@ async fn collect_context_sources(
             "Codex context discovery: following second-level link classification={:?}, url={}",
             classification, link.url
         );
-        if remote_link {
+        if remote_link && counts_against_remote_budget {
             remote_fetch_count += 1;
             if classification == LinkClassification::PriorAudit {
                 prior_audit_remote_fetch_count += 1;
@@ -820,6 +839,9 @@ fn dedupe_links(links: Vec<ExtractedLink>) -> Vec<ExtractedLink> {
 
 fn classify_link(url: &str, label: &str) -> LinkClassification {
     let text = format!("{} {}", url, label).to_ascii_lowercase();
+    if is_code4rena_bounty_required_doc(&text) {
+        return LinkClassification::BountyRules;
+    }
     if is_v12_report_url(&text) {
         return LinkClassification::V12;
     }
@@ -863,6 +885,18 @@ fn is_v12_report_url(text: &str) -> bool {
         || (text.contains("v12") && text.contains("findings") && text.contains(".md"))
 }
 
+fn is_code4rena_bounty_required_doc(text: &str) -> bool {
+    let clean = text
+        .split_whitespace()
+        .next()
+        .unwrap_or(text)
+        .trim_end_matches('/');
+    clean == CODE4RENA_BOUNTY_GUIDE_URL
+        || clean == CODE4RENA_BOUNTY_CRITERIA_URL
+        || clean == "https://docs.code4rena.com/bounties/"
+        || clean == "https://docs.code4rena.com/bounties/bounty-criteria/"
+}
+
 fn is_generic_vendor_homepage(text: &str) -> bool {
     let primary_url = text
         .split_whitespace()
@@ -876,6 +910,10 @@ fn is_generic_vendor_homepage(text: &str) -> bool {
 }
 
 fn link_skip_reason(url: &str, classification: &LinkClassification) -> Option<&'static str> {
+    if *classification == LinkClassification::BountyRules {
+        return None;
+    }
+
     if is_generic_code4rena_docs(url) {
         return Some(
             "Skipped generic Code4rena documentation link; not protocol-specific scope/docs",
@@ -925,6 +963,10 @@ fn link_skip_reason(url: &str, classification: &LinkClassification) -> Option<&'
 
 fn is_remote_link(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
+}
+
+fn remote_link_counts_against_fetch_budget(classification: &LinkClassification) -> bool {
+    *classification != LinkClassification::BountyRules
 }
 
 fn is_generic_code4rena_docs(url: &str) -> bool {
@@ -1040,7 +1082,8 @@ async fn resolve_or_fetch_link(
                 LinkClassification::Scope
                 | LinkClassification::KnownIssues
                 | LinkClassification::PriorAudit
-                | LinkClassification::V12 => SourceDecision::UsedForScope,
+                | LinkClassification::V12
+                | LinkClassification::BountyRules => SourceDecision::UsedForScope,
                 _ => SourceDecision::UsedForBoth,
             };
             let kind = if local_path.file_name().and_then(|n| n.to_str()) == Some("scope.txt") {
@@ -1108,6 +1151,14 @@ async fn resolve_or_fetch_link(
     let content = if is_html { html_to_text(&text) } else { text };
     let kind = match classification {
         LinkClassification::V12 => ContextSourceKind::V12Report,
+        LinkClassification::BountyRules
+            if fetch_url
+                .trim_end_matches('/')
+                .eq_ignore_ascii_case(CODE4RENA_BOUNTY_CRITERIA_URL) =>
+        {
+            ContextSourceKind::Code4renaBountyCriteria
+        }
+        LinkClassification::BountyRules => ContextSourceKind::Code4renaBountyGuide,
         _ if fetch_url.contains("raw.githubusercontent.com") => ContextSourceKind::GithubRaw,
         _ if is_html => ContextSourceKind::WebHtml,
         _ => ContextSourceKind::WebMarkdown,
@@ -1117,7 +1168,8 @@ async fn resolve_or_fetch_link(
         LinkClassification::Scope
         | LinkClassification::KnownIssues
         | LinkClassification::PriorAudit
-        | LinkClassification::V12 => SourceDecision::UsedForScope,
+        | LinkClassification::V12
+        | LinkClassification::BountyRules => SourceDecision::UsedForScope,
         _ => SourceDecision::UsedForBoth,
     };
     let location = fetch_url;
@@ -1272,6 +1324,24 @@ async fn generate_scope_txt(
     let mut extracted = deterministic_scope_extract(sources, protocol_root);
     let mut source = ScopeFileSource::ExtractedFromReadme;
     let mut warnings = Vec::new();
+    let bounty_scope_names = if matches!(cli.audit_type, AuditType::Code4renaBounty) {
+        let bounty_scope =
+            deterministic_bounty_contract_name_scope_extract(sources, protocol_root, cli);
+        if !bounty_scope.entries.is_empty() {
+            source = ScopeFileSource::ExtractedFromBountyScope;
+            extracted.extend(bounty_scope.entries.clone());
+        }
+        if !bounty_scope.unmapped_names.is_empty() {
+            warnings.push(format!(
+                "Could not map {} bounty scope contract names to local Solidity definitions: {}",
+                bounty_scope.unmapped_names.len(),
+                bounty_scope.unmapped_names.join(", ")
+            ));
+        }
+        bounty_scope.discovered_names
+    } else {
+        Vec::new()
+    };
     info!(
         "Deterministic entry-context scope extraction found {} candidate Solidity files",
         extracted.len()
@@ -1280,6 +1350,15 @@ async fn generate_scope_txt(
     extracted.sort_by(|a, b| a.path.cmp(&b.path));
     extracted.dedup_by(|a, b| a.path == b.path);
     let existing_count = extracted.iter().filter(|entry| entry.exists).count();
+    if matches!(cli.audit_type, AuditType::Code4renaBounty)
+        && !bounty_scope_names.is_empty()
+        && existing_count == 0
+    {
+        anyhow::bail!(
+            "Found Code4rena bounty scope contract names in context but none mapped to local Solidity files: {}. Provide context.files/context.urls that identify the source repo, adjust code_folders/subfolder, or provide scoped_files explicitly.",
+            bounty_scope_names.join(", ")
+        );
+    }
     if extracted.is_empty() || existing_count == 0 {
         let fallback = fallback_scope_from_code_folders(cli, protocol_root);
         if fallback.is_empty() {
@@ -1346,6 +1425,7 @@ fn deterministic_scope_extract(
                 | ContextSourceKind::GithubMarkdown
                 | ContextSourceKind::GithubRaw
                 | ContextSourceKind::WebMarkdown
+                | ContextSourceKind::WebHtml
         ) {
             continue;
         }
@@ -1380,6 +1460,262 @@ fn deterministic_scope_extract(
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     entries.dedup_by(|a, b| a.path == b.path);
     entries
+}
+
+#[derive(Debug, Default)]
+struct BountyContractNameScope {
+    entries: Vec<ScopeFileEntry>,
+    discovered_names: Vec<String>,
+    unmapped_names: Vec<String>,
+}
+
+fn deterministic_bounty_contract_name_scope_extract(
+    sources: &[SourceContent],
+    protocol_root: &Path,
+    cli: &Cli,
+) -> BountyContractNameScope {
+    let mut discovered_names = bounty_contract_names_from_scope_sections(sources);
+    discovered_names.sort();
+    discovered_names.dedup();
+
+    if discovered_names.is_empty() {
+        return BountyContractNameScope::default();
+    }
+
+    let excluded_folders = bounty_declared_oos_folders(sources, cli);
+    let definition_index = solidity_definition_index(protocol_root, &excluded_folders);
+    let mut entries = Vec::new();
+    let mut unmapped_names = Vec::new();
+
+    for name in &discovered_names {
+        match definition_index.get(name).and_then(|paths| paths.first()) {
+            Some(path) => entries.push(ScopeFileEntry {
+                path: path.clone(),
+                exists: true,
+                reason: Some("Mapped from Code4rena bounty scope contract name".to_string()),
+            }),
+            None => unmapped_names.push(name.clone()),
+        }
+    }
+
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    entries.dedup_by(|a, b| a.path == b.path);
+
+    BountyContractNameScope {
+        entries,
+        discovered_names,
+        unmapped_names,
+    }
+}
+
+fn bounty_contract_names_from_scope_sections(sources: &[SourceContent]) -> Vec<String> {
+    let mut names = Vec::new();
+    for source in sources {
+        if !matches!(
+            source.kind,
+            ContextSourceKind::LocalReadme
+                | ContextSourceKind::LocalMarkdown
+                | ContextSourceKind::GithubMarkdown
+                | ContextSourceKind::GithubRaw
+                | ContextSourceKind::WebMarkdown
+                | ContextSourceKind::WebHtml
+        ) {
+            continue;
+        }
+        for section in likely_scope_sections(&source.content) {
+            for line in section.lines() {
+                if let Some(name) = bounty_contract_name_from_scope_line(line) {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names
+}
+
+fn bounty_contract_name_from_scope_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("---")
+        || trimmed.contains("Severity level")
+        || trimmed.contains("Likelihood:")
+    {
+        return None;
+    }
+
+    let candidate = if trimmed.contains('|') {
+        trimmed
+            .trim_matches('|')
+            .split('|')
+            .map(str::trim)
+            .find(|cell| {
+                !cell.is_empty()
+                    && !cell.contains("---")
+                    && !cell.eq_ignore_ascii_case("name")
+                    && !cell.to_ascii_lowercase().contains("address link")
+                    && !cell.eq_ignore_ascii_case("repo")
+            })?
+            .to_string()
+    } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        trimmed[2..].trim().to_string()
+    } else if trimmed.contains("github.com") || trimmed.contains("etherscan.io") {
+        trimmed.to_string()
+    } else {
+        return None;
+    };
+
+    clean_contract_name_candidate(&candidate)
+}
+
+fn clean_contract_name_candidate(candidate: &str) -> Option<String> {
+    let markdown_link = Regex::new(r#"\[([^\]]+)\]\([^)]+\)"#).unwrap();
+    let mut value = markdown_link
+        .captures(candidate)
+        .and_then(|captures| captures.get(1).map(|m| m.as_str().to_string()))
+        .unwrap_or_else(|| candidate.to_string());
+
+    value = value
+        .replace(['`', '*'], "")
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .to_string();
+
+    let contract_name_re = Regex::new(r#"^[A-Za-z_][A-Za-z0-9_]*$"#).unwrap();
+    if !contract_name_re.is_match(&value) {
+        return None;
+    }
+
+    let lower = value.to_ascii_lowercase();
+    let reserved = [
+        "source",
+        "name",
+        "repo",
+        "scope",
+        "severity",
+        "likelihood",
+        "impact",
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "risk",
+        "payout",
+        "contract",
+        "contracts",
+    ];
+    if reserved.contains(&lower.as_str()) {
+        return None;
+    }
+
+    Some(value)
+}
+
+fn solidity_definition_index(
+    protocol_root: &Path,
+    excluded_folders: &[String],
+) -> BTreeMap<String, Vec<String>> {
+    let definition_re = Regex::new(
+        r#"\b(?:abstract\s+)?(?:contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)\b"#,
+    )
+    .unwrap();
+    let mut index = BTreeMap::<String, Vec<String>>::new();
+
+    for entry in WalkDir::new(protocol_root)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("sol") {
+            continue;
+        }
+        let Ok(relative_path) = path.strip_prefix(protocol_root) else {
+            continue;
+        };
+        let relative = relative_path.to_string_lossy().replace('\\', "/");
+        if bounty_oos_excludes(&relative, excluded_folders) {
+            continue;
+        }
+
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        for captures in definition_re.captures_iter(&content) {
+            let Some(name) = captures.get(1).map(|m| m.as_str().to_string()) else {
+                continue;
+            };
+            index
+                .entry(name)
+                .or_default()
+                .push(format!("./{}", relative.trim_start_matches("./")));
+        }
+    }
+
+    for paths in index.values_mut() {
+        paths.sort_by_key(|path| (path.matches('/').count(), path.len(), path.clone()));
+    }
+
+    index
+}
+
+fn bounty_declared_oos_folders(sources: &[SourceContent], cli: &Cli) -> Vec<String> {
+    let mut folders = cli
+        .exclude_folders
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|folder| normalize_folder_for_exclusion(&folder))
+        .filter(|folder| !folder.is_empty())
+        .collect::<Vec<_>>();
+
+    let github_tree_re =
+        Regex::new(r#"github\.com/[^)\s]+/tree/[^/\s)]+/([A-Za-z0-9_./-]+)"#).unwrap();
+    let inline_code_re = Regex::new(r#"`([^`]+)`"#).unwrap();
+
+    for source in sources {
+        for section in likely_out_of_scope_sections(&source.content) {
+            for captures in github_tree_re.captures_iter(&section) {
+                if let Some(path) = captures.get(1) {
+                    folders.push(normalize_folder_for_exclusion(path.as_str()));
+                }
+            }
+            for captures in inline_code_re.captures_iter(&section) {
+                if let Some(path) = captures.get(1) {
+                    let normalized = normalize_folder_for_exclusion(path.as_str());
+                    if !normalized.ends_with(".sol") {
+                        folders.push(normalized);
+                    }
+                }
+            }
+        }
+    }
+
+    folders.retain(|folder| !folder.is_empty());
+    folders.sort();
+    folders.dedup();
+    folders
+}
+
+fn normalize_folder_for_exclusion(raw: &str) -> String {
+    raw.trim()
+        .trim_matches('`')
+        .trim_matches('/')
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn bounty_oos_excludes(relative: &str, excluded_folders: &[String]) -> bool {
+    let relative = relative.trim_start_matches("./");
+    excluded_folders.iter().any(|folder| {
+        let folder = folder.trim().trim_start_matches("./").trim_end_matches('/');
+        !folder.is_empty() && (relative == folder || relative.starts_with(&format!("{folder}/")))
+    })
 }
 
 fn fallback_scope_from_code_folders(cli: &Cli, protocol_root: &Path) -> Vec<ScopeFileEntry> {
@@ -1461,9 +1797,10 @@ fn likely_scope_sections(content: &str) -> Vec<String> {
                 sections.push(current.join("\n"));
                 current.clear();
             }
-            in_scope = lower.contains("scope")
-                || lower.contains("files in")
-                || lower.contains("contracts in");
+            in_scope = !is_out_of_scope_heading(&lower)
+                && (lower.contains("scope")
+                    || lower.contains("files in")
+                    || lower.contains("contracts in"));
         }
         if in_scope {
             current.push(line.to_string());
@@ -1475,6 +1812,40 @@ fn likely_scope_sections(content: &str) -> Vec<String> {
     sections
 }
 
+fn likely_out_of_scope_sections(content: &str) -> Vec<String> {
+    let mut sections = Vec::new();
+    let mut current = Vec::new();
+    let mut in_out_of_scope = false;
+
+    for line in content.lines() {
+        let heading = line.trim_start().starts_with('#');
+        if heading {
+            let lower = line.to_ascii_lowercase();
+            if in_out_of_scope && !current.is_empty() {
+                sections.push(current.join("\n"));
+                current.clear();
+            }
+            in_out_of_scope = is_out_of_scope_heading(&lower)
+                || lower.contains("known issues")
+                || lower.contains("previous audits")
+                || lower.contains("specific types of issues");
+        }
+        if in_out_of_scope {
+            current.push(line.to_string());
+        }
+    }
+    if in_out_of_scope && !current.is_empty() {
+        sections.push(current.join("\n"));
+    }
+    sections
+}
+
+fn is_out_of_scope_heading(lower_heading: &str) -> bool {
+    lower_heading.contains("out-of-scope")
+        || lower_heading.contains("out of scope")
+        || lower_heading.contains("out_of_scope")
+}
+
 fn normalize_scope_path(raw: &str, protocol_root: &Path, reason: Option<String>) -> ScopeFileEntry {
     let mut path = raw
         .trim()
@@ -1483,6 +1854,9 @@ fn normalize_scope_path(raw: &str, protocol_root: &Path, reason: Option<String>)
         .trim()
         .trim_start_matches('/')
         .to_string();
+    if let Some(github_path) = github_blob_path_from_scope_candidate(&path) {
+        path = github_path;
+    }
     if path.starts_with("blob/") || path.starts_with("tree/") {
         path = path.split('/').skip(2).collect::<Vec<_>>().join("/");
     }
@@ -1494,6 +1868,28 @@ fn normalize_scope_path(raw: &str, protocol_root: &Path, reason: Option<String>)
         path,
         exists,
         reason,
+    }
+}
+
+fn github_blob_path_from_scope_candidate(raw: &str) -> Option<String> {
+    let clean = raw
+        .split('#')
+        .next()
+        .unwrap_or(raw)
+        .split('?')
+        .next()
+        .unwrap_or(raw)
+        .trim_end_matches('/');
+    let marker = "/blob/";
+    let marker_index = clean.find(marker)?;
+    let after_blob = &clean[marker_index + marker.len()..];
+    let mut parts = after_blob.splitn(2, '/');
+    let _branch = parts.next()?;
+    let path = parts.next()?.trim_start_matches('/');
+    if path.ends_with(".sol") {
+        Some(path.to_string())
+    } else {
+        None
     }
 }
 
@@ -1529,6 +1925,7 @@ Hard requirements:
 - Be highly discriminating: include only material that changes audit scope, threat model, assumptions, exclusions, or reviewer priorities.
 - Include ALL relevant audit scope context from the source material, but summarize aggressively when the raw source is long.
 - Include public known issues, files in/out of scope, areas of concern, invariants, trusted roles, and V12/prior findings when present.
+- For Code4rena bounty sources, explicitly preserve the global bounty out-of-scope scenarios and Critical/High eligibility criteria from the bounty criteria page.
 - For V12/prior findings, do not copy full reports. Summarize finding titles, affected areas, and audit implications.
 - Prefer exact file/path tables for scope. Prefer concise summaries for prose-heavy docs and historical reports.
 - If a source is generic, duplicated, marketing-oriented, or low-signal, omit it and record that in `omitted_items`.
@@ -1639,7 +2036,7 @@ async fn enforce_markdown_token_limit(
             r#"
 Summarize and compress this {doc_kind} markdown to <= {effective_limit} tokens.
 
-Preserve required sections, scope, known issues, summarized V12/prior findings, invariants, trusted roles, and security-relevant protocol mechanics. Remove repetition, copied report prose, duplicated source material, generic docs, and low-value background first. Prefer concise tables and bullets.
+Preserve required sections, scope, known issues, Code4rena bounty criteria/OOS rules, summarized V12/prior findings, invariants, trusted roles, and security-relevant protocol mechanics. Remove repetition, copied report prose, duplicated source material, generic docs, and low-value background first. Prefer concise tables and bullets.
 
 Do not blindly truncate the tail. Rewrite overlong sections into compact summaries so important context is retained.
 
@@ -1854,6 +2251,7 @@ fn link_decision_relevant_to_purpose(
                 | LinkClassification::KnownIssues
                 | LinkClassification::PriorAudit
                 | LinkClassification::V12
+                | LinkClassification::BountyRules
         ),
         ContextBundlePurpose::Docs => matches!(
             decision.classification,
@@ -2222,6 +2620,31 @@ code_folders:
     }
 
     #[test]
+    fn code4rena_bounty_docs_are_required_scope_sources() {
+        assert_eq!(
+            classify_link(CODE4RENA_BOUNTY_GUIDE_URL, "Code4rena bounty guide"),
+            LinkClassification::BountyRules
+        );
+        assert_eq!(
+            classify_link(CODE4RENA_BOUNTY_CRITERIA_URL, "Code4rena bounty criteria"),
+            LinkClassification::BountyRules
+        );
+        assert_eq!(
+            link_skip_reason(
+                CODE4RENA_BOUNTY_CRITERIA_URL,
+                &LinkClassification::BountyRules
+            ),
+            None
+        );
+        assert!(!remote_link_counts_against_fetch_budget(
+            &LinkClassification::BountyRules
+        ));
+        assert!(remote_link_counts_against_fetch_budget(
+            &LinkClassification::Documentation
+        ));
+    }
+
+    #[test]
     fn link_filter_skips_binary_and_extensionless_github_blob_links() {
         assert_eq!(
             link_skip_reason(
@@ -2282,6 +2705,90 @@ code_folders:
                 "Skipped prior-audit website link; prior-audit web pages are too noisy unless provided as text/markdown"
             )
         );
+    }
+
+    #[test]
+    fn scope_sections_ignore_out_of_scope_headings() {
+        let sections = likely_scope_sections(
+            r#"
+# Smart Contracts in Scope
+- `src/InScope.sol`
+
+## Out-of-Scope
+- `src/OutOfScope.sol`
+"#,
+        );
+
+        let joined = sections.join("\n");
+        assert!(joined.contains("src/InScope.sol"));
+        assert!(!joined.contains("src/OutOfScope.sol"));
+    }
+
+    #[test]
+    fn normalize_scope_path_extracts_github_blob_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("src/access")).unwrap();
+        fs::write(tmp.path().join("src/access/LegionBouncer.sol"), "").unwrap();
+
+        let entry = normalize_scope_path(
+            "https://github.com/Legion-Team/legion-protocol-contracts/blob/master/src/access/LegionBouncer.sol",
+            tmp.path(),
+            None,
+        );
+
+        assert_eq!(entry.path, "./src/access/LegionBouncer.sol");
+        assert!(entry.exists);
+    }
+
+    #[test]
+    fn bounty_contract_names_map_to_local_solidity_definitions() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("src/access")).unwrap();
+        fs::create_dir_all(tmp.path().join("src/mocks")).unwrap();
+        fs::write(
+            tmp.path().join("src/access/LegionBouncer.sol"),
+            "contract LegionBouncer {}",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("src/mocks/MockSale.sol"),
+            "contract MockSale {}",
+        )
+        .unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+audit_type: "Code4renaBounty"
+"#,
+        )
+        .unwrap();
+        let sources = vec![SourceContent {
+            id: "source-1".to_string(),
+            kind: ContextSourceKind::LocalReadme,
+            location: "README.md".to_string(),
+            title: None,
+            content: r#"
+# Smart Contracts in Scope
+
+| Name (Address Link) | Repo |
+| --- | --- |
+| LegionBouncer | |
+
+## Out-of-Scope
+- Anything in `src/mocks`
+"#
+            .to_string(),
+            decision: SourceDecision::UsedForBoth,
+            reason: ENTRY_CONTEXT_REASON.to_string(),
+        }];
+
+        let extracted =
+            deterministic_bounty_contract_name_scope_extract(&sources, tmp.path(), &cli);
+
+        assert_eq!(extracted.discovered_names, vec!["LegionBouncer"]);
+        assert_eq!(extracted.unmapped_names, Vec::<String>::new());
+        assert_eq!(extracted.entries.len(), 1);
+        assert_eq!(extracted.entries[0].path, "./src/access/LegionBouncer.sol");
     }
 
     #[test]

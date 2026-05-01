@@ -277,7 +277,6 @@ pub async fn get_children(
 mod tests {
     use super::*;
     use crate::config::AuditType;
-    use crate::prepare_code::git_clone::PocConfig;
 
     fn create_test_repo() -> RepoPaths {
         RepoPaths {
@@ -298,11 +297,6 @@ mod tests {
             monorepo_folders: None,
             commit_hash: "1234567890abcdef".to_string(),
             audit_type: AuditType::Client,
-            poc: PocConfig {
-                test_folder: PathBuf::from("/tmp/pocs"),
-                template: String::new(),
-                instructions: String::new(),
-            },
         }
     }
 

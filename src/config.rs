@@ -13,6 +13,7 @@ use std::{env, path::PathBuf};
 )]
 pub enum AuditType {
     Code4rena,
+    Code4renaBounty,
     Sherlock,
     Cantina,
     Client,
@@ -24,7 +25,6 @@ pub const MAX_DEPTH: usize = 3;
 
 /// Maximum token budget per codeblock + context to stay within LLM context limits
 pub const TOKEN_BUDGET: usize = 200_000;
-pub const CREATE_TESTS: bool = false;
 pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
 
 // if true set DISCOVERY_RUNS accordingly

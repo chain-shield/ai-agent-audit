@@ -176,9 +176,6 @@ impl FindingDb {
             } else {
                 Some(self.proof_of_code.clone())
             },
-            poc_test_file: None,
-            poc_test_command: None,
-            poc_test_status: None,
             severity: Severity::from_str(&self.severity).unwrap_or_default(),
             mitigation: None,
             status: None,

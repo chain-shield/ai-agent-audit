@@ -16,7 +16,7 @@ use ai_agent_audit::{
     config::{AuditType, OPENAI_SUMMARY_MODEL},
     enumerator::{codeblock_db::CodeBlocksDb, codeblocks::generate_codeblock_from_codebase},
     llm_review::contract::contract_category::ContractCategory,
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
     utils::remapping::parse_and_store_remappings,
 };
 use dotenvy::dotenv;
@@ -121,7 +121,6 @@ async fn test_codeblock_generation_with_contract_category() {
         monorepo_folders: None,
         commit_hash: "test-commit".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     };
 
     // ────────────────────────────────────────────────────────────────────────────

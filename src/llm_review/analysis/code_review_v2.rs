@@ -1,5 +1,5 @@
 use crate::config::{
-    CREATE_TESTS, OPENAI_MODEL, OPENAI_REASONING_EFFORT, SKIP_ACTOR_PATTERN_RUNS, SKIP_LIBRARIES,
+    OPENAI_MODEL, OPENAI_REASONING_EFFORT, SKIP_ACTOR_PATTERN_RUNS, SKIP_LIBRARIES,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -165,75 +165,13 @@ pub async fn review_codebase_for_security_issues_v2(
                     };
 
                     // Phase 4: Verify findings and remove false positives
-                    let mut verify_findings = phases::verify_rounds::execute_rounds(
+                    let verify_findings = phases::verify_rounds::execute_rounds(
                         findings_with_id,
                         &codeblock,
                         &finding_verify_agent,
                         &repo_clone,
                     )
                     .await?;
-
-                    // Phase 6: PoC Generation for High-Severity Findings
-                    // REQUIREMENTS: instructions for writing PoC plus template PoC file (if applicable)
-                    // 1. Write runnable PoC for Critical, High, and Medium findings
-                    // 2. Save PoC to test folder of repo
-                    // 3. Run PoC and capture results
-                    // 4. Have LLM fix PoC if it fails (up to 5 attempts)
-                    // 5. Mark finding as invalid if PoC cannot be created
-
-                    // If instructions and test folder provided, create and run PoC tests
-                    if !repo_clone.poc.instructions.is_empty()
-                        && repo_clone.poc.test_folder.exists()
-                        && CREATE_TESTS
-                    {
-                        // Phase 6: Write PoC for each Critical, High, and Medium Finding
-                        // Acquire POC_SEM at contract level to prevent multiple contracts
-                        // from creating PoC tests concurrently in the same test folder
-                        use crate::llm_review::analysis::semaphore::POC_SEM;
-                        let poc_sem = Arc::clone(&POC_SEM);
-                        let _poc_permit =
-                            poc_sem.acquire_owned().await.expect("POC semaphore closed");
-
-                        match phases::add_poc_findings::execute(
-                            verify_findings.clone(),
-                            &codeblock,
-                            &finding_verify_agent,
-                            &repo_clone,
-                        )
-                        .await
-                        {
-                            Ok(findings_with_pocs) => {
-                                verify_findings = findings_with_pocs;
-                                log::info!("✅ Phase 6 completed successfully");
-                            }
-                            Err(e) => {
-                                log::error!("❌ Phase 6 (PoC generation) failed: {:?}", e);
-                                log::warn!("Continuing with findings without PoC tests");
-                                // Continue with existing findings without PoC tests
-                            }
-                        }
-                        // _poc_permit is dropped here, releasing the semaphore
-                    }
-
-                    // Phase 7: Create professional markdown report for EACH finding (only if PoC is passing)
-                    match phases::create_report::execute(
-                        verify_findings.clone(),
-                        &codeblock,
-                        &finding_verify_agent,
-                        &repo_clone,
-                    )
-                    .await
-                    {
-                        Ok(findings_with_reports) => {
-                            verify_findings = findings_with_reports;
-                            log::info!("✅ Phase 7 completed successfully");
-                        }
-                        Err(e) => {
-                            log::error!("❌ Phase 7 (Report generation) failed: {:?}", e);
-                            log::warn!("Continuing with findings without professional reports");
-                            // Continue with existing findings without reports
-                        }
-                    }
 
                     // Save findings to database before extending
                     let db = results_db.lock().await;

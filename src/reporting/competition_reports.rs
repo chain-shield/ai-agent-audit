@@ -1,10 +1,7 @@
 use log::info;
 
 use crate::{
-    llm_review::{
-        findings::findings::{Finding, Findings},
-        phases::create_report::CompetitionReport,
-    },
+    llm_review::findings::findings::{CompetitionReport, Finding, Findings},
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_audit_report,
     utils::file_security::sanitize_filename,

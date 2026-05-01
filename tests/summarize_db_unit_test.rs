@@ -16,7 +16,7 @@ use ai_agent_audit::{
     },
     config::AuditType,
     llm_review::contract::contract_category::ContractCategory,
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
 };
 use std::path::PathBuf;
 
@@ -49,7 +49,6 @@ fn create_test_repo_paths(test_name: &str) -> RepoPaths {
         monorepo_folders: None,
         commit_hash: "test".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     }
 }
 

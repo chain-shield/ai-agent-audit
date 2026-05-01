@@ -16,9 +16,17 @@ Three-shot means:
 9. optionally, round 8 independently reviews and repairs each report, or flags it `Need Further Review`
 10. a separate scoring worker scores the assembled raw-validation run
 
+For `validation_profile: code4rena-bounty`, the same controller uses bounty-specific prompts:
+
+1. round 1 screens for bounty scope, known issues, previous audits, closed bounty reports, sponsor OOS, and Code4rena global bounty OOS
+2. round 2 screens for current-code bug existence, concrete exploitability, unprivileged attacker preconditions, and plausible runnable PoC
+3. round 3 keeps only findings that map to Code4rena bounty Critical/High criteria
+4. round 4 dedup/group, PoC creation, PoC validation, report creation, and final review stay
+5. round 4a V12 sweep is disabled for bounties
+
 Recommended worker split:
 
-- all R1-R8 workers must be launched with the configured minimal Codex worker launcher, currently `/Users/apmfree/codex-minimal-worker`, so plugin MCP servers are not loaded into every parallel worker
+- all R1-R8 workers must be launched with the configured minimal Codex worker launcher, currently `/Users/apmfree/codex-minimal-worker`, so plugin MCP servers are not loaded into every parallel worker while normal local file access and native Codex web search remain available. Web search here means the native `--search` flag only; it must not re-enable browser, GitHub, or other MCP servers.
 - round 1 scope worker: `gpt-5.5` with `xhigh`
 - round 2 token worker: `gpt-5.5` with `xhigh`
 - round 3 final validation worker: `gpt-5.5` with `xhigh`
@@ -32,7 +40,7 @@ Recommended worker split:
 - PoC workers must produce C4-ready artifacts: filenames include finding IDs for traceability, Solidity names avoid pipeline IDs and use descriptive vulnerability names, comments tersely explain setup/trigger/proof, and each final finding preferably gets one standalone PoC file. Existing template files are read-only seeds: workers copy, rename, and edit the copied finding-specific file rather than touching the template.
 - Report workers must produce ultra-concise C4-ready reports: one fresh worker per finding, about 200-300 words excluding code, two primary sections plus proof of concept, and `Need Further Review` when not submission-ready.
 
-Each validation round should be run by a separate spawned minimal Codex worker with cleared context. For R5-R8, each individual finding must get its own fresh minimal worker and isolated prompt/output files.
+Each validation round should be run by a separate spawned minimal Codex worker with cleared context. For R5-R8, each individual finding must get its own fresh minimal worker and isolated prompt/output files. Minimal workers are expected to read the local files listed in their prompt and may use native web search to verify cited public source URLs.
 
 Configuration:
 
@@ -44,6 +52,7 @@ Configuration:
 - Optional `paths.truth_file` can be configured for local benchmark scoring when a truth artifact is available.
 - `context_docs` is the authoritative YAML list of files every three-shot worker must read. It supports exact paths and glob patterns, including `{{SOURCE_ROOT}}` and `{{THREE_SHOT_ROOT}}` placeholders.
 - The reusable V12 duplicate decision checklist is stored at `validation-three-shot/v12-checklist.md`; include it in `context_docs`.
+- The reusable Code4rena bounty criteria summary is stored at `validation-three-shot/code4rena-bounty-criteria.md`; include it in `context_docs` for `validation_profile: code4rena-bounty`.
 - Benchmark prior findings can be a standalone `v12-findings.md` entry or embedded in a `*-scope.md` file. If embedded, omit the standalone `v12-findings.md` entry from `context_docs`.
 - `prompt_version` is the reusable prompt/artifact namespace. Keep `v2` for the current production prompts unless intentionally testing a new prompt version.
 - Worker model, reasoning, and launcher settings also live there. Keep `workers.default.launcher` pointed at the minimal Codex worker launcher unless intentionally debugging a single worker.

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::{
-    config::CREATE_TESTS,
     llm_review::{
         findings::{
             finding_enums::Severity,
@@ -191,13 +190,6 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                 ));
             }
             findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege));
-
-            if CREATE_TESTS {
-                findings_summary.push_str(&format!(
-                    "Poc Test Status: {}\n\n",
-                    finding.poc_test_status.unwrap_or_default()
-                ));
-            }
         }
         findings_summary
     }
@@ -264,13 +256,6 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
                             f.status_justification.clone().unwrap_or_default()
                         ));
                         findings_summary.push_str(&format!("Privilege: {}\n", f.privilege));
-
-                        if CREATE_TESTS {
-                            findings_summary.push_str(&format!(
-                                "Poc Test Status: {}\n\n",
-                                f.poc_test_status.unwrap_or_default()
-                            ));
-                        }
                     }
                     ReportDataType::Full => {
                         findings_summary.push_str(&prompt_context::get_finding_report(

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     config::{AuditType, REPO_DATA_DB, app_db_path},
     llm_review::analysis::context_state::get_metadata_context,
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
 };
 
 /// Represents complete repository data with all metadata
@@ -225,7 +225,6 @@ impl RepoData {
 
         Ok(RepoPaths {
             github_url: "".to_string(),
-            poc: PocConfig::default(),
             project_id: self.project_id.clone(),
             root: PathBuf::from(&self.root),
             sol_files,

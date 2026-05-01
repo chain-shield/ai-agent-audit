@@ -9,7 +9,7 @@ use ai_agent_audit::{
         },
         phases::verify_rounds,
     },
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
 };
 use rig::providers::anthropic::CLAUDE_4_SONNET;
 use std::{path::PathBuf, sync::Arc};
@@ -160,9 +160,6 @@ fn create_test_findings() -> Findings {
             mitigation: Some("Follow checks-effects-interactions pattern. Update state before external call.".to_string()),
             status: None,
             status_justification: None,
-            poc_test_file: None,
-            poc_test_command: None,
-            poc_test_status: None,
             competition_report: None,
             finding_complexity: Some(3),
             derived_from: Some("Reentrancy Pattern".to_string()),
@@ -184,9 +181,6 @@ fn create_test_findings() -> Findings {
             mitigation: Some("Use SafeMath library.".to_string()),
             status: None,
             status_justification: None,
-            poc_test_file: None,
-            poc_test_command: None,
-            poc_test_status: None,
             competition_report: None,
             finding_complexity: Some(2),
             derived_from: Some("Integer Math Pattern".to_string()),
@@ -208,9 +202,6 @@ fn create_test_findings() -> Findings {
             mitigation: Some("Add timelock or multi-sig for pause function.".to_string()),
             status: None,
             status_justification: None,
-            poc_test_file: None,
-            poc_test_command: None,
-            poc_test_status: None,
             competition_report: None,
             finding_complexity: Some(1),
             derived_from: Some("Access Control Pattern".to_string()),
@@ -243,7 +234,6 @@ fn create_mock_repo() -> RepoPaths {
         monorepo_folders: None,
         commit_hash: "abc123".to_string(),
         audit_type: AuditType::Code4rena,
-        poc: PocConfig::default(),
     }
 }
 

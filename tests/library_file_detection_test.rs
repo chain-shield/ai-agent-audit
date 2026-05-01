@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 use ai_agent_audit::config::AuditType;
-use ai_agent_audit::prepare_code::git_clone::{PocConfig, RepoPaths};
+use ai_agent_audit::prepare_code::git_clone::RepoPaths;
 use ai_agent_audit::utils::check_folder_name::is_library_file;
 
 /// Helper to create a minimal RepoPaths for testing
@@ -26,7 +26,6 @@ fn create_test_repo(root: PathBuf, source_code_folders: Vec<PathBuf>) -> RepoPat
         monorepo_folders: None,
         commit_hash: "0000000000000000000000000000000000000000".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     }
 }
 

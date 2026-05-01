@@ -202,19 +202,7 @@ pub struct Cli {
     #[arg(long)]
     pub scoped_files: Option<String>,
 
-    /// Optional instructions for writing PoC plus command to run PoC
-    #[arg(long)]
-    pub poc_instructions: Option<String>,
-
-    /// Optional provide poc template (and inherited contracts)  for creating PoC tests
-    #[arg(long)]
-    pub poc_template: Option<String>,
-
-    /// Optional provide test folder where poc template should be saved (relative path)
-    #[arg(long)]
-    pub test_folder: Option<String>,
-
-    /// Audit type (Code4rena, Sherlock, Cantina, Client)
+    /// Audit type (Code4rena, Code4renaBounty, Sherlock, Cantina, Client)
     #[arg(long, default_value_t = AuditType::Code4rena)]
     #[serde(default = "default_audit_type")]
     pub audit_type: AuditType,
@@ -303,15 +291,6 @@ impl Cli {
             }
             if config_values.scoped_files.is_some() {
                 config_cli.scoped_files = config_values.scoped_files;
-            }
-            if config_values.poc_instructions.is_some() {
-                config_cli.poc_instructions = config_values.poc_instructions;
-            }
-            if config_values.poc_template.is_some() {
-                config_cli.poc_template = config_values.poc_template;
-            }
-            if config_values.test_folder.is_some() {
-                config_cli.test_folder = config_values.test_folder;
             }
             if config_values.build_cmd.is_some() {
                 config_cli.build_cmd = config_values.build_cmd;

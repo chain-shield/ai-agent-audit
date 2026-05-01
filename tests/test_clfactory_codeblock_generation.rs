@@ -81,7 +81,6 @@ async fn test_clfactory_codeblock_generation() {
         monorepo_folders: None,
         commit_hash: commit_hash.clone(),
         audit_type: AuditType::Code4rena,
-        poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     };
 
     println!("\n📁 Repository structure:");

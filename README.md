@@ -117,11 +117,12 @@ export GITHUB_TOKEN=...
 ### Supported `audit_type` Values
 
 - `Code4rena`
+- `Code4renaBounty`
 - `Sherlock`
 - `Cantina`
 - `Client`
 
-Use `Client` for internal or client-style audits. Use the contest values when you want severity handling and report language aligned more closely with those platforms. In the current beta, report formatting is still closest to a Code4rena-style Markdown layout even when using other audit types.
+Use `Client` for internal or client-style audits. Use the contest values when you want severity handling and report language aligned more closely with those platforms. Use `Code4renaBounty` for C4 bug bounty programs where only currently exploitable Critical/High issues with runnable PoCs should become submission candidates.
 
 ### YAML And CLI Fields
 
@@ -138,10 +139,7 @@ Use `Client` for internal or client-style audits. Use the contest values when yo
 | `exclude_folders` / `--exclude-folders` | Repo-relative folders to exclude from scope. |
 | `scoped_files` / `--scoped-files` | Local text file listing repo-relative files that should be treated as in scope. |
 | `context` | YAML-only block for generated audit scope/docs context. Defaults to `README.md`, `audit-docs`, `force_regenerate: true`, and 5000 tokens per generated Markdown file. |
-| `poc_instructions` / `--poc-instructions` | Local file with PoC-writing instructions. Present in config surface, but automated PoC generation is currently disabled. |
-| `poc_template` / `--poc-template` | Local template used for PoC generation when that feature is enabled. |
-| `test_folder` / `--test-folder` | Repo-relative test directory for PoC output when PoC generation is enabled. |
-| `audit_type` / `--audit-type` | One of `Code4rena`, `Sherlock`, `Cantina`, `Client`. |
+| `audit_type` / `--audit-type` | One of `Code4rena`, `Code4renaBounty`, `Sherlock`, `Cantina`, `Client`. |
 | `builder` / `--builder` | One of `Foundry`, `Hardhat`, `HardhatYarn`, `Custom`, `Auto`. Default is `Auto`. |
 | `build_cmd` / `--build-cmd` | Required when `builder: "Custom"` is used. |
 | `via_ir` / `--via-ir` | Adds `--via-ir` to the Foundry build command. |
@@ -149,8 +147,8 @@ Use `Client` for internal or client-style audits. Use the contest values when yo
 
 ### Path Conventions
 
-- `custom_doc`, `audit_scope`, `scoped_files`, `monorepo_folders`, `poc_instructions`, and `poc_template` are read from local files you provide on the machine running the tool.
-- `subfolder`, `code_folders`, `doc_folder`, `exclude_folders`, and `test_folder` are interpreted relative to the cloned target repository.
+- `custom_doc`, `audit_scope`, `scoped_files`, and `monorepo_folders` are read from local files you provide on the machine running the tool.
+- `subfolder`, `code_folders`, `doc_folder`, and `exclude_folders` are interpreted relative to the cloned target repository.
 - If no manual `custom_doc`, `audit_scope`, or `scoped_files` are provided, the tool generates `<repo-folder>-docs.md`, `<repo-folder>-scope.md`, and `<repo-folder>-scope.txt` in `audit-docs/`.
 - The generated filename prefix preserves the cloned repo folder identity, including date/contest prefixes such as `2026-04-monetrix`.
 - `context.force_regenerate` defaults to `true` for generated context. Legacy YAMLs that already provide all three manual context files are left alone when no `context` block is present.
@@ -168,7 +166,7 @@ context:
   max_tokens_per_file: 5000
 ```
 
-The generator copies `scope.txt` from the cloned repo when present. If no `scope.txt` exists, it extracts in-scope Solidity paths from entry context files. By default the only entry file is `README.md`; `context.files` can add or replace entry files. Links found in those entry files are treated as second-level candidates and fetched only when they look relevant to scope, known issues, protocol documentation, prior audits, or Code4rena V12 reports. Fetched second-level pages do not emit more links. If generated `scope.md` or `docs.md` exceeds `max_tokens_per_file`, Codex summarizes it down to the limit; the generator refuses to silently truncate final Markdown.
+The generator copies `scope.txt` from the cloned repo when present. If no `scope.txt` exists, it extracts in-scope Solidity paths from entry context files. By default the only entry file is `README.md`; `context.files` can add or replace entry files. Links found in those entry files are treated as second-level candidates and fetched only when they look relevant to scope, known issues, protocol documentation, prior audits, or Code4rena V12 reports. For `Code4renaBounty`, the generator also fetches Code4rena's bounty guide and bounty criteria, preserves global bounty out-of-scope rules, and can map contract-name-only scope tables to local Solidity definitions. Fetched second-level pages do not emit more links. If generated `scope.md` or `docs.md` exceeds `max_tokens_per_file`, Codex summarizes it down to the limit; the generator refuses to silently truncate final Markdown.
 
 ### Environment Variables
 
@@ -241,7 +239,7 @@ The analysis system combines several sources of context:
 - Pattern libraries covering access control, reentrancy, accounting and invariant drift, oracle and AMM behavior, governance and timelocks, upgradeability, bridging, token standards, marketplace flows, and more.
 - Invariant analysis across arithmetic, balance, permission, temporal, referential, and state-machine categories.
 - Contract categorization and actor-oriented prompt context.
-- Contest-aware severity handling for `Code4rena`, `Sherlock`, and `Cantina`, plus a more open-ended `Client` mode.
+- Contest-aware severity handling for `Code4rena`, `Sherlock`, and `Cantina`, bounty-specific Critical/High handling for `Code4renaBounty`, plus a more open-ended `Client` mode.
 
 The exact prompts and pattern catalogs continue to evolve, so the README intentionally describes this at the capability level instead of freezing brittle counts.
 
@@ -250,8 +248,8 @@ The exact prompts and pattern catalogs continue to evolve, so the README intenti
 - This project sends code and documentation to external AI providers. Do not use it on repositories you are not allowed to share with those providers.
 - The tool is designed for defensive review support. It can miss real issues and it can produce false positives.
 - The current default path depends on a valid cached ChatGPT/Codex session for OpenAI work.
-- `audit_type` affects severity and rubric behavior more than it changes the overall pipeline.
-- Automatic PoC generation is present in code but disabled in the current public beta.
+- `audit_type` affects severity, rubric behavior, context gathering, and validation profile selection. `Code4renaBounty` disables V12-specific validation stages and uses a stricter Critical/High submit/no-submit flow.
+- Runnable PoC generation and verification now live in the separate `validation-three-shot` workflow, not the main audit pipeline.
 - If the target repo does not build cleanly on the local machine, analysis quality will degrade or the run may fail.
 - Automatic build commands do not install package dependencies. Because execution is host-local rather than Docker-isolated, run `npm install`, `yarn install`, `pnpm install`, or `forge install` yourself only when you trust the target repo, or provide an explicit `build_cmd`.
 - If Slither cannot extract semantic data, the tool falls back to a reduced analysis path with less Slither-derived context.

@@ -38,13 +38,6 @@ pub enum BuildFlags {
     ViaIr,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct PocConfig {
-    pub instructions: String,
-    pub test_folder: PathBuf,
-    pub template: String,
-}
-
 /// Contains paths to the repository root and relevant files.
 /// This struct organizes the paths to Solidity files and documentation
 /// that will be processed for analysis.
@@ -76,8 +69,6 @@ pub struct RepoPaths {
     pub commit_hash: String,
     /// audit type
     pub audit_type: AuditType,
-    /// instructions, template, and folder location for PoCs
-    pub poc: PocConfig,
 }
 
 /// Clones a repository and builds it in the configured local workspace.
@@ -350,55 +341,6 @@ pub async fn clone_and_filter_git_repo(
         None => None,
     };
 
-    let poc_instructions_content = match &cli.poc_instructions {
-        Some(instructions_poc) => {
-            let poc_instructions_file = Path::new(&instructions_poc).to_path_buf();
-            if poc_instructions_file.exists() {
-                fs::read_to_string(poc_instructions_file)?
-            } else {
-                panic!("poc instructions file does not exist!");
-            }
-        }
-        None => String::new(),
-    };
-    info!("PoC instructions size: {}", poc_instructions_content.len());
-
-    let poc_template_content = match &cli.poc_template {
-        Some(template_poc) => {
-            let poc_template_file = Path::new(&template_poc).to_path_buf();
-            if poc_template_file.exists() {
-                fs::read_to_string(poc_template_file)?
-            } else {
-                panic!("poc template file does not exist!");
-            }
-        }
-        None => String::new(),
-    };
-    info!("PoC template size: {}", poc_template_content.len());
-
-    let test_folder = match &cli.test_folder {
-        Some(folder) => {
-            let folder = search_root.join(folder);
-
-            if !folder.exists() {
-                panic!("invalid test folder - does not exist");
-            } else if poc_instructions_content.is_empty() {
-                panic!("valid test folder - however PoC instructions missing!");
-            }
-            folder
-        }
-        None => {
-            let folder = search_root.join("test");
-
-            if !folder.exists() {
-                log::warn!("invalid test folder - does not exist: {}", folder.display());
-            } else if poc_instructions_content.is_empty() {
-                panic!("valid test folder - however PoC instructions missing!");
-            }
-            folder
-        }
-    };
-
     // Return the collected paths
     Ok(RepoPaths {
         github_url,
@@ -411,11 +353,6 @@ pub async fn clone_and_filter_git_repo(
         lib_config_files,
         source_code_folders,
         docs,
-        poc: PocConfig {
-            instructions: poc_instructions_content,
-            template: poc_template_content,
-            test_folder,
-        },
         repo_name,
         audit_scope,
         audit_type: cli.audit_type.clone(),

@@ -16,7 +16,7 @@ use ai_agent_audit::{
         interface_implementations::build_and_get_interface_implementation_index,
         utils::contracts_in_source_folder,
     },
-    prepare_code::git_clone::{PocConfig, RepoPaths},
+    prepare_code::git_clone::RepoPaths,
     utils::remapping::parse_and_store_remappings,
 };
 use std::{
@@ -64,7 +64,6 @@ fn create_covenant_repo_paths() -> RepoPaths {
         monorepo_folders: None,
         commit_hash: "d5ebe4".to_string(),
         audit_type: AuditType::Client,
-        poc: PocConfig::default(),
     }
 }
 
