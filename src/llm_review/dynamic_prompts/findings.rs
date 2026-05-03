@@ -1,5 +1,6 @@
 use crate::{
     config::AuditType,
+    error::{AuditError, Result},
     llm_review::{
         dynamic_prompts::findings_template::get_pre_json_requirement_for_multipattern,
         prompt_support::severity_rubics::{
@@ -16,14 +17,46 @@ use crate::{
     prepare_code::git_clone::RepoPaths,
 };
 use rand::seq::SliceRandom;
+use std::path::{Path, PathBuf};
 
-fn severity_rubric_for_repo(repo: &RepoPaths) -> &'static str {
+fn severity_rubric_for_repo(repo: &RepoPaths) -> Result<String> {
     match repo.audit_type {
-        AuditType::Code4renaBounty => CODE4RENA_BOUNTY_SEVERITY_RUBRIC,
-        AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
-        AuditType::Cantina => CANTINA_SEVERITY_RUBRIC,
-        _ => CODE4RENA_SEVERITY_RUBRIC,
+        AuditType::Code4renaBounty => Ok(CODE4RENA_BOUNTY_SEVERITY_RUBRIC.to_string()),
+        AuditType::ImmunefiBugBounty => load_immunefi_severity_rubric(repo),
+        AuditType::Sherlock => Ok(SHERLOCK_SEVERITY_RUBRIC.to_string()),
+        AuditType::Cantina => Ok(CANTINA_SEVERITY_RUBRIC.to_string()),
+        _ => Ok(CODE4RENA_SEVERITY_RUBRIC.to_string()),
     }
+}
+
+fn load_immunefi_severity_rubric(repo: &RepoPaths) -> Result<String> {
+    let Some(path) = immunefi_severity_rubric_path(repo) else {
+        return Err(AuditError::Configuration {
+            setting: "immunefi severity rubric".to_string(),
+            message: format!(
+                "AuditType::ImmunefiBugBounty requires a generated Immunefi severity rubric. Expected a repo doc ending in `-immunefi-severity-rubric.md` under audit-docs/<protocol>/ for `{}`. Regenerate audit context before discovery.",
+                repo.repo_name
+            ),
+        });
+    };
+    std::fs::read_to_string(&path).map_err(|source| AuditError::FileSystem {
+        path: path.display().to_string(),
+        message: "failed to read generated Immunefi severity rubric".to_string(),
+        source: Some(Box::new(source)),
+    })
+}
+
+fn immunefi_severity_rubric_path(repo: &RepoPaths) -> Option<PathBuf> {
+    repo.docs
+        .iter()
+        .find(|path| is_immunefi_severity_rubric(path))
+        .cloned()
+}
+
+fn is_immunefi_severity_rubric(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with("-immunefi-severity-rubric.md"))
 }
 
 fn generate_shared_findings_prompt_body(
@@ -60,11 +93,11 @@ fn generate_shared_findings_prompt_body(
 pub fn generate_pattern_category_to_findings_prompt(
     category: &pattern_category::PatternCategory,
     repo: &RepoPaths,
-) -> String {
+) -> Result<String> {
     let category_spec =
         pattern_category::get_category_library_spec(category).expect("could not find category");
     let pattern_categories = generate_formated_list_from_pattern_data(category_spec.issues);
-    let severity_rubic = severity_rubric_for_repo(repo);
+    let severity_rubic = severity_rubric_for_repo(repo)?;
 
     let pre_json = get_pre_json_requirement_for_multipattern(
         category_spec.issues,
@@ -72,12 +105,12 @@ pub fn generate_pattern_category_to_findings_prompt(
         repo,
     );
 
-    generate_shared_findings_prompt_body(
+    Ok(generate_shared_findings_prompt_body(
         &pre_json,
         category_spec.title,
         &pattern_categories,
-        severity_rubic,
-    )
+        &severity_rubic,
+    ))
 }
 
 fn generate_formated_list_from_pattern_data(patterns_to_use: &[VulnerabilityPattern]) -> String {

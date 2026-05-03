@@ -90,7 +90,9 @@ fn render_config(
 
 fn validation_profile(audit_type: &AuditType) -> &'static str {
     match audit_type {
+        AuditType::Code4rena => "code4rena",
         AuditType::Code4renaBounty => "code4rena-bounty",
+        AuditType::ImmunefiBugBounty => "immunefi-bounty",
         _ => "default",
     }
 }
@@ -107,6 +109,10 @@ fn context_docs(repo: &RepoPaths, source_root: &Path) -> Result<Vec<String>> {
         push_unique_doc(&mut docs, context_doc_entry(scope, &project_root));
     }
 
+    if let Some(scoped_files) = &repo.scoped_files {
+        push_unique_doc(&mut docs, context_doc_entry(scoped_files, &project_root));
+    }
+
     let readme = source_root.join("README.md");
     if readme.exists() {
         push_unique_doc(&mut docs, "{{SOURCE_ROOT}}/README.md".to_string());
@@ -115,6 +121,7 @@ fn context_docs(repo: &RepoPaths, source_root: &Path) -> Result<Vec<String>> {
     match repo.audit_type {
         AuditType::Code4rena => push_unique_doc(&mut docs, V12_CHECKLIST_ENTRY.to_string()),
         AuditType::Code4renaBounty => push_unique_doc(&mut docs, BOUNTY_CRITERIA_ENTRY.to_string()),
+        AuditType::ImmunefiBugBounty => {}
         _ => {}
     }
     Ok(docs)
@@ -277,7 +284,7 @@ mod tests {
         );
 
         assert!(rendered.contains("benchmark: \"2026-01-olas\""));
-        assert!(rendered.contains("validation_profile: \"default\""));
+        assert!(rendered.contains("validation_profile: \"code4rena\""));
         assert!(rendered.contains("source_root: "));
         assert!(rendered.contains("audit_root: "));
         assert!(rendered.contains("audit_report: "));
@@ -310,6 +317,56 @@ mod tests {
 
         assert!(rendered.contains("validation_profile: \"code4rena-bounty\""));
         assert!(rendered.contains("\"{{THREE_SHOT_ROOT}}/code4rena-bounty-criteria.md\""));
+        assert!(!rendered.contains("v12-checklist.md"));
+    }
+
+    #[test]
+    fn immunefi_config_contains_generated_bounty_artifacts() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        let source_root = project.join("audit-workspace/ssv-network");
+        fs::create_dir_all(&source_root).unwrap();
+        fs::write(source_root.join("README.md"), "# SSV").unwrap();
+
+        let artifact_dir = project.join("audit-docs/ssv-network");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let docs = artifact_dir.join("ssv-network-docs.md");
+        let scope = artifact_dir.join("ssv-network-scope.md");
+        let scope_txt = artifact_dir.join("ssv-network-scope.txt");
+        let rules = artifact_dir.join("ssv-network-immunefi-bounty-rules.md");
+        let rubric = artifact_dir.join("ssv-network-immunefi-severity-rubric.md");
+        let poc_runtime = artifact_dir.join("ssv-network-immunefi-poc-runtime.md");
+        for path in [&docs, &scope, &scope_txt, &rules, &rubric, &poc_runtime] {
+            fs::write(path, "# generated").unwrap();
+        }
+
+        let mut repo = repo_paths(
+            project.join("audit-workspace"),
+            vec![docs, rules, rubric, poc_runtime],
+            Some(scope),
+        );
+        repo.repo_name = "ssv-network".to_string();
+        repo.scoped_files = Some(scope_txt);
+        repo.audit_type = AuditType::ImmunefiBugBounty;
+        let report = project.join("ssv-network/report/audit-report.md");
+        let rendered = render_config(
+            "ssv-network",
+            &source_root,
+            &project.join("ssv-network"),
+            &report,
+            &context_docs(&repo, &source_root).unwrap(),
+            &repo.audit_type,
+        );
+
+        assert!(rendered.contains("validation_profile: \"immunefi-bounty\""));
+        assert!(rendered.contains("audit-docs/ssv-network/ssv-network-scope.md"));
+        assert!(rendered.contains("audit-docs/ssv-network/ssv-network-scope.txt"));
+        assert!(rendered.contains("audit-docs/ssv-network/ssv-network-immunefi-bounty-rules.md"));
+        assert!(
+            rendered.contains("audit-docs/ssv-network/ssv-network-immunefi-severity-rubric.md")
+        );
+        assert!(rendered.contains("audit-docs/ssv-network/ssv-network-immunefi-poc-runtime.md"));
+        assert!(!rendered.contains("code4rena-bounty-criteria.md"));
         assert!(!rendered.contains("v12-checklist.md"));
     }
 

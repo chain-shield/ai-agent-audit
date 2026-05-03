@@ -99,9 +99,18 @@ where
     let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
     let severity_enums_bounty = vec![Severity::Critical, Severity::High];
     let severity_enums_list_bounty = generate_enum_list(severity_enums_bounty.as_slice());
+    let severity_enums_immunefi_bounty = vec![
+        Severity::Critical,
+        Severity::High,
+        Severity::Medium,
+        Severity::Low,
+    ];
+    let severity_enums_list_immunefi_bounty =
+        generate_enum_list(severity_enums_immunefi_bounty.as_slice());
     let severity_list = match repo.audit_type {
         AuditType::Code4rena => severity_enums_list_standard,
         AuditType::Code4renaBounty => severity_enums_list_bounty,
+        AuditType::ImmunefiBugBounty => severity_enums_list_immunefi_bounty,
         AuditType::Sherlock => severity_enums_list_standard,
         AuditType::Cantina => severity_enums_list_standard,
         _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),

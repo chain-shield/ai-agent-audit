@@ -5,8 +5,9 @@
 use anyhow::{Context, Result};
 use glob::glob;
 use ignore::gitignore::GitignoreBuilder;
-use log::info;
+use log::{info, warn};
 use regex::Regex;
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::Command;
@@ -20,7 +21,10 @@ use walkdir::WalkDir;
 
 use crate::cli_args::parse::{BuilderType, Cli};
 use crate::config::{AuditType, audit_config};
-use crate::prepare_code::audit_context::{generate_audit_context, should_generate_context};
+use crate::prepare_code::audit_context::{
+    GeneratedAuditContext, generate_audit_context, should_generate_context,
+};
+use crate::prepare_code::immunefi::{ResolvedGitCodebase, fetch_immunefi_bounty, same_github_repo};
 use crate::utils::check_folder_name::{
     contains_build_config, is_library_package_json, is_monorepo_config_file, is_root_config_file,
     is_script_file, is_test_file,
@@ -94,13 +98,18 @@ pub async fn clone_and_filter_git_repo(
     // build_flags: BuildFlags,
     cli: &Cli,
 ) -> Result<RepoPaths> {
+    let mut effective_cli = cli.clone();
+    if matches!(effective_cli.audit_type, AuditType::ImmunefiBugBounty) {
+        configure_immunefi_bounty_cli(&mut effective_cli).await?;
+    }
+    let cli = &effective_cli;
     let repo_url = cli.get_repo();
 
     // 🔐 Validate the repository URL for safety
     validate_repo_url(repo_url)?;
 
     // 1. Read HEAD and get the first 6 chars of the commit SHA
-    let commit_hash = get_commit_hash(repo_url)?;
+    let commit_hash = get_commit_hash(repo_url, cli.repo_branch.as_deref())?;
 
     // 2. Extract & sanitize the repo name
     let base_github_url = repo_url.trim_end_matches(".git");
@@ -135,13 +144,6 @@ pub async fn clone_and_filter_git_repo(
     let search_root = root.join(&repo_name);
     info!("search_root => {}", search_root.display());
 
-    let source_code_folders = cli
-        .code_folders
-        .iter()
-        .map(|f| search_root.join(f))
-        .collect::<Vec<PathBuf>>();
-    info!("source_code_folders => {:?}", source_code_folders);
-
     // Validate that the search root exists
     if !search_root.exists() {
         anyhow::bail!(
@@ -164,6 +166,14 @@ pub async fn clone_and_filter_git_repo(
             context.docs_md.display()
         );
     }
+
+    let effective_code_folders =
+        infer_effective_code_folders(cli, &search_root, generated_context.as_ref())?;
+    let source_code_folders = effective_code_folders
+        .iter()
+        .map(|f| search_root.join(f))
+        .collect::<Vec<PathBuf>>();
+    info!("source_code_folders => {:?}", source_code_folders);
 
     let effective_custom_doc = generated_context
         .as_ref()
@@ -224,10 +234,20 @@ pub async fn clone_and_filter_git_repo(
         None => false,
     };
 
-    let monorepo_folders = cli
-        .monorepo_folders
-        .as_ref()
-        .map(|repos| Path::new(repos).to_path_buf());
+    if let Some(context) = &generated_context {
+        for doc in &context.extra_docs {
+            if doc.exists() {
+                docs.push(doc.clone());
+            }
+        }
+    }
+
+    let monorepo_folders = infer_effective_monorepo_folders(
+        cli,
+        &search_root,
+        generated_context.as_ref(),
+        &repo_name,
+    )?;
 
     // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
@@ -378,6 +398,432 @@ fn add_github_auth(repo_url: &str) -> String {
     repo_url.to_string()
 }
 
+async fn configure_immunefi_bounty_cli(cli: &mut Cli) -> Result<()> {
+    let bounty_url = cli
+        .immunefi_bounty
+        .as_deref()
+        .context("immunefi_bounty is required for AuditType::ImmunefiBugBounty")?;
+    let bounty = fetch_immunefi_bounty(bounty_url)
+        .await
+        .with_context(|| format!("Failed to fetch Immunefi bounty metadata from {bounty_url}"))?;
+    let mut codebase = bounty.resolved_git_codebase()?;
+    resolve_github_tree_refs(&mut codebase)?;
+
+    apply_immunefi_resolved_repo(cli, &codebase, &bounty.project)?;
+
+    if cli.repo_branch.is_none()
+        && let Some(branch) = codebase.branch
+    {
+        info!("Derived repository branch from Immunefi codebase URL: {branch}");
+        cli.repo_branch = Some(branch);
+    }
+
+    if !codebase.tree_paths.is_empty() {
+        info!(
+            "Derived repository tree path hints from Immunefi codebase URL: {:?}",
+            codebase.tree_paths
+        );
+        cli.repo_tree_paths = codebase.tree_paths;
+    }
+
+    Ok(())
+}
+
+fn apply_immunefi_resolved_repo(
+    cli: &mut Cli,
+    codebase: &ResolvedGitCodebase,
+    project: &str,
+) -> Result<()> {
+    if let Some(configured_repo) = cli.repo.as_deref() {
+        if !same_github_repo(configured_repo, &codebase.repo_url) {
+            anyhow::bail!(
+                "Configured repo `{}` does not match Immunefi Resources GitHub Codebase `{}` for `{}`. Refusing to audit the wrong repository.",
+                configured_repo,
+                codebase.repo_url,
+                project
+            );
+        }
+    } else {
+        info!(
+            "Derived repository from Immunefi bounty `{}`: {}",
+            project, codebase.repo_url
+        );
+    }
+    cli.repo = Some(codebase.repo_url.clone());
+
+    Ok(())
+}
+
+fn resolve_github_tree_refs(codebase: &mut ResolvedGitCodebase) -> Result<()> {
+    if codebase.raw_tree_refs.is_empty() {
+        return Ok(());
+    }
+
+    let remote_refs = list_remote_tree_refs(&codebase.repo_url)?;
+    let mut branches = BTreeSet::new();
+    let mut tree_paths = Vec::new();
+
+    for raw_tree_ref in &codebase.raw_tree_refs {
+        let segments = raw_tree_ref
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        let Some((git_ref, tree_path)) = split_github_tree_ref(&segments, &remote_refs) else {
+            anyhow::bail!(
+                "Could not resolve GitHub tree URL ref `{}` for `{}` against remote branches/tags",
+                raw_tree_ref,
+                codebase.repo_url
+            );
+        };
+        branches.insert(git_ref);
+        if let Some(tree_path) = tree_path {
+            tree_paths.push(tree_path);
+        }
+    }
+
+    if branches.len() > 1 {
+        anyhow::bail!(
+            "Immunefi bounty references one repo with multiple tree refs: {}. Configure this bounty manually for now.",
+            branches.into_iter().collect::<Vec<_>>().join(", ")
+        );
+    }
+
+    codebase.branch = branches.into_iter().next();
+    tree_paths.sort();
+    tree_paths.dedup();
+    codebase.tree_paths = tree_paths;
+    Ok(())
+}
+
+fn list_remote_tree_refs(repo_url: &str) -> Result<BTreeSet<String>> {
+    let auth_url = add_github_auth(repo_url);
+    let output = Command::new("git")
+        .args(["ls-remote", "--heads", "--tags", &auth_url])
+        .output()
+        .context("Failed to run git ls-remote for Immunefi tree refs")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "git ls-remote failed while resolving Immunefi tree refs: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let stdout = String::from_utf8(output.stdout)?;
+    Ok(stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .filter(|reference| !reference.ends_with("^{}"))
+        .filter_map(|reference| {
+            reference
+                .strip_prefix("refs/heads/")
+                .or_else(|| reference.strip_prefix("refs/tags/"))
+        })
+        .map(str::to_string)
+        .collect())
+}
+
+fn split_github_tree_ref(
+    segments: &[&str],
+    remote_refs: &BTreeSet<String>,
+) -> Option<(String, Option<String>)> {
+    for end in (1..=segments.len()).rev() {
+        let candidate = segments[..end].join("/");
+        if is_full_git_sha(&candidate) || remote_refs.contains(&candidate) {
+            let tree_path = if end < segments.len() {
+                Some(segments[end..].join("/"))
+            } else {
+                None
+            };
+            return Some((candidate, tree_path));
+        }
+    }
+    None
+}
+
+fn infer_effective_code_folders(
+    cli: &Cli,
+    search_root: &Path,
+    generated_context: Option<&GeneratedAuditContext>,
+) -> Result<Vec<String>> {
+    if !matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
+        return Ok(cli.code_folders.clone());
+    }
+    let should_infer_from_scope = cli.code_folders.as_slice() == ["src"];
+    if !should_infer_from_scope {
+        return Ok(cli.code_folders.clone());
+    }
+
+    let tree_path_folders = immunefi_tree_code_folders(cli, search_root);
+    let Some(context) = generated_context else {
+        if tree_path_folders.is_empty() {
+            return Ok(cli.code_folders.clone());
+        }
+        info!(
+            "Using Immunefi tree path hints as code_folders: {:?}",
+            tree_path_folders
+        );
+        return Ok(tree_path_folders);
+    };
+    let inferred = infer_code_folders_from_scope_txt(&context.scope_txt, search_root)?;
+    if inferred.is_empty() {
+        if tree_path_folders.is_empty() {
+            warn!(
+                "Could not infer Immunefi code_folders from generated scope {}; keeping default {:?}",
+                context.scope_txt.display(),
+                cli.code_folders
+            );
+            Ok(cli.code_folders.clone())
+        } else {
+            info!(
+                "Could not infer Immunefi code_folders from generated scope {}; using tree path hints {:?}",
+                context.scope_txt.display(),
+                tree_path_folders
+            );
+            Ok(tree_path_folders)
+        }
+    } else {
+        info!("Inferred Immunefi code_folders from scope: {:?}", inferred);
+        Ok(inferred)
+    }
+}
+
+fn immunefi_tree_code_folders(cli: &Cli, search_root: &Path) -> Vec<String> {
+    if !matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
+        || cli.code_folders != vec!["src".to_string()]
+    {
+        return Vec::new();
+    }
+
+    let mut folders = cli
+        .repo_tree_paths
+        .iter()
+        .filter_map(|path| normalize_immunefi_tree_path(path))
+        .filter(|path| search_root.join(path).exists())
+        .collect::<Vec<_>>();
+    folders.sort_by_key(|folder| (folder.matches('/').count(), folder.len(), folder.clone()));
+    folders.dedup();
+    folders
+}
+
+fn normalize_immunefi_tree_path(path: &str) -> Option<String> {
+    let normalized = path
+        .trim()
+        .trim_matches('/')
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn infer_code_folders_from_scope_txt(scope_txt: &Path, search_root: &Path) -> Result<Vec<String>> {
+    let raw = fs::read_to_string(scope_txt).with_context(|| {
+        format!(
+            "Failed to read generated scope file {}",
+            scope_txt.display()
+        )
+    })?;
+    let mut folders = Vec::new();
+    for line in raw.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let relative = line.trim_start_matches("./").trim_start_matches('/');
+        let parts = relative.split('/').collect::<Vec<_>>();
+        if parts.len() <= 1 {
+            continue;
+        }
+        let folder = parts
+            .iter()
+            .position(|part| *part == "contracts" || *part == "src")
+            .map(|index| parts[..=index].join("/"))
+            .unwrap_or_else(|| parts[..parts.len() - 1].join("/"));
+        if !folder.is_empty() && search_root.join(&folder).exists() {
+            folders.push(folder);
+        }
+    }
+
+    folders.sort_by_key(|folder| (folder.matches('/').count(), folder.len(), folder.clone()));
+    folders.dedup();
+    Ok(folders)
+}
+
+fn infer_effective_monorepo_folders(
+    cli: &Cli,
+    search_root: &Path,
+    generated_context: Option<&GeneratedAuditContext>,
+    repo_name: &str,
+) -> Result<Option<PathBuf>> {
+    if cli.monorepo_folders.is_some() || !matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
+        return Ok(cli
+            .monorepo_folders
+            .as_ref()
+            .map(|repos| Path::new(repos).to_path_buf()));
+    }
+
+    let Some(context) = generated_context else {
+        return Ok(None);
+    };
+    let roots = infer_monorepo_roots_from_scope_txt(&context.scope_txt, search_root)?;
+    if roots.len() <= 1 {
+        return Ok(None);
+    }
+
+    let monorepo_path = context.output_dir.join(format!(
+        "{}-monorepos.txt",
+        sanitize_artifact_name(repo_name)
+    ));
+    let mut content = roots
+        .iter()
+        .map(|root| format!("./{}/", root.trim_matches('/')))
+        .collect::<Vec<_>>()
+        .join("\n");
+    content.push('\n');
+    fs::write(&monorepo_path, content)
+        .with_context(|| format!("Failed to write {}", monorepo_path.display()))?;
+    info!(
+        "Generated Immunefi monorepo folders file from scope/build roots: {}",
+        monorepo_path.display()
+    );
+    Ok(Some(monorepo_path))
+}
+
+fn infer_monorepo_roots_from_scope_txt(
+    scope_txt: &Path,
+    search_root: &Path,
+) -> Result<Vec<String>> {
+    let raw = fs::read_to_string(scope_txt).with_context(|| {
+        format!(
+            "Failed to read generated scope file {}",
+            scope_txt.display()
+        )
+    })?;
+    let mut roots = Vec::new();
+    for line in raw.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let relative = line.trim_start_matches("./").trim_start_matches('/');
+        let mut current = search_root.join(relative).parent().map(Path::to_path_buf);
+        while let Some(path) = current {
+            if path == search_root {
+                break;
+            }
+            if contains_build_config(&path) {
+                let rel = path
+                    .strip_prefix(search_root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                roots.push(rel);
+                break;
+            }
+            current = path.parent().map(Path::to_path_buf);
+        }
+    }
+
+    roots.sort();
+    roots.dedup();
+    Ok(roots)
+}
+
+fn sanitize_artifact_name(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
+}
+
+fn has_build_artifacts(build_root: &Path) -> bool {
+    build_root.join("out").exists()
+        || build_root.join("artifacts").exists()
+        || build_root.join("build").exists()
+}
+
+fn infer_build_root(cli: &Cli, cloned_repo_root: &Path, default_build_root: &Path) -> PathBuf {
+    if cli.subfolder.is_some()
+        || !matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
+        || cli.repo_tree_paths.len() != 1
+    {
+        return default_build_root.to_path_buf();
+    }
+
+    let Some(tree_path) = normalize_immunefi_tree_path(&cli.repo_tree_paths[0]) else {
+        return default_build_root.to_path_buf();
+    };
+    let tree_build_root = cloned_repo_root.join(tree_path);
+    if tree_build_root.exists()
+        && contains_build_config(&tree_build_root)
+        && !contains_build_config(cloned_repo_root)
+    {
+        info!(
+            "Using Immunefi tree path as build root because the repository root has no build config: {}",
+            tree_build_root.display()
+        );
+        tree_build_root
+    } else {
+        default_build_root.to_path_buf()
+    }
+}
+
+fn clone_pinned_commit(
+    workspace_path: &Path,
+    repo_root: &str,
+    repo_url: &str,
+    commit: &str,
+) -> Result<()> {
+    let target = workspace_path.join(repo_root);
+    fs::create_dir_all(&target)
+        .with_context(|| format!("Failed to create clone target {}", target.display()))?;
+
+    run_git_command(
+        Command::new("git")
+            .arg("init")
+            .arg(".")
+            .current_dir(&target),
+        "git init",
+    )?;
+    run_git_command(
+        Command::new("git")
+            .args(["remote", "add", "origin", repo_url])
+            .current_dir(&target),
+        "git remote add origin",
+    )?;
+    run_git_command(
+        Command::new("git")
+            .args(["fetch", "--depth=1", "origin", commit])
+            .current_dir(&target),
+        "git fetch pinned commit",
+    )?;
+    run_git_command(
+        Command::new("git")
+            .args(["checkout", "--detach", "FETCH_HEAD"])
+            .current_dir(&target),
+        "git checkout pinned commit",
+    )?;
+
+    Ok(())
+}
+
+fn run_git_command(command: &mut Command, description: &str) -> Result<()> {
+    let output = command
+        .output()
+        .with_context(|| format!("Failed to run {description}"))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "{description} failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
 pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Result<PathBuf> {
     ensure_runtime_dependencies(
         "repository cloning",
@@ -397,10 +843,11 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
 
     let build_stamp = workspace_path.join(".chainshield_build_ok");
 
+    let default_build_root = workspace_path.join(repo_name);
+    let cached_build_root = infer_build_root(cli, &cloned_repo_root, &default_build_root);
+
     // Check if build artifacts exist (foundry uses 'out', hardhat uses 'artifacts')
-    let has_build_artifacts = cloned_repo_root.join("out").exists()
-        || cloned_repo_root.join("artifacts").exists()
-        || cloned_repo_root.join("build").exists(); // Some projects use 'build'
+    let has_build_artifacts = has_build_artifacts(&cached_build_root);
     let custom_build = matches!(cli.builder, BuilderType::Custom);
 
     // Determine if we should reuse the existing workspace
@@ -458,24 +905,38 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
 
     let repo_url = add_github_auth(cli.get_repo());
 
-    let clone_output = Command::new("git")
-        .args(["clone", "--depth=1", &repo_url, repo_root])
-        .current_dir(&workspace_path)
-        .output()
-        .context("Failed to run git clone")?;
+    if let Some(commit) = cli
+        .repo_branch
+        .as_deref()
+        .filter(|branch| is_full_git_sha(branch))
+    {
+        clone_pinned_commit(&workspace_path, repo_root, &repo_url, commit)?;
+    } else {
+        let mut clone_command = Command::new("git");
+        clone_command.arg("clone").arg("--depth=1");
+        if let Some(branch) = &cli.repo_branch {
+            clone_command.arg("--branch").arg(branch);
+        }
+        let clone_output = clone_command
+            .arg(&repo_url)
+            .arg(repo_root)
+            .current_dir(&workspace_path)
+            .output()
+            .context("Failed to run git clone")?;
 
-    if !clone_output.status.success() {
-        anyhow::bail!(
-            "git clone failed for {}\nstdout:\n{}\nstderr:\n{}",
-            cli.get_repo(),
-            String::from_utf8_lossy(&clone_output.stdout),
-            String::from_utf8_lossy(&clone_output.stderr)
-        );
+        if !clone_output.status.success() {
+            anyhow::bail!(
+                "git clone failed for {}\nstdout:\n{}\nstderr:\n{}",
+                cli.get_repo(),
+                String::from_utf8_lossy(&clone_output.stdout),
+                String::from_utf8_lossy(&clone_output.stderr)
+            );
+        }
     }
 
     configure_git_url_rewrites(&cloned_repo_root)?;
 
-    let build_root = workspace_path.join(repo_name);
+    let build_root = infer_build_root(cli, &cloned_repo_root, &default_build_root);
     if !build_root.exists() {
         anyhow::bail!(
             "Build root '{}' does not exist after cloning '{}'. Check the configured subfolder.",
@@ -521,36 +982,74 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
             "project_id={}\nrepo={}\ncommit={}\n",
             project_id,
             cli.get_repo(),
-            &get_commit_hash(cli.get_repo())?[..6]
+            &get_commit_hash(cli.get_repo(), cli.repo_branch.as_deref())?[..6]
         ),
     )?;
 
     Ok(workspace_path)
 }
 
-fn get_commit_hash(repo_url: &str) -> Result<String> {
-    let auth_url = add_github_auth(repo_url);
-
-    let output = Command::new("git")
-        .args(["ls-remote", &auth_url, "HEAD"])
-        .output()
-        .context("Failed to run git ls-remote")?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "git ls-remote failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+fn get_commit_hash(repo_url: &str, branch: Option<&str>) -> Result<String> {
+    if let Some(branch) = branch
+        && is_full_git_sha(branch)
+    {
+        return Ok(branch.to_string());
     }
 
-    let stdout = String::from_utf8(output.stdout)?;
-    let commit_hash = stdout
-        .split_whitespace()
-        .next()
-        .context("Unexpected ls-remote output format")?
-        .to_string();
+    let auth_url = add_github_auth(repo_url);
 
-    Ok(commit_hash)
+    let patterns = if let Some(branch) = branch {
+        vec![
+            format!("refs/heads/{branch}"),
+            format!("refs/tags/{branch}"),
+            branch.to_string(),
+        ]
+    } else {
+        vec!["HEAD".to_string()]
+    };
+
+    for git_ref in patterns {
+        let output = Command::new("git")
+            .args(["ls-remote", &auth_url, &git_ref])
+            .output()
+            .context("Failed to run git ls-remote")?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "git ls-remote failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let stdout = String::from_utf8(output.stdout)?;
+        if let Some(commit_hash) = first_ls_remote_hash(&stdout) {
+            return Ok(commit_hash);
+        }
+    }
+
+    anyhow::bail!(
+        "Unexpected ls-remote output format for ref `{}`",
+        branch.unwrap_or("HEAD")
+    )
+}
+
+fn first_ls_remote_hash(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .find(|line| !line.trim().is_empty() && !line.trim_end().ends_with("^{}"))
+        .and_then(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .or_else(|| {
+            stdout
+                .lines()
+                .find(|line| line.trim_end().ends_with("^{}"))
+                .and_then(|line| line.split_whitespace().next())
+                .map(str::to_string)
+        })
+}
+
+fn is_full_git_sha(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn configure_git_url_rewrites(repo_root: &Path) -> Result<()> {
@@ -887,5 +1386,126 @@ mod tests {
         let deps = infer_custom_build_dependencies("git submodule update --init --recursive");
 
         assert_eq!(deps, vec![RuntimeDependency::Git]);
+    }
+
+    #[test]
+    fn immunefi_code_folders_infer_contracts_root_from_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("contracts/core")).unwrap();
+        let scope = tmp.path().join("scope.txt");
+        fs::write(
+            &scope,
+            "./contracts/SSVNetwork.sol\n./contracts/core/SSVNetworkViews.sol\n",
+        )
+        .unwrap();
+
+        let folders = infer_code_folders_from_scope_txt(&scope, tmp.path()).unwrap();
+
+        assert_eq!(folders, vec!["contracts"]);
+    }
+
+    #[test]
+    fn immunefi_tree_paths_are_source_hints_not_subfolders() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("contracts")).unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/org/repo"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+repo_tree_paths:
+  - "contracts"
+"#,
+        )
+        .unwrap();
+
+        let folders = infer_effective_code_folders(&cli, tmp.path(), None).unwrap();
+
+        assert_eq!(cli.subfolder, None);
+        assert_eq!(folders, vec!["contracts"]);
+    }
+
+    #[test]
+    fn immunefi_matching_tree_repo_is_normalized_to_clone_url() {
+        let mut cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/org/repo/tree/main/contracts"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+"#,
+        )
+        .unwrap();
+        let codebase = ResolvedGitCodebase {
+            repo_url: "https://github.com/org/repo".to_string(),
+            branch: Some("main".to_string()),
+            tree_paths: vec!["contracts".to_string()],
+            raw_tree_refs: vec!["main/contracts".to_string()],
+        };
+
+        apply_immunefi_resolved_repo(&mut cli, &codebase, "Example").unwrap();
+
+        assert_eq!(cli.repo.as_deref(), Some("https://github.com/org/repo"));
+    }
+
+    #[test]
+    fn immunefi_build_root_uses_tree_path_only_when_root_has_no_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path().join("repo");
+        let package_root = repo_root.join("packages/protocol");
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(package_root.join("foundry.toml"), "[profile.default]\n").unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/org/repo"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+repo_tree_paths:
+  - "packages/protocol"
+"#,
+        )
+        .unwrap();
+
+        let build_root = infer_build_root(&cli, &repo_root, &repo_root);
+
+        assert_eq!(build_root, package_root);
+    }
+
+    #[test]
+    fn tree_ref_resolution_prefers_longest_branch_match() {
+        let refs = BTreeSet::from(["release".to_string(), "release/v1".to_string()]);
+        let segments = ["release", "v1", "contracts"];
+
+        let (git_ref, tree_path) = split_github_tree_ref(&segments, &refs).unwrap();
+
+        assert_eq!(git_ref, "release/v1");
+        assert_eq!(tree_path.as_deref(), Some("contracts"));
+    }
+
+    #[test]
+    fn commit_hash_accepts_pinned_sha_without_remote_lookup() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+
+        let commit = get_commit_hash("https://github.com/org/repo", Some(sha)).unwrap();
+
+        assert_eq!(commit, sha);
+    }
+
+    #[test]
+    fn immunefi_monorepo_roots_infer_multiple_build_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("ve33/contracts")).unwrap();
+        fs::create_dir_all(tmp.path().join("cl/contracts/core")).unwrap();
+        fs::write(tmp.path().join("ve33/foundry.toml"), "[profile.default]\n").unwrap();
+        fs::write(tmp.path().join("cl/foundry.toml"), "[profile.default]\n").unwrap();
+        let scope = tmp.path().join("scope.txt");
+        fs::write(
+            &scope,
+            "./ve33/contracts/Voter.sol\n./cl/contracts/core/CLPool.sol\n",
+        )
+        .unwrap();
+
+        let roots = infer_monorepo_roots_from_scope_txt(&scope, tmp.path()).unwrap();
+
+        assert_eq!(roots, vec!["cl", "ve33"]);
     }
 }

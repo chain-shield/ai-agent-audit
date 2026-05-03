@@ -115,7 +115,7 @@ fn print_pattern_prompts() {
     let category = PatternCategory::SignatureValidation;
     let repo = mock_repo_paths();
     let cat_prompt =
-        findings_prompts::generate_pattern_category_to_findings_prompt(&category, &repo);
+        findings_prompts::generate_pattern_category_to_findings_prompt(&category, &repo).unwrap();
     println!(
         "\n===== Pattern Category To Findings Prompt ({:?}) =====\n{}\n",
         category, cat_prompt

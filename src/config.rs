@@ -14,6 +14,7 @@ use std::{env, path::PathBuf};
 pub enum AuditType {
     Code4rena,
     Code4renaBounty,
+    ImmunefiBugBounty,
     Sherlock,
     Cantina,
     Client,
