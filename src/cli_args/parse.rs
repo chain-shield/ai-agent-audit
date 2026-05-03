@@ -1,5 +1,5 @@
 use core::fmt;
-use std::fs;
+use std::{collections::BTreeMap, fs};
 
 use crate::config::{AuditType, audit_config};
 use clap::{Parser, ValueEnum};
@@ -44,6 +44,128 @@ fn default_force_regenerate() -> bool {
 
 fn default_context_token_limit() -> usize {
     5_000
+}
+
+fn default_poc_allow_fork() -> bool {
+    true
+}
+
+fn default_poc_prefer_fork() -> bool {
+    true
+}
+
+fn default_poc_rpc_env() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (
+            "ethereum-mainnet".to_string(),
+            "MAINNET_RPC_URL".to_string(),
+        ),
+        (
+            "ethereum-sepolia".to_string(),
+            "SEPOLIA_RPC_URL".to_string(),
+        ),
+        (
+            "arbitrum-mainnet".to_string(),
+            "ARBITRUM_RPC_URL".to_string(),
+        ),
+        (
+            "arbitrum-sepolia".to_string(),
+            "ARBITRUM_SEPOLIA_RPC_URL".to_string(),
+        ),
+        (
+            "optimism-mainnet".to_string(),
+            "OPTIMISM_RPC_URL".to_string(),
+        ),
+        (
+            "optimism-sepolia".to_string(),
+            "OPTIMISM_SEPOLIA_RPC_URL".to_string(),
+        ),
+        ("base-mainnet".to_string(), "BASE_RPC_URL".to_string()),
+        (
+            "base-sepolia".to_string(),
+            "BASE_SEPOLIA_RPC_URL".to_string(),
+        ),
+        ("polygon-mainnet".to_string(), "POLYGON_RPC_URL".to_string()),
+        (
+            "polygon-amoy".to_string(),
+            "POLYGON_AMOY_RPC_URL".to_string(),
+        ),
+        ("zksync-mainnet".to_string(), "ZKSYNC_RPC_URL".to_string()),
+        (
+            "zksync-sepolia".to_string(),
+            "ZKSYNC_SEPOLIA_RPC_URL".to_string(),
+        ),
+        ("bnb-mainnet".to_string(), "BNB_RPC_URL".to_string()),
+        ("bsc-mainnet".to_string(), "BSC_RPC_URL".to_string()),
+        ("bnb-testnet".to_string(), "BNB_TESTNET_RPC_URL".to_string()),
+        (
+            "avalanche-mainnet".to_string(),
+            "AVALANCHE_RPC_URL".to_string(),
+        ),
+        (
+            "avalanche-fuji".to_string(),
+            "AVALANCHE_FUJI_RPC_URL".to_string(),
+        ),
+        ("linea-mainnet".to_string(), "LINEA_RPC_URL".to_string()),
+        (
+            "linea-sepolia".to_string(),
+            "LINEA_SEPOLIA_RPC_URL".to_string(),
+        ),
+        ("scroll-mainnet".to_string(), "SCROLL_RPC_URL".to_string()),
+        (
+            "scroll-sepolia".to_string(),
+            "SCROLL_SEPOLIA_RPC_URL".to_string(),
+        ),
+        ("mantle-mainnet".to_string(), "MANTLE_RPC_URL".to_string()),
+        (
+            "mantle-sepolia".to_string(),
+            "MANTLE_SEPOLIA_RPC_URL".to_string(),
+        ),
+        ("blast-mainnet".to_string(), "BLAST_RPC_URL".to_string()),
+        (
+            "blast-sepolia".to_string(),
+            "BLAST_SEPOLIA_RPC_URL".to_string(),
+        ),
+        ("gnosis-mainnet".to_string(), "GNOSIS_RPC_URL".to_string()),
+        (
+            "gnosis-chiado".to_string(),
+            "GNOSIS_CHIADO_RPC_URL".to_string(),
+        ),
+        ("celo-mainnet".to_string(), "CELO_RPC_URL".to_string()),
+        (
+            "celo-alfajores".to_string(),
+            "CELO_ALFAJORES_RPC_URL".to_string(),
+        ),
+        (
+            "unichain-mainnet".to_string(),
+            "UNICHAIN_RPC_URL".to_string(),
+        ),
+        (
+            "unichain-sepolia".to_string(),
+            "UNICHAIN_SEPOLIA_RPC_URL".to_string(),
+        ),
+        ("sonic-mainnet".to_string(), "SONIC_RPC_URL".to_string()),
+        (
+            "sonic-testnet".to_string(),
+            "SONIC_TESTNET_RPC_URL".to_string(),
+        ),
+        (
+            "berachain-mainnet".to_string(),
+            "BERACHAIN_RPC_URL".to_string(),
+        ),
+        (
+            "berachain-bepolia".to_string(),
+            "BERACHAIN_BEPOLIA_RPC_URL".to_string(),
+        ),
+        (
+            "hyperliquid-mainnet".to_string(),
+            "HYPERLIQUID_RPC_URL".to_string(),
+        ),
+        (
+            "hyperliquid-testnet".to_string(),
+            "HYPERLIQUID_TESTNET_RPC_URL".to_string(),
+        ),
+    ])
 }
 
 fn default_v12_source() -> V12Source {
@@ -146,6 +268,35 @@ impl Default for ContextConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct PocConfig {
+    #[serde(default = "default_poc_allow_fork")]
+    pub allow_fork: bool,
+    #[serde(default = "default_poc_prefer_fork")]
+    pub prefer_fork: bool,
+    #[serde(default = "default_poc_rpc_env")]
+    pub rpc_env: BTreeMap<String, String>,
+}
+
+impl Default for PocConfig {
+    fn default() -> Self {
+        Self {
+            allow_fork: default_poc_allow_fork(),
+            prefer_fork: default_poc_prefer_fork(),
+            rpc_env: default_poc_rpc_env(),
+        }
+    }
+}
+
+impl PocConfig {
+    pub fn rpc_env_var_for(&self, network: &str) -> Option<String> {
+        self.rpc_env
+            .get(network)
+            .cloned()
+            .or_else(|| default_poc_rpc_env().get(network).cloned())
+    }
+}
+
 #[derive(Debug, Clone, ValueEnum, Deserialize, strum_macros::EnumString)]
 #[clap(rename_all = "kebab-case")]
 pub enum BuilderType {
@@ -166,6 +317,21 @@ pub struct Cli {
     /// git repo for security audit (optional if provided in config file)
     #[arg(value_parser = validate_repo_url)]
     pub repo: Option<String>,
+
+    /// Immunefi bug bounty URL used to derive repo, docs, and scope.
+    #[arg(long)]
+    #[serde(default)]
+    pub immunefi_bounty: Option<String>,
+
+    /// Optional git branch/ref derived from external bounty metadata.
+    #[arg(skip)]
+    #[serde(default)]
+    pub repo_branch: Option<String>,
+
+    /// Optional tree paths derived from external bounty metadata.
+    #[arg(skip)]
+    #[serde(default)]
+    pub repo_tree_paths: Vec<String>,
 
     /// Optional subfolder pointing to project root (if not root folder of git clone)
     #[arg(long)]
@@ -202,7 +368,7 @@ pub struct Cli {
     #[arg(long)]
     pub scoped_files: Option<String>,
 
-    /// Audit type (Code4rena, Code4renaBounty, Sherlock, Cantina, Client)
+    /// Audit type (Code4rena, Code4renaBounty, ImmunefiBugBounty, Sherlock, Cantina, Client)
     #[arg(long, default_value_t = AuditType::Code4rena)]
     #[serde(default = "default_audit_type")]
     pub audit_type: AuditType,
@@ -233,6 +399,11 @@ pub struct Cli {
     #[arg(skip)]
     #[serde(default)]
     pub context: Option<ContextConfig>,
+
+    /// Optional PoC runtime configuration. YAML-only for now.
+    #[arg(skip)]
+    #[serde(default)]
+    pub poc: PocConfig,
 }
 
 fn validate_repo_url(s: &str) -> std::result::Result<String, String> {
@@ -266,6 +437,15 @@ impl Cli {
                 // Use repo from YAML
                 config_cli.repo = config_values.repo.clone();
             }
+            if config_cli.immunefi_bounty.is_none() && config_values.immunefi_bounty.is_some() {
+                config_cli.immunefi_bounty = config_values.immunefi_bounty;
+            }
+            if config_values.repo_branch.is_some() {
+                config_cli.repo_branch = config_values.repo_branch;
+            }
+            if !config_values.repo_tree_paths.is_empty() {
+                config_cli.repo_tree_paths = config_values.repo_tree_paths;
+            }
 
             // Override other fields from YAML if they were specified
             if config_values.subfolder.is_some() {
@@ -298,6 +478,7 @@ impl Cli {
             if config_values.context.is_some() {
                 config_cli.context = config_values.context;
             }
+            config_cli.poc = config_values.poc;
 
             // Always use YAML values for these fields if present
             config_cli.audit_type = config_values.audit_type;
@@ -306,8 +487,16 @@ impl Cli {
             config_cli.force_rebuild = config_values.force_rebuild;
         }
 
-        // Validate that repo is provided either via CLI or YAML
-        if config_cli.repo.is_none() {
+        if matches!(config_cli.audit_type, AuditType::ImmunefiBugBounty)
+            && config_cli.immunefi_bounty.is_none()
+        {
+            anyhow::bail!("immunefi_bounty must be provided when audit_type is ImmunefiBugBounty");
+        }
+
+        // Validate that repo is provided either via CLI/YAML or derivable from Immunefi.
+        if config_cli.repo.is_none()
+            && !matches!(config_cli.audit_type, AuditType::ImmunefiBugBounty)
+        {
             anyhow::bail!(
                 "Repository URL must be provided either via CLI argument or in config file"
             );
@@ -438,5 +627,63 @@ builder: "HardhatYarn"
         let command = cli.generate_build_command();
         assert!(!command.contains("yarn install"));
         assert!(command.contains("yarn hardhat compile"));
+    }
+
+    #[test]
+    fn immunefi_bounty_config_can_derive_repo_later() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/ssvnetwork/information/"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(cli.audit_type, AuditType::ImmunefiBugBounty);
+        assert!(cli.repo.is_none());
+        assert_eq!(
+            cli.immunefi_bounty.as_deref(),
+            Some("https://immunefi.com/bug-bounty/ssvnetwork/information/")
+        );
+    }
+
+    #[test]
+    fn immunefi_bounty_field_is_accepted() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/ssvnetwork/information/"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            cli.immunefi_bounty.as_deref(),
+            Some("https://immunefi.com/bug-bounty/ssvnetwork/information/")
+        );
+    }
+
+    #[test]
+    fn poc_config_accepts_rpc_env_overrides_with_default_fallbacks() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+poc:
+  rpc_env:
+    ethereum-mainnet: "CUSTOM_MAINNET_RPC_URL"
+"#,
+        )
+        .unwrap();
+
+        assert!(cli.poc.allow_fork);
+        assert!(cli.poc.prefer_fork);
+        assert_eq!(
+            cli.poc.rpc_env_var_for("ethereum-mainnet").as_deref(),
+            Some("CUSTOM_MAINNET_RPC_URL")
+        );
+        assert_eq!(
+            cli.poc.rpc_env_var_for("base-mainnet").as_deref(),
+            Some("BASE_RPC_URL")
+        );
     }
 }

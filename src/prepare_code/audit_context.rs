@@ -4,20 +4,21 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
 
 use crate::{
-    cli_args::parse::{Cli, ContextConfig, V12Source},
+    cli_args::parse::{Cli, ContextConfig, PocConfig, V12Source},
     config::{AuditType, OPENAI_MODEL, OPENAI_REASONING_EFFORT},
     cost::cost_data::get_token_count,
     llm_review::agent::{
         agent_enums::AIAgent,
         agent_factory::{AgentConfig, AgentFactory},
     },
+    prepare_code::immunefi::{ImmunefiBountyData, ImmunefiTabKind, fetch_immunefi_bounty},
 };
 
 const MAX_PROMPT_SOURCE_TOKENS_PER_ITEM: usize = 2_500;
@@ -26,7 +27,9 @@ const MARKDOWN_COMPRESSION_ATTEMPTS: usize = 3;
 const HTTP_TIMEOUT_SECS: u64 = 20;
 const MAX_REMOTE_LINK_FETCHES: usize = 12;
 const MAX_REMOTE_PRIOR_AUDIT_FETCHES: usize = 2;
+const MAX_EXTERNAL_CONTRACT_METADATA_FETCHES: usize = 32;
 const ENTRY_CONTEXT_REASON: &str = "Configured context file";
+const IMMUNEFI_BOUNTY_ENTRY_REASON: &str = "Configured Immunefi bounty tab";
 const CODE4RENA_BOUNTY_GUIDE_URL: &str = "https://docs.code4rena.com/bounties";
 const CODE4RENA_BOUNTY_CRITERIA_URL: &str = "https://docs.code4rena.com/bounties/bounty-criteria";
 
@@ -38,6 +41,7 @@ pub struct GeneratedAuditContext {
     pub scope_md: PathBuf,
     pub docs_md: PathBuf,
     pub sources_json: PathBuf,
+    pub extra_docs: Vec<PathBuf>,
     pub regenerated: bool,
     pub source_report: ContextSourceReport,
 }
@@ -76,6 +80,9 @@ pub enum ContextSourceKind {
     V12Report,
     Code4renaBountyGuide,
     Code4renaBountyCriteria,
+    ImmunefiInformation,
+    ImmunefiScope,
+    ImmunefiResources,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +144,7 @@ pub enum ScopeFileSource {
     CopiedScopeTxt,
     ExtractedFromReadme,
     ExtractedFromBountyScope,
+    ExtractedFromExternalContractScope,
     FallbackCodeFolders,
 }
 
@@ -158,6 +166,123 @@ struct GeneratedMarkdown {
     source_notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExternalContractScopeAsset {
+    label: String,
+    url: String,
+    address: String,
+    explorer: String,
+    source_location: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExternalContractMetadata {
+    url: String,
+    contract_names: Vec<String>,
+    implementation_addresses: Vec<String>,
+    source_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExternalContractResolutionRecord {
+    label: String,
+    address: String,
+    explorer: String,
+    url: String,
+    paths: Vec<String>,
+    confidence: String,
+    reason: String,
+}
+
+#[derive(Debug, Default)]
+struct ExternalContractScopeResolution {
+    entries: Vec<ScopeFileEntry>,
+    assets: Vec<ExternalContractScopeAsset>,
+    resolved: Vec<ExternalContractResolutionRecord>,
+    unresolved: Vec<ExternalContractScopeAsset>,
+    metadata: Vec<ExternalContractMetadata>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExternalContractScopeResolutionReport {
+    assets: Vec<ExternalContractScopeAsset>,
+    resolved: Vec<ExternalContractResolutionRecord>,
+    unresolved: Vec<ExternalContractScopeAsset>,
+    metadata: Vec<ExternalContractMetadata>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ImmunefiPocRuntime {
+    project: String,
+    slug: String,
+    allow_fork: bool,
+    prefer_fork: bool,
+    assets: Vec<ImmunefiPocRuntimeAsset>,
+    networks: Vec<ImmunefiPocRuntimeNetwork>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ImmunefiPocRuntimeAsset {
+    description: Option<String>,
+    asset_type: Option<String>,
+    address: String,
+    explorer_url: String,
+    explorer_host: String,
+    network: String,
+    network_kind: String,
+    rpc_env_var: String,
+    rpc_env_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ImmunefiPocRuntimeNetwork {
+    network: String,
+    network_kind: String,
+    rpc_env_var: String,
+    rpc_env_available: bool,
+    asset_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExplorerNetwork {
+    id: &'static str,
+    kind: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct SolidityDefinition {
+    name: String,
+    path: String,
+    file_stem: String,
+    normalized_name: String,
+    normalized_file_stem: String,
+    tokens: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CodexExternalScopeResolution {
+    resolutions: Vec<CodexExternalScopeResolvedAsset>,
+    unresolved: Vec<CodexExternalScopeUnresolvedAsset>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CodexExternalScopeResolvedAsset {
+    label: String,
+    address: String,
+    paths: Vec<String>,
+    confidence: String,
+    reason: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CodexExternalScopeUnresolvedAsset {
+    label: String,
+    address: String,
+    reason: String,
+}
+
 pub async fn generate_audit_context(
     cli: &Cli,
     workspace_root: &Path,
@@ -167,7 +292,7 @@ pub async fn generate_audit_context(
 ) -> Result<GeneratedAuditContext> {
     let context_config = cli.context.clone().unwrap_or_default();
     let artifact_prefix = artifact_prefix_from_repo_name(repo_name);
-    let output_dir = context_output_dir(&context_config.output_dir)?;
+    let output_dir = context_output_dir(&context_config.output_dir)?.join(&artifact_prefix);
     fs::create_dir_all(&output_dir).with_context(|| {
         format!(
             "Failed to create generated audit context directory {}",
@@ -179,6 +304,34 @@ pub async fn generate_audit_context(
     let scope_md = output_dir.join(format!("{artifact_prefix}-scope.md"));
     let docs_md = output_dir.join(format!("{artifact_prefix}-docs.md"));
     let sources_json = output_dir.join(format!("{artifact_prefix}-context-sources.json"));
+    let mut extra_docs = Vec::new();
+    let immunefi_artifacts = if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
+        let source_json = output_dir.join(format!("{artifact_prefix}-immunefi-source.json"));
+        let bounty_rules_md =
+            output_dir.join(format!("{artifact_prefix}-immunefi-bounty-rules.md"));
+        let severity_rubric_md =
+            output_dir.join(format!("{artifact_prefix}-immunefi-severity-rubric.md"));
+        let severity_rubric_json =
+            output_dir.join(format!("{artifact_prefix}-immunefi-severity-rubric.json"));
+        let poc_runtime_md = output_dir.join(format!("{artifact_prefix}-immunefi-poc-runtime.md"));
+        let poc_runtime_json =
+            output_dir.join(format!("{artifact_prefix}-immunefi-poc-runtime.json"));
+        extra_docs.extend([
+            bounty_rules_md.clone(),
+            severity_rubric_md.clone(),
+            poc_runtime_md.clone(),
+        ]);
+        Some((
+            source_json,
+            bounty_rules_md,
+            severity_rubric_md,
+            severity_rubric_json,
+            poc_runtime_md,
+            poc_runtime_json,
+        ))
+    } else {
+        None
+    };
 
     let mut report = ContextSourceReport {
         artifact_prefix: artifact_prefix.clone(),
@@ -189,7 +342,10 @@ pub async fn generate_audit_context(
         warnings: Vec::new(),
     };
 
-    let all_outputs_exist = scope_txt.exists() && scope_md.exists() && docs_md.exists();
+    let all_outputs_exist = scope_txt.exists()
+        && scope_md.exists()
+        && docs_md.exists()
+        && extra_docs.iter().all(|path| path.exists());
     if all_outputs_exist && !context_config.force_regenerate {
         info!(
             "Reusing generated audit context files in {}",
@@ -202,10 +358,70 @@ pub async fn generate_audit_context(
             scope_md,
             docs_md,
             sources_json,
+            extra_docs,
             regenerated: false,
             source_report: report,
         });
     }
+
+    let immunefi_bounty = if let Some((
+        source_json,
+        bounty_rules_md,
+        severity_rubric_md,
+        severity_rubric_json,
+        poc_runtime_md,
+        poc_runtime_json,
+    )) = &immunefi_artifacts
+    {
+        let bounty_url = cli
+            .immunefi_bounty
+            .as_deref()
+            .context("immunefi_bounty is required for AuditType::ImmunefiBugBounty")?;
+        let bounty = fetch_immunefi_bounty(bounty_url).await.with_context(|| {
+            format!("Failed to fetch Immunefi bounty metadata from {bounty_url}")
+        })?;
+        fs::write(&source_json, serde_json::to_string_pretty(&bounty)?)
+            .with_context(|| format!("Failed to write {}", source_json.display()))?;
+        info!(
+            "Wrote Immunefi bounty source report: path={}",
+            source_json.display()
+        );
+        let poc_runtime = build_immunefi_poc_runtime(&bounty, &cli.poc);
+        fs::write(
+            &bounty_rules_md,
+            render_immunefi_bounty_rules_markdown(&bounty),
+        )
+        .with_context(|| format!("Failed to write {}", bounty_rules_md.display()))?;
+        fs::write(
+            &severity_rubric_md,
+            render_immunefi_severity_rubric_markdown(&bounty),
+        )
+        .with_context(|| format!("Failed to write {}", severity_rubric_md.display()))?;
+        fs::write(
+            &severity_rubric_json,
+            render_immunefi_severity_rubric_json(&bounty)?,
+        )
+        .with_context(|| format!("Failed to write {}", severity_rubric_json.display()))?;
+        fs::write(
+            &poc_runtime_md,
+            render_immunefi_poc_runtime_markdown(&poc_runtime),
+        )
+        .with_context(|| format!("Failed to write {}", poc_runtime_md.display()))?;
+        fs::write(
+            &poc_runtime_json,
+            serde_json::to_string_pretty(&poc_runtime)?,
+        )
+        .with_context(|| format!("Failed to write {}", poc_runtime_json.display()))?;
+        info!(
+            "Wrote Immunefi bounty rules, severity rubric, and PoC runtime: rules={}, rubric={}, runtime={}",
+            bounty_rules_md.display(),
+            severity_rubric_md.display(),
+            poc_runtime_md.display()
+        );
+        Some(bounty)
+    } else {
+        None
+    };
 
     info!(
         "Generating audit context artifacts for {} from {}",
@@ -219,6 +435,7 @@ pub async fn generate_audit_context(
         protocol_root,
         repo_name,
         &cli.audit_type,
+        immunefi_bounty.as_ref(),
     )
     .await?;
     report.link_decisions = link_decisions;
@@ -318,12 +535,17 @@ pub async fn generate_audit_context(
         scope_md,
         docs_md,
         sources_json,
+        extra_docs,
         regenerated: true,
         source_report: report,
     })
 }
 
 pub fn should_generate_context(cli: &Cli) -> bool {
+    if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
+        return true;
+    }
+
     let has_complete_manual_context =
         cli.custom_doc.is_some() && cli.audit_scope.is_some() && cli.scoped_files.is_some();
 
@@ -340,7 +562,7 @@ fn build_context_agent() -> Result<AIAgent> {
             .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
             .with_preamble(
                 "You generate concise, security-review-ready audit context for Solidity protocol audits. \
-                 Preserve scope, known issues, V12/prior findings, Code4rena bounty criteria, invariants, trusted roles, and protocol mechanics. \
+                 Preserve scope, known issues, V12/prior findings, Code4rena/Immunefi bounty criteria, invariants, trusted roles, and protocol mechanics. \
                  Do not invent facts. If source material is uncertain, say so briefly.",
             ),
     )
@@ -353,39 +575,47 @@ async fn collect_context_sources(
     protocol_root: &Path,
     repo_name: &str,
     audit_type: &AuditType,
+    immunefi_bounty: Option<&ImmunefiBountyData>,
 ) -> Result<(Vec<SourceContent>, Vec<LinkDecision>)> {
     let mut sources = Vec::new();
     let mut link_decisions = Vec::new();
     let mut seen_locations = HashSet::new();
     let code4rena_competition = matches!(audit_type, AuditType::Code4rena);
     let code4rena_bounty = matches!(audit_type, AuditType::Code4renaBounty);
+    let immunefi_bug_bounty = matches!(audit_type, AuditType::ImmunefiBugBounty);
 
-    let configured_files = context_files(config);
-    debug!(
-        "Codex context discovery: reading configured context files: {}",
-        configured_files.join(", ")
-    );
-    for file in configured_files {
-        let path = protocol_root.join(&file);
-        if path.exists() {
-            debug!(
-                "Codex context discovery: loading local context file {}",
-                path.display()
-            );
-            push_local_source(
-                &mut sources,
-                &mut seen_locations,
-                if file.eq_ignore_ascii_case("README.md") {
-                    ContextSourceKind::LocalReadme
-                } else {
-                    ContextSourceKind::LocalMarkdown
-                },
-                &path,
-                SourceDecision::UsedForBoth,
-                ENTRY_CONTEXT_REASON,
-            )?;
-        } else {
-            warn!("Configured context file missing: {}", path.display());
+    if immunefi_bug_bounty {
+        let bounty = immunefi_bounty
+            .context("internal error: missing fetched Immunefi bounty data for context sources")?;
+        push_immunefi_bounty_sources(&mut sources, &mut seen_locations, bounty)?;
+    } else {
+        let configured_files = context_files(config);
+        debug!(
+            "Codex context discovery: reading configured context files: {}",
+            configured_files.join(", ")
+        );
+        for file in configured_files {
+            let path = protocol_root.join(&file);
+            if path.exists() {
+                debug!(
+                    "Codex context discovery: loading local context file {}",
+                    path.display()
+                );
+                push_local_source(
+                    &mut sources,
+                    &mut seen_locations,
+                    if file.eq_ignore_ascii_case("README.md") {
+                        ContextSourceKind::LocalReadme
+                    } else {
+                        ContextSourceKind::LocalMarkdown
+                    },
+                    &path,
+                    SourceDecision::UsedForBoth,
+                    ENTRY_CONTEXT_REASON,
+                )?;
+            } else {
+                warn!("Configured context file missing: {}", path.display());
+            }
         }
     }
 
@@ -713,6 +943,709 @@ fn push_local_source(
     Ok(())
 }
 
+fn push_immunefi_bounty_sources(
+    sources: &mut Vec<SourceContent>,
+    seen_locations: &mut HashSet<String>,
+    bounty: &ImmunefiBountyData,
+) -> Result<()> {
+    for tab in &bounty.tabs {
+        let content = bounty.context_markdown_for_tab(tab.kind, &html_to_text(&tab.html));
+        let (kind, decision, title) = match tab.kind {
+            ImmunefiTabKind::Information => (
+                ContextSourceKind::ImmunefiInformation,
+                SourceDecision::UsedForBoth,
+                "Immunefi Information",
+            ),
+            ImmunefiTabKind::Scope => (
+                ContextSourceKind::ImmunefiScope,
+                SourceDecision::UsedForScope,
+                "Immunefi Scope",
+            ),
+            ImmunefiTabKind::Resources => (
+                ContextSourceKind::ImmunefiResources,
+                SourceDecision::UsedForBoth,
+                "Immunefi Resources",
+            ),
+        };
+        if !seen_locations.insert(tab.url.clone()) {
+            continue;
+        }
+        log_source_content_loaded(&tab.url, &content);
+        sources.push(SourceContent {
+            id: format!("source-{}", sources.len() + 1),
+            kind,
+            location: tab.url.clone(),
+            title: Some(title.to_string()),
+            content,
+            decision,
+            reason: IMMUNEFI_BOUNTY_ENTRY_REASON.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn build_immunefi_poc_runtime(
+    bounty: &ImmunefiBountyData,
+    poc_config: &PocConfig,
+) -> ImmunefiPocRuntime {
+    let mut assets = Vec::new();
+    for asset in &bounty.assets {
+        if asset.is_primacy_of_impact {
+            continue;
+        }
+        let Some(address) = extract_evm_address(&asset.url) else {
+            continue;
+        };
+        let Some(network) = infer_explorer_network(&asset.url) else {
+            continue;
+        };
+        let Some(rpc_env_var) = poc_config.rpc_env_var_for(network.id) else {
+            continue;
+        };
+        assets.push(ImmunefiPocRuntimeAsset {
+            description: asset.description.clone(),
+            asset_type: asset.asset_type.clone(),
+            address,
+            explorer_host: explorer_host_text(&asset.url),
+            explorer_url: asset.url.clone(),
+            network: network.id.to_string(),
+            network_kind: network.kind.to_string(),
+            rpc_env_available: std::env::var_os(&rpc_env_var).is_some(),
+            rpc_env_var,
+        });
+    }
+    assets.sort_by(|left, right| {
+        left.network
+            .cmp(&right.network)
+            .then(left.address.cmp(&right.address))
+    });
+    assets.dedup_by(|left, right| {
+        left.network == right.network && left.address.eq_ignore_ascii_case(&right.address)
+    });
+
+    let mut network_counts = BTreeMap::<String, (String, String, bool, usize)>::new();
+    for asset in &assets {
+        let entry = network_counts
+            .entry(asset.network.clone())
+            .or_insert_with(|| {
+                (
+                    asset.network_kind.clone(),
+                    asset.rpc_env_var.clone(),
+                    asset.rpc_env_available,
+                    0,
+                )
+            });
+        entry.2 |= asset.rpc_env_available;
+        entry.3 += 1;
+    }
+    let networks = network_counts
+        .into_iter()
+        .map(
+            |(network, (network_kind, rpc_env_var, rpc_env_available, asset_count))| {
+                ImmunefiPocRuntimeNetwork {
+                    network,
+                    network_kind,
+                    rpc_env_var,
+                    rpc_env_available,
+                    asset_count,
+                }
+            },
+        )
+        .collect();
+
+    ImmunefiPocRuntime {
+        project: bounty.project.clone(),
+        slug: bounty.slug.clone(),
+        allow_fork: poc_config.allow_fork,
+        prefer_fork: poc_config.prefer_fork,
+        assets,
+        networks,
+    }
+}
+
+fn render_immunefi_poc_runtime_markdown(runtime: &ImmunefiPocRuntime) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# Immunefi PoC Runtime - {}\n\n", runtime.project));
+    out.push_str("Use this file as mandatory context for Immunefi R5 PoC generation and R6 PoC verification.\n\n");
+    out.push_str("## Fork Preference\n\n");
+    out.push_str(&format!("- Fork PoCs allowed: `{}`\n", runtime.allow_fork));
+    out.push_str(&format!(
+        "- Fork PoCs preferred: `{}`\n",
+        runtime.prefer_fork
+    ));
+    out.push_str("- Prefer a mainnet fork PoC whenever the finding touches deployed in-scope mainnet contracts and a matching RPC env var is available.\n");
+    out.push_str("- Use a public-testnet fork only when the in-scope asset itself is a public-testnet deployment, or when no matching mainnet deployment exists but a relevant in-scope public-testnet deployment does.\n");
+    out.push_str("- Do not use a local non-fork test as the primary proof for an Immunefi deployed-asset finding.\n");
+    out.push_str("- Never invent RPC URLs, deployed addresses, networks, or block numbers.\n\n");
+
+    out.push_str("## In-Scope Deployed Contracts\n\n");
+    if runtime.assets.is_empty() {
+        out.push_str("- No EVM deployed contract addresses with recognized explorer networks were extracted from the Immunefi Scope tab.\n\n");
+    } else {
+        out.push_str(
+            "| Description | Type | Address | Network | RPC Env Var | Env Available | Explorer |\n",
+        );
+        out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+        for asset in &runtime.assets {
+            out.push_str(&format!(
+                "| {} | {} | `{}` | `{}` | `{}` | `{}` | {} |\n",
+                markdown_table_cell(asset.description.as_deref().unwrap_or("-")),
+                markdown_table_cell(asset.asset_type.as_deref().unwrap_or("-")),
+                asset.address,
+                asset.network,
+                asset.rpc_env_var,
+                asset.rpc_env_available,
+                markdown_table_cell(&asset.explorer_url)
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Network RPC Availability\n\n");
+    if runtime.networks.is_empty() {
+        out.push_str("- No recognized EVM networks were extracted.\n\n");
+    } else {
+        out.push_str("| Network | Kind | RPC Env Var | Env Available | Asset Count |\n");
+        out.push_str("| --- | --- | --- | --- | --- |\n");
+        for network in &runtime.networks {
+            out.push_str(&format!(
+                "| `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+                network.network,
+                network.network_kind,
+                network.rpc_env_var,
+                network.rpc_env_available,
+                network.asset_count
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Foundry Command Templates\n\n");
+    out.push_str("Use env vars, not raw URLs:\n\n");
+    out.push_str("```bash\n");
+    out.push_str("set -a; source \"<AI_AGENT_AUDIT_ROOT>/.env\"; set +a; forge test --match-test <testName> --fork-url \"$MAINNET_RPC_URL\"\n");
+    out.push_str("set -a; source \"<AI_AGENT_AUDIT_ROOT>/.env\"; set +a; forge test --match-path test/<PoCFile>.t.sol --fork-url \"$ARBITRUM_RPC_URL\"\n");
+    out.push_str("```\n\n");
+
+    out.push_str("## Safety Rules\n\n");
+    out.push_str("- Fork PoCs must be local simulations only.\n");
+    out.push_str("- Do not broadcast transactions.\n");
+    out.push_str("- Do not use live private keys or live privileged accounts.\n");
+    out.push_str("- Do not mutate live mainnet or public-testnet protocol state.\n");
+    out.push_str(
+        "- Do not steal, freeze, transfer, or manipulate real assets, even tiny amounts.\n",
+    );
+    out
+}
+
+fn markdown_table_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
+}
+
+fn extract_evm_address(value: &str) -> Option<String> {
+    Regex::new(r"(?i)0x[a-f0-9]{40}")
+        .unwrap()
+        .find(value)
+        .map(|m| m.as_str().to_string())
+}
+
+fn explorer_host_text(url: &str) -> String {
+    let without_scheme = url.split("://").nth(1).unwrap_or(url);
+    without_scheme
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .trim_start_matches("www.")
+        .to_ascii_lowercase()
+}
+
+fn infer_explorer_network(url: &str) -> Option<ExplorerNetwork> {
+    let host = explorer_host_text(url);
+    match host.as_str() {
+        "etherscan.io" => Some(ExplorerNetwork {
+            id: "ethereum-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia.etherscan.io" => Some(ExplorerNetwork {
+            id: "ethereum-sepolia",
+            kind: "testnet",
+        }),
+        "arbiscan.io" => Some(ExplorerNetwork {
+            id: "arbitrum-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia.arbiscan.io" => Some(ExplorerNetwork {
+            id: "arbitrum-sepolia",
+            kind: "testnet",
+        }),
+        "optimistic.etherscan.io" => Some(ExplorerNetwork {
+            id: "optimism-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia-optimism.etherscan.io" => Some(ExplorerNetwork {
+            id: "optimism-sepolia",
+            kind: "testnet",
+        }),
+        "basescan.org" => Some(ExplorerNetwork {
+            id: "base-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia.basescan.org" => Some(ExplorerNetwork {
+            id: "base-sepolia",
+            kind: "testnet",
+        }),
+        "polygonscan.com" => Some(ExplorerNetwork {
+            id: "polygon-mainnet",
+            kind: "mainnet",
+        }),
+        "amoy.polygonscan.com" => Some(ExplorerNetwork {
+            id: "polygon-amoy",
+            kind: "testnet",
+        }),
+        "era.zksync.network" | "explorer.zksync.io" | "zksync-era.blockscout.com" => {
+            Some(ExplorerNetwork {
+                id: "zksync-mainnet",
+                kind: "mainnet",
+            })
+        }
+        "sepolia.explorer.zksync.io" | "sepolia-era.zksync.network" => Some(ExplorerNetwork {
+            id: "zksync-sepolia",
+            kind: "testnet",
+        }),
+        "bscscan.com" => Some(ExplorerNetwork {
+            id: "bnb-mainnet",
+            kind: "mainnet",
+        }),
+        "testnet.bscscan.com" => Some(ExplorerNetwork {
+            id: "bnb-testnet",
+            kind: "testnet",
+        }),
+        "snowtrace.io" => Some(ExplorerNetwork {
+            id: "avalanche-mainnet",
+            kind: "mainnet",
+        }),
+        "testnet.snowtrace.io" => Some(ExplorerNetwork {
+            id: "avalanche-fuji",
+            kind: "testnet",
+        }),
+        "lineascan.build" => Some(ExplorerNetwork {
+            id: "linea-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia.lineascan.build" => Some(ExplorerNetwork {
+            id: "linea-sepolia",
+            kind: "testnet",
+        }),
+        "scrollscan.com" => Some(ExplorerNetwork {
+            id: "scroll-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia.scrollscan.com" => Some(ExplorerNetwork {
+            id: "scroll-sepolia",
+            kind: "testnet",
+        }),
+        "mantlescan.xyz" => Some(ExplorerNetwork {
+            id: "mantle-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia.mantlescan.xyz" => Some(ExplorerNetwork {
+            id: "mantle-sepolia",
+            kind: "testnet",
+        }),
+        "blastscan.io" => Some(ExplorerNetwork {
+            id: "blast-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia.blastscan.io" => Some(ExplorerNetwork {
+            id: "blast-sepolia",
+            kind: "testnet",
+        }),
+        "gnosisscan.io" => Some(ExplorerNetwork {
+            id: "gnosis-mainnet",
+            kind: "mainnet",
+        }),
+        "gnosis-chiado.blockscout.com" | "blockscout.chiadochain.net" => Some(ExplorerNetwork {
+            id: "gnosis-chiado",
+            kind: "testnet",
+        }),
+        "celoscan.io" => Some(ExplorerNetwork {
+            id: "celo-mainnet",
+            kind: "mainnet",
+        }),
+        "alfajores.celoscan.io" => Some(ExplorerNetwork {
+            id: "celo-alfajores",
+            kind: "testnet",
+        }),
+        "uniscan.xyz" | "unichain.blockscout.com" => Some(ExplorerNetwork {
+            id: "unichain-mainnet",
+            kind: "mainnet",
+        }),
+        "sepolia.uniscan.xyz" | "unichain-sepolia.blockscout.com" => Some(ExplorerNetwork {
+            id: "unichain-sepolia",
+            kind: "testnet",
+        }),
+        "sonicscan.org" => Some(ExplorerNetwork {
+            id: "sonic-mainnet",
+            kind: "mainnet",
+        }),
+        "testnet.sonicscan.org" => Some(ExplorerNetwork {
+            id: "sonic-testnet",
+            kind: "testnet",
+        }),
+        "berascan.com" => Some(ExplorerNetwork {
+            id: "berachain-mainnet",
+            kind: "mainnet",
+        }),
+        "bepolia.beratrail.io" | "testnet.berascan.com" => Some(ExplorerNetwork {
+            id: "berachain-bepolia",
+            kind: "testnet",
+        }),
+        "hyperevmscan.io" | "hyperliquid.cloud.blockscout.com" => Some(ExplorerNetwork {
+            id: "hyperliquid-mainnet",
+            kind: "mainnet",
+        }),
+        "testnet.hyperevmscan.io" => Some(ExplorerNetwork {
+            id: "hyperliquid-testnet",
+            kind: "testnet",
+        }),
+        _ => None,
+    }
+}
+
+fn render_immunefi_bounty_rules_markdown(bounty: &ImmunefiBountyData) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# Immunefi Bounty Rules - {}\n\n", bounty.project));
+    out.push_str(
+        "Use this file as mandatory context for `validation_profile: immunefi-bounty`.\n\n",
+    );
+    out.push_str("## Source URLs\n\n");
+    out.push_str(&format!("- Information: {}\n", bounty.urls.information));
+    out.push_str(&format!("- Scope: {}\n", bounty.urls.scope));
+    out.push_str(&format!("- Resources: {}\n\n", bounty.urls.resources));
+
+    out.push_str("## Program Requirements\n\n");
+    append_optional_bullet(
+        &mut out,
+        "Proof of Concept",
+        bounty.proof_of_concept_type.as_deref(),
+    );
+    append_optional_bullet(&mut out, "Primacy", bounty.primacy.as_deref());
+    append_optional_bullet(&mut out, "Rewards token", bounty.rewards_token.as_deref());
+    append_optional_bullet(
+        &mut out,
+        "Rewards token network",
+        bounty.rewards_token_network.as_deref(),
+    );
+    if let Some(max_bounty) = bounty.max_bounty {
+        out.push_str(&format!("- Maximum bounty: ${max_bounty}\n"));
+    }
+    out.push('\n');
+
+    out.push_str("## Assets In Scope\n\n");
+    if bounty.assets.is_empty() {
+        out.push_str("- No structured assets were extracted. Read the Scope tab directly.\n\n");
+    } else {
+        for asset in &bounty.assets {
+            out.push_str(&format!(
+                "- {}{}: {}\n",
+                asset
+                    .asset_type
+                    .as_deref()
+                    .unwrap_or("asset")
+                    .replace('_', " "),
+                if asset.is_primacy_of_impact {
+                    " (Primacy of Impact placeholder)"
+                } else {
+                    ""
+                },
+                asset.url
+            ));
+            if let Some(description) = &asset.description {
+                out.push_str(&format!("  - Description: {description}\n"));
+            }
+        }
+        out.push('\n');
+    }
+
+    append_immunefi_impacts_section(&mut out, &bounty.impacts);
+
+    out.push_str("## Out Of Scope And Exclusions\n\n");
+    append_optional_section(
+        &mut out,
+        "Smart Contract Out Of Scope",
+        bounty.default_out_of_scope_smart_contract.as_deref(),
+    );
+    append_optional_section(
+        &mut out,
+        "General Out Of Scope",
+        bounty.default_out_of_scope_general.as_deref(),
+    );
+    append_optional_section(
+        &mut out,
+        "Custom Out Of Scope",
+        bounty.custom_out_of_scope.as_deref(),
+    );
+    append_optional_section(
+        &mut out,
+        "Prohibited Activities",
+        bounty.prohibited_activities.as_deref(),
+    );
+    if !bounty.known_issues.is_empty() {
+        out.push_str("### Known Issues\n\n");
+        for issue in &bounty.known_issues {
+            out.push_str(&format!("- {issue}\n"));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Audit And Documentation Exclusions\n\n");
+    if bounty.audits.is_empty() {
+        out.push_str("- No structured audit links were extracted. Read Resources directly.\n\n");
+    } else {
+        for audit in &bounty.audits {
+            out.push_str(&format!(
+                "- {}{}: {}\n",
+                audit.auditor.as_deref().unwrap_or("Audit"),
+                audit
+                    .date
+                    .as_deref()
+                    .map(|date| format!(" ({date})"))
+                    .unwrap_or_default(),
+                audit.url
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Stage 1 Eligibility Rules\n\n");
+    out.push_str("- A finding must affect an in-scope asset, unless the exact category and severity are covered by the program's Primacy of Impact rules.\n");
+    out.push_str("- A finding must produce an impact listed in the program's Impacts in Scope.\n");
+    out.push_str("- Exclude known issues, prior audit findings, documented accepted risks, closed duplicate reports, and program-specific OOS cases.\n");
+    out.push_str("- Exclude cases requiring privileged access, leaked credentials, social engineering, malicious or mistaken trusted roles, deployment mistakes, test/mock files, public disclosure, or third-party-only failures.\n");
+    out.push_str("- Do not perform final exploitability or severity scoring in stage 1; keep only when there is no decisive eligibility blocker.\n\n");
+
+    append_immunefi_rendered_text_excerpts(&mut out, bounty);
+    out
+}
+
+fn render_immunefi_severity_rubric_markdown(bounty: &ImmunefiBountyData) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Immunefi Severity Rubric - {}\n\n",
+        bounty.project
+    ));
+    out.push_str("Use this file as mandatory severity context for `validation_profile: immunefi-bounty`.\n\n");
+    out.push_str("## Source URLs\n\n");
+    out.push_str(&format!("- Information: {}\n", bounty.urls.information));
+    out.push_str(&format!("- Scope: {}\n", bounty.urls.scope));
+    out.push_str(&format!("- Resources: {}\n", bounty.urls.resources));
+    if let Some(system) = &bounty.severity_system {
+        out.push_str(&format!(
+            "- Immunefi severity system {}: {}\n",
+            system.version, system.url
+        ));
+    } else {
+        out.push_str("- Immunefi severity system: not detected from page payload; use program impact rows first and verify the live bounty page before submission.\n");
+    }
+    out.push('\n');
+
+    out.push_str("## Program-Specific Severity Source Of Truth\n\n");
+    append_optional_bullet(&mut out, "Primacy", bounty.primacy.as_deref());
+    append_optional_bullet(
+        &mut out,
+        "Proof of Concept",
+        bounty.proof_of_concept_type.as_deref(),
+    );
+    out.push('\n');
+    append_immunefi_impacts_section(&mut out, &bounty.impacts);
+    append_immunefi_rewards_section(&mut out, &bounty.rewards);
+
+    out.push_str("## Platform Smart Contract Severity Summary\n\n");
+    out.push_str("Always prefer the program's exact impact rows above. Use this summary only to interpret the referenced Immunefi severity system.\n\n");
+    match bounty
+        .severity_system
+        .as_ref()
+        .map(|system| system.version.as_str())
+    {
+        Some("v2.2") => append_immunefi_v22_summary(&mut out),
+        Some("v2.3") => append_immunefi_v23_summary(&mut out),
+        _ => {
+            append_immunefi_v23_summary(&mut out);
+            out.push_str("The page did not expose a precise severity-system version in structured data; verify the live bounty page before final submission.\n\n");
+        }
+    }
+
+    out.push_str("## Immunefi Severity Decision Rules\n\n");
+    out.push_str("- Stage 3 must match the finding to an exact program impact row and severity.\n");
+    out.push_str("- Apply Primacy of Impact only for the category and severity levels explicitly covered by this bounty.\n");
+    out.push_str(
+        "- Under Primacy of Rules, both the impacted asset and impact must be in scope.\n",
+    );
+    out.push_str("- Downgrade or reject findings requiring privileged access, leaked keys, malicious trusted roles, unusual user mistakes, unrealistic repeated interactions, or external-only failures.\n");
+    out.push_str("- Feasibility limitations can affect payout and confidence; they should not replace the program's listed impact rows.\n");
+    out.push_str("- Mark ambiguous, medium-only, best-practice-only, or weak-evidence findings as `Invalid` or `Needs Review`, not submission-ready.\n");
+    out.push_str("- PoC policy is recorded here for later PoC stages only; stage 3 should not require an already-created PoC.\n\n");
+
+    out.push_str("## PoC Policy For Later Stages Only\n\n");
+    out.push_str("- Prefer a runnable local mainnet fork PoC when the affected in-scope asset is deployed on mainnet.\n");
+    out.push_str("- Use the generated Immunefi PoC runtime artifact to select deployed addresses, networks, and RPC env var names.\n");
+    out.push_str("- Use a local public-testnet fork only when the affected in-scope asset itself is a public-testnet deployment, or when no matching mainnet deployment exists but a relevant in-scope public-testnet deployment does.\n");
+    out.push_str(
+        "- Do not use local non-fork tests as the primary proof for deployed-asset findings.\n",
+    );
+    out.push_str("- Never broadcast live transactions, mutate live protocol state, steal funds, freeze funds, manipulate live governance, or cause real harm, even for a tiny amount.\n\n");
+
+    append_immunefi_rendered_text_excerpts(&mut out, bounty);
+    out
+}
+
+fn render_immunefi_severity_rubric_json(bounty: &ImmunefiBountyData) -> Result<String> {
+    let payload = serde_json::json!({
+        "project": &bounty.project,
+        "slug": &bounty.slug,
+        "source_urls": {
+            "information": &bounty.urls.information,
+            "scope": &bounty.urls.scope,
+            "resources": &bounty.urls.resources,
+        },
+        "severity_system": &bounty.severity_system,
+        "proof_of_concept_type": &bounty.proof_of_concept_type,
+        "primacy": &bounty.primacy,
+        "assets": &bounty.assets,
+        "impacts": &bounty.impacts,
+        "rewards": &bounty.rewards,
+        "default_out_of_scope_smart_contract": &bounty.default_out_of_scope_smart_contract,
+        "default_out_of_scope_general": &bounty.default_out_of_scope_general,
+        "custom_out_of_scope": &bounty.custom_out_of_scope,
+        "prohibited_activities": &bounty.prohibited_activities,
+        "known_issues": &bounty.known_issues,
+        "audits": &bounty.audits,
+        "documentations": &bounty.documentations,
+        "codebases": &bounty.codebases,
+    });
+    serde_json::to_string_pretty(&payload).map_err(anyhow::Error::from)
+}
+
+fn append_optional_bullet(out: &mut String, label: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+        out.push_str(&format!("- {label}: {value}\n"));
+    }
+}
+
+fn append_optional_section(out: &mut String, title: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+        out.push_str(&format!("### {title}\n\n{value}\n\n"));
+    }
+}
+
+fn append_immunefi_impacts_section(
+    out: &mut String,
+    impacts: &[crate::prepare_code::immunefi::ImmunefiImpact],
+) {
+    out.push_str("## Impacts In Scope\n\n");
+    if impacts.is_empty() {
+        out.push_str(
+            "- No structured impact rows were extracted. Read the Scope tab directly.\n\n",
+        );
+        return;
+    }
+    for impact in impacts {
+        out.push_str(&format!(
+            "- {}{}: {}\n",
+            impact.severity,
+            impact
+                .asset_type
+                .as_deref()
+                .map(|asset_type| format!(" ({})", asset_type.replace('_', " ")))
+                .unwrap_or_default(),
+            impact.description
+        ));
+    }
+    out.push('\n');
+}
+
+fn append_immunefi_rewards_section(
+    out: &mut String,
+    rewards: &[crate::prepare_code::immunefi::ImmunefiReward],
+) {
+    out.push_str("## Rewards By Threat Level\n\n");
+    if rewards.is_empty() {
+        out.push_str(
+            "- No structured reward rows were extracted. Read the Information tab directly.\n\n",
+        );
+        return;
+    }
+    for reward in rewards {
+        let mut details = Vec::new();
+        if let Some(min_reward) = reward.min_reward {
+            details.push(format!("min ${min_reward}"));
+        }
+        if let Some(max_reward) = reward.max_reward {
+            details.push(format!("max ${max_reward}"));
+        }
+        if let Some(fixed_reward) = reward.fixed_reward {
+            details.push(format!("fixed ${fixed_reward}"));
+        }
+        out.push_str(&format!(
+            "- {}{}{}{}\n",
+            reward.severity,
+            reward
+                .asset_type
+                .as_deref()
+                .map(|asset_type| format!(" ({})", asset_type.replace('_', " ")))
+                .unwrap_or_default(),
+            reward
+                .reward_model
+                .as_deref()
+                .map(|model| format!(" [{model}]"))
+                .unwrap_or_default(),
+            if details.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", details.join(", "))
+            }
+        ));
+    }
+    out.push('\n');
+}
+
+fn append_immunefi_v23_summary(out: &mut String) {
+    out.push_str("### v2.3 Smart Contract Summary\n\n");
+    out.push_str("- Critical: direct theft of funds or NFTs, permanent freezing, protocol insolvency, governance result manipulation, unauthorized NFT minting, manipulable RNG abuse, or NFT representation alteration when listed by the program.\n");
+    out.push_str("- High: theft or permanent freezing of unclaimed yield/royalties, temporary freezing of funds/NFTs, or other High rows listed by the program.\n");
+    out.push_str("- Medium: griefing, block stuffing, gas theft, unbounded gas, or liveness failures only when listed by the program.\n");
+    out.push_str(
+        "- Low/Insight: lower-impact failures only when listed and rewarded by the program.\n\n",
+    );
+}
+
+fn append_immunefi_v22_summary(out: &mut String) {
+    out.push_str("### v2.2 Smart Contract Summary\n\n");
+    out.push_str("- Critical and High are still impact-first, but some program pages using v2.2 add stricter profitability, freezing, or end-effect clauses.\n");
+    out.push_str("- Always use the program's listed impact rows and reward body when v2.2 text conflicts with generic platform summaries.\n");
+    out.push_str("- Treat project-specific exclusions for non-standard tokens, malicious integrations, and trusted components as mandatory.\n\n");
+}
+
+fn append_immunefi_rendered_text_excerpts(out: &mut String, bounty: &ImmunefiBountyData) {
+    out.push_str("## Rendered Bounty Page Text Excerpts\n\n");
+    out.push_str("These excerpts are included to preserve program-specific clauses that may not be represented in structured rows. Re-check the live source URLs before paid submission.\n\n");
+    for tab in &bounty.tabs {
+        let text = truncate_to_char_limit(html_to_text(&tab.html), 12_000);
+        out.push_str(&format!("### {:?}\n\n", tab.kind));
+        out.push_str(&text);
+        out.push_str("\n\n");
+    }
+}
+
+fn truncate_to_char_limit(text: String, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text;
+    }
+    let mut truncated = text.chars().take(limit).collect::<String>();
+    truncated.push_str("\n\n[truncated]");
+    truncated
+}
+
 fn discover_known_issue_files(protocol_root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for entry in WalkDir::new(protocol_root)
@@ -748,10 +1681,16 @@ fn discover_known_issue_files(protocol_root: &Path) -> Vec<PathBuf> {
 }
 
 fn should_extract_links_from_source(source: &SourceContent) -> bool {
-    matches!(
+    let entry_kind = matches!(
         source.kind,
-        ContextSourceKind::LocalReadme | ContextSourceKind::LocalMarkdown
-    ) && source.reason == ENTRY_CONTEXT_REASON
+        ContextSourceKind::LocalReadme
+            | ContextSourceKind::LocalMarkdown
+            | ContextSourceKind::ImmunefiInformation
+            | ContextSourceKind::ImmunefiScope
+            | ContextSourceKind::ImmunefiResources
+    );
+    entry_kind
+        && (source.reason == ENTRY_CONTEXT_REASON || source.reason == IMMUNEFI_BOUNTY_ENTRY_REASON)
 }
 
 #[derive(Debug, Clone)]
@@ -842,6 +1781,9 @@ fn classify_link(url: &str, label: &str) -> LinkClassification {
     if is_code4rena_bounty_required_doc(&text) {
         return LinkClassification::BountyRules;
     }
+    if is_code4rena_bounty_listing_url(&text) {
+        return LinkClassification::Scope;
+    }
     if is_v12_report_url(&text) {
         return LinkClassification::V12;
     }
@@ -895,6 +1837,16 @@ fn is_code4rena_bounty_required_doc(text: &str) -> bool {
         || clean == CODE4RENA_BOUNTY_CRITERIA_URL
         || clean == "https://docs.code4rena.com/bounties/"
         || clean == "https://docs.code4rena.com/bounties/bounty-criteria/"
+}
+
+fn is_code4rena_bounty_listing_url(text: &str) -> bool {
+    let clean = text
+        .split_whitespace()
+        .next()
+        .unwrap_or(text)
+        .trim_end_matches('/');
+    clean.starts_with("https://code4rena.com/bounties/")
+        || clean.starts_with("http://code4rena.com/bounties/")
 }
 
 fn is_generic_vendor_homepage(text: &str) -> bool {
@@ -1324,6 +2276,13 @@ async fn generate_scope_txt(
     let mut extracted = deterministic_scope_extract(sources, protocol_root);
     let mut source = ScopeFileSource::ExtractedFromReadme;
     let mut warnings = Vec::new();
+    let mut external_scope_asset_count = 0usize;
+    let mut external_scope_entry_count = 0usize;
+    let mut external_scope_unresolved = Vec::new();
+    let external_contract_scope_audit = matches!(
+        cli.audit_type,
+        AuditType::Code4renaBounty | AuditType::ImmunefiBugBounty
+    );
     let bounty_scope_names = if matches!(cli.audit_type, AuditType::Code4renaBounty) {
         let bounty_scope =
             deterministic_bounty_contract_name_scope_extract(sources, protocol_root, cli);
@@ -1342,6 +2301,18 @@ async fn generate_scope_txt(
     } else {
         Vec::new()
     };
+    if external_contract_scope_audit {
+        let external_scope =
+            resolve_external_contract_scope(cli, protocol_root, output_path, sources).await?;
+        external_scope_asset_count = external_scope.assets.len();
+        external_scope_entry_count = external_scope.entries.len();
+        external_scope_unresolved = external_scope.unresolved.clone();
+        if !external_scope.entries.is_empty() {
+            source = ScopeFileSource::ExtractedFromExternalContractScope;
+            extracted.extend(external_scope.entries);
+        }
+        warnings.extend(external_scope.warnings);
+    }
     info!(
         "Deterministic entry-context scope extraction found {} candidate Solidity files",
         extracted.len()
@@ -1357,6 +2328,29 @@ async fn generate_scope_txt(
         anyhow::bail!(
             "Found Code4rena bounty scope contract names in context but none mapped to local Solidity files: {}. Provide context.files/context.urls that identify the source repo, adjust code_folders/subfolder, or provide scoped_files explicitly.",
             bounty_scope_names.join(", ")
+        );
+    }
+    if external_contract_scope_audit
+        && external_scope_asset_count > 0
+        && external_scope_entry_count == 0
+    {
+        anyhow::bail!(
+            "Found {external_scope_asset_count} external explorer-linked bounty scope assets but none mapped to local Solidity files. See {} for details. Provide the correct source repo/subfolder or add scoped_files explicitly.",
+            external_scope_resolution_report_path(output_path).display()
+        );
+    }
+    if external_contract_scope_audit && !external_scope_unresolved.is_empty() {
+        let preview = external_scope_unresolved
+            .iter()
+            .take(10)
+            .map(|asset| format!("{} ({})", asset.label, asset.address))
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "Could not map {} external explorer-linked bounty scope assets to local Solidity files: {}. See {} for the full resolution report. Refusing to fall back to all code folders because Code4rena bounty submissions cost money and scope must be precise.",
+            external_scope_unresolved.len(),
+            preview,
+            external_scope_resolution_report_path(output_path).display()
         );
     }
     if extracted.is_empty() || existing_count == 0 {
@@ -1508,6 +2502,897 @@ fn deterministic_bounty_contract_name_scope_extract(
     }
 }
 
+async fn resolve_external_contract_scope(
+    cli: &Cli,
+    protocol_root: &Path,
+    output_path: &Path,
+    sources: &[SourceContent],
+) -> Result<ExternalContractScopeResolution> {
+    let mut resolution = ExternalContractScopeResolution::default();
+    resolution.assets = external_contract_scope_assets_from_sources(sources);
+    if resolution.assets.is_empty() {
+        return Ok(resolution);
+    }
+
+    info!(
+        "Code4rena bounty scope extraction found {} explorer-linked contract assets",
+        resolution.assets.len()
+    );
+
+    let excluded_folders = bounty_declared_oos_folders(sources, cli);
+    let definitions = solidity_definitions(protocol_root, &excluded_folders);
+    if definitions.is_empty() {
+        resolution.warnings.push(format!(
+            "No Solidity contract/library/interface definitions were found under {}; explorer-linked scope cannot be mapped.",
+            protocol_root.display()
+        ));
+        write_external_contract_scope_report(output_path, &resolution)?;
+        return Ok(resolution);
+    }
+
+    let mut unresolved = Vec::new();
+    for asset in resolution.assets.clone() {
+        if let Some(record) = deterministic_external_asset_resolution(&asset, None, &definitions) {
+            push_external_resolution_record(&mut resolution, protocol_root, record);
+        } else {
+            unresolved.push(asset);
+        }
+    }
+    resolution.unresolved = unresolved;
+
+    fetch_metadata_and_retry_external_scope_resolution(
+        &mut resolution,
+        protocol_root,
+        &definitions,
+    )
+    .await;
+
+    if !resolution.unresolved.is_empty() {
+        match build_external_scope_agent() {
+            Ok(agent) => {
+                match codex_resolve_external_scope(&agent, &resolution, &definitions).await {
+                    Ok(model_resolution) => apply_codex_external_scope_resolution(
+                        &mut resolution,
+                        protocol_root,
+                        &definitions,
+                        model_resolution,
+                    ),
+                    Err(err) => resolution.warnings.push(format!(
+                        "Codex fallback scope resolver failed; unresolved explorer-linked scope assets remain: {err:#}"
+                    )),
+                }
+            }
+            Err(err) => resolution.warnings.push(format!(
+                "Could not create Codex fallback scope resolver; unresolved explorer-linked scope assets remain: {err:#}"
+            )),
+        }
+    }
+
+    resolution.entries.sort_by(|a, b| a.path.cmp(&b.path));
+    resolution.entries.dedup_by(|a, b| a.path == b.path);
+    write_external_contract_scope_report(output_path, &resolution)?;
+    Ok(resolution)
+}
+
+fn external_contract_scope_assets_from_sources(
+    sources: &[SourceContent],
+) -> Vec<ExternalContractScopeAsset> {
+    let mut assets = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for source in sources {
+        if !scope_text_source_kind(&source.kind)
+            || !matches!(
+                source.decision,
+                SourceDecision::UsedForScope | SourceDecision::UsedForBoth
+            )
+        {
+            continue;
+        }
+
+        let mut sections = likely_scope_sections(&source.content);
+        if sections.is_empty() {
+            sections = loose_contract_scope_sections(&source.content);
+        }
+        if sections.is_empty() && content_contains_explorer_contract_url(&source.content) {
+            sections.push(source.content.clone());
+        }
+
+        for section in sections {
+            for mut asset in external_contract_assets_from_text(&section, &source.location) {
+                let key = format!(
+                    "{}|{}",
+                    asset.address.to_ascii_lowercase(),
+                    asset.url.trim_end_matches('/')
+                );
+                if seen.insert(key) {
+                    asset.source_location = source.location.clone();
+                    assets.push(asset);
+                }
+            }
+        }
+    }
+
+    assets.sort_by(|a, b| {
+        a.label
+            .cmp(&b.label)
+            .then_with(|| a.address.cmp(&b.address))
+            .then_with(|| a.url.cmp(&b.url))
+    });
+    assets
+}
+
+fn scope_text_source_kind(kind: &ContextSourceKind) -> bool {
+    matches!(
+        kind,
+        ContextSourceKind::LocalReadme
+            | ContextSourceKind::LocalMarkdown
+            | ContextSourceKind::GithubMarkdown
+            | ContextSourceKind::GithubRaw
+            | ContextSourceKind::WebMarkdown
+            | ContextSourceKind::WebHtml
+            | ContextSourceKind::ImmunefiInformation
+            | ContextSourceKind::ImmunefiScope
+            | ContextSourceKind::ImmunefiResources
+    )
+}
+
+fn loose_contract_scope_sections(content: &str) -> Vec<String> {
+    let mut sections = Vec::new();
+    let mut current = Vec::new();
+    let mut in_scope = false;
+
+    for line in content.lines() {
+        let lower = line.to_ascii_lowercase();
+        if in_scope
+            && (is_out_of_scope_heading(&lower)
+                || lower.contains("out of scope")
+                || lower.contains("known issues")
+                || lower.contains("previous audits")
+                || lower.contains("bounty criteria"))
+        {
+            if !current.is_empty() {
+                sections.push(current.join("\n"));
+                current.clear();
+            }
+            in_scope = false;
+        }
+
+        let scope_marker = !is_out_of_scope_heading(&lower)
+            && ((lower.contains("contracts in scope") || lower.contains("smart contracts"))
+                || (lower.contains("in scope") && lower.contains("contract")));
+        if scope_marker {
+            if in_scope && !current.is_empty() {
+                sections.push(current.join("\n"));
+                current.clear();
+            }
+            in_scope = true;
+        }
+
+        if in_scope {
+            current.push(line.to_string());
+        }
+    }
+
+    if in_scope && !current.is_empty() {
+        sections.push(current.join("\n"));
+    }
+
+    sections
+}
+
+fn external_contract_assets_from_text(
+    text: &str,
+    source_location: &str,
+) -> Vec<ExternalContractScopeAsset> {
+    let mut assets = Vec::new();
+    let mut seen_urls = BTreeSet::new();
+    let markdown_link_re =
+        Regex::new(r#"\[([^\]]+)\]\((https?://[^\s)]+)(?:\s+"[^"]*")?\)"#).unwrap();
+    let bare_url_re = explorer_contract_url_regex();
+
+    for captures in markdown_link_re.captures_iter(text) {
+        let label = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
+        let url = captures.get(2).map(|m| m.as_str()).unwrap_or_default();
+        let url = clean_external_contract_url(url);
+        if !is_explorer_contract_url(&url) {
+            continue;
+        }
+        let Some(address) = contract_address_from_url(&url) else {
+            continue;
+        };
+        let explorer = explorer_host(&url).unwrap_or_else(|| "unknown-explorer".to_string());
+        seen_urls.insert(url.clone());
+        assets.push(ExternalContractScopeAsset {
+            label: clean_external_contract_label(label, &url, &address),
+            url,
+            address,
+            explorer,
+            source_location: source_location.to_string(),
+        });
+    }
+
+    for line in text.lines() {
+        for m in bare_url_re.find_iter(line) {
+            let url = clean_external_contract_url(m.as_str());
+            if !is_explorer_contract_url(&url) || seen_urls.contains(&url) {
+                continue;
+            }
+            let Some(address) = contract_address_from_url(&url) else {
+                continue;
+            };
+            assets.push(ExternalContractScopeAsset {
+                label: clean_external_contract_label(line, &url, &address),
+                url: url.clone(),
+                address,
+                explorer: explorer_host(&url).unwrap_or_else(|| "unknown-explorer".to_string()),
+                source_location: source_location.to_string(),
+            });
+        }
+    }
+
+    assets
+}
+
+fn explorer_contract_url_regex() -> Regex {
+    Regex::new(r#"https?://[A-Za-z0-9_.:-]+/(?:address|token)/0x[a-fA-F0-9]{40}[^\s<>)"'|]*"#)
+        .unwrap()
+}
+
+fn content_contains_explorer_contract_url(content: &str) -> bool {
+    explorer_contract_url_regex()
+        .find_iter(content)
+        .any(|m| is_explorer_contract_url(m.as_str()))
+}
+
+fn is_explorer_contract_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.contains("/address/0x") || lower.contains("/token/0x")) {
+        return false;
+    }
+    if contract_address_from_url(url).is_none() {
+        return false;
+    }
+    let Some(host) = explorer_host(url) else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    host.contains("etherscan")
+        || host.contains("basescan")
+        || host.contains("arbiscan")
+        || host.contains("polygonscan")
+        || host.contains("bscscan")
+        || host.contains("snowtrace")
+        || host.contains("moonscan")
+        || host.contains("blockscout")
+        || host.ends_with("scan.org")
+        || host.ends_with("scan.io")
+        || host.ends_with("scan.com")
+}
+
+fn explorer_host(url: &str) -> Option<String> {
+    let after_scheme = url.split_once("://")?.1;
+    let host = after_scheme.split('/').next()?.trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+fn contract_address_from_url(url: &str) -> Option<String> {
+    Regex::new(r#"(?i)0x[a-f0-9]{40}"#)
+        .unwrap()
+        .find(url)
+        .map(|m| m.as_str().to_string())
+}
+
+fn clean_external_contract_url(raw: &str) -> String {
+    normalize_extracted_url(raw)
+        .trim()
+        .trim_end_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | '`' | '\'' | '"'))
+        .to_string()
+}
+
+fn clean_external_contract_label(raw: &str, url: &str, address: &str) -> String {
+    let without_url = raw.replace(url, " ").replace(address, " ");
+    let without_markdown = Regex::new(r#"\[([^\]]+)\]\([^)]+\)"#)
+        .unwrap()
+        .replace_all(&without_url, "$1");
+    let cleaned = without_markdown
+        .replace(['|', '`', '*', '[', ']', '(', ')'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '/')
+        .to_string();
+
+    if cleaned.is_empty() {
+        address.to_string()
+    } else {
+        cleaned
+    }
+}
+
+async fn fetch_metadata_and_retry_external_scope_resolution(
+    resolution: &mut ExternalContractScopeResolution,
+    protocol_root: &Path,
+    definitions: &[SolidityDefinition],
+) {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .user_agent("ai-agent-audit-context-generator/0.1")
+        .build()
+    else {
+        resolution
+            .warnings
+            .push("Could not build HTTP client for explorer metadata fetches".to_string());
+        return;
+    };
+
+    let mut metadata_by_url = BTreeMap::new();
+    let fetch_queue = external_metadata_fetch_queue(resolution);
+    let fetch_count = fetch_queue
+        .len()
+        .min(MAX_EXTERNAL_CONTRACT_METADATA_FETCHES);
+    for asset in fetch_queue.iter().take(fetch_count) {
+        match fetch_external_contract_metadata(&client, asset).await {
+            Ok(metadata) => {
+                metadata_by_url.insert(asset.url.clone(), metadata.clone());
+                resolution.metadata.push(metadata);
+            }
+            Err(err) => resolution.warnings.push(format!(
+                "Could not fetch explorer metadata for {} ({}): {err:#}",
+                asset.label, asset.url
+            )),
+        }
+    }
+
+    if fetch_queue.len() > MAX_EXTERNAL_CONTRACT_METADATA_FETCHES {
+        resolution.warnings.push(format!(
+            "Only fetched explorer metadata for {MAX_EXTERNAL_CONTRACT_METADATA_FETCHES} scope assets out of {}, prioritizing unresolved mappings first",
+            fetch_queue.len()
+        ));
+    }
+
+    let mut metadata_resolved_assets = BTreeSet::new();
+    let assets = resolution.assets.clone();
+    for asset in assets {
+        if let Some(metadata) = metadata_by_url.get(&asset.url)
+            && let Some(record) =
+                deterministic_external_asset_resolution(&asset, Some(metadata), definitions)
+        {
+            metadata_resolved_assets.insert(external_scope_asset_key(&asset));
+            push_external_resolution_record(resolution, protocol_root, record);
+        }
+    }
+    resolution
+        .unresolved
+        .retain(|asset| !metadata_resolved_assets.contains(&external_scope_asset_key(asset)));
+}
+
+fn external_scope_asset_key(asset: &ExternalContractScopeAsset) -> String {
+    format!(
+        "{}|{}|{}",
+        asset.explorer.to_ascii_lowercase(),
+        asset.address.to_ascii_lowercase(),
+        asset.url.trim_end_matches('/').to_ascii_lowercase()
+    )
+}
+
+fn external_metadata_fetch_queue(
+    resolution: &ExternalContractScopeResolution,
+) -> Vec<ExternalContractScopeAsset> {
+    let mut queued_urls = BTreeSet::new();
+    let mut queue = Vec::new();
+
+    for asset in resolution.unresolved.iter().chain(resolution.assets.iter()) {
+        if queued_urls.insert(asset.url.trim_end_matches('/').to_string()) {
+            queue.push(asset.clone());
+        }
+    }
+
+    queue
+}
+
+async fn fetch_external_contract_metadata(
+    client: &reqwest::Client,
+    asset: &ExternalContractScopeAsset,
+) -> Result<ExternalContractMetadata> {
+    let response = client.get(&asset.url).send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Explorer metadata fetch failed with status {}",
+            response.status()
+        );
+    }
+    let html = response.text().await?;
+    Ok(external_contract_metadata_from_html(&asset.url, &html))
+}
+
+fn external_contract_metadata_from_html(url: &str, html: &str) -> ExternalContractMetadata {
+    let mut contract_names = BTreeSet::new();
+    let mut implementation_addresses = BTreeSet::new();
+    let mut source_files = BTreeSet::new();
+    let decoded = decode_basic_entities(html);
+
+    if let Some(title) = Regex::new(r#"(?is)<title[^>]*>(.*?)</title>"#)
+        .unwrap()
+        .captures(&decoded)
+        .and_then(|captures| captures.get(1).map(|m| m.as_str()))
+    {
+        for candidate in title_name_candidates(title) {
+            if is_identifier_like(&candidate) {
+                contract_names.insert(candidate);
+            }
+        }
+    }
+
+    let contract_name_raw_re =
+        Regex::new(r#"(?is)Contract\s+Name\s*:?.{0,300}?([A-Za-z_][A-Za-z0-9_]*)"#).unwrap();
+    for captures in contract_name_raw_re.captures_iter(&decoded) {
+        if let Some(name) = captures.get(1).map(|m| m.as_str().to_string())
+            && is_identifier_like(&name)
+            && !metadata_stopword(&name)
+        {
+            contract_names.insert(name);
+        }
+    }
+
+    let text = html_to_text(html);
+    let lines = text.lines().collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate() {
+        let lower = line.to_ascii_lowercase();
+        if lower.contains("contract name") {
+            if let Some(after_colon) = line.split_once(':').map(|(_, value)| value.trim()) {
+                for candidate in identifier_candidates(after_colon) {
+                    contract_names.insert(candidate);
+                }
+            }
+            for next_line in lines.iter().skip(index + 1).take(4) {
+                for candidate in identifier_candidates(next_line) {
+                    contract_names.insert(candidate);
+                }
+            }
+        }
+        if lower.contains("implementation") {
+            for candidate_line in lines.iter().skip(index).take(3) {
+                for address in Regex::new(r#"(?i)0x[a-f0-9]{40}"#)
+                    .unwrap()
+                    .find_iter(candidate_line)
+                {
+                    implementation_addresses.insert(address.as_str().to_string());
+                }
+            }
+        }
+    }
+
+    let source_file_re =
+        Regex::new(r#"(?i)File\s+\d+\s+of\s+\d+\s*:\s*([A-Za-z0-9_./-]+\.sol)"#).unwrap();
+    for captures in source_file_re.captures_iter(&decoded) {
+        if let Some(path) = captures.get(1).map(|m| m.as_str().to_string()) {
+            source_files.insert(path);
+        }
+    }
+
+    let definition_name_re = Regex::new(
+        r#"\b(?:abstract\s+)?(?:contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)\b"#,
+    )
+    .unwrap();
+    for captures in definition_name_re.captures_iter(&decoded).take(40) {
+        if let Some(name) = captures.get(1).map(|m| m.as_str().to_string())
+            && is_identifier_like(&name)
+            && !metadata_stopword(&name)
+        {
+            contract_names.insert(name);
+        }
+    }
+
+    ExternalContractMetadata {
+        url: url.to_string(),
+        contract_names: contract_names.into_iter().collect(),
+        implementation_addresses: implementation_addresses.into_iter().collect(),
+        source_files: source_files.into_iter().collect(),
+    }
+}
+
+fn title_name_candidates(title: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let primary = title
+        .split('|')
+        .next()
+        .unwrap_or(title)
+        .replace("Address", " ");
+    let parts = if primary.contains(':') {
+        primary.rsplit(':').take(1).collect::<Vec<_>>()
+    } else {
+        primary.split(['-', '/']).collect::<Vec<_>>()
+    };
+    for part in parts {
+        for candidate in identifier_candidates(part) {
+            candidates.push(candidate);
+        }
+    }
+    candidates
+}
+
+fn identifier_candidates(text: &str) -> Vec<String> {
+    Regex::new(r#"\b[A-Za-z_][A-Za-z0-9_]{1,80}\b"#)
+        .unwrap()
+        .find_iter(text)
+        .map(|m| m.as_str().to_string())
+        .filter(|candidate| !metadata_stopword(candidate))
+        .collect()
+}
+
+fn is_identifier_like(value: &str) -> bool {
+    Regex::new(r#"^[A-Za-z_][A-Za-z0-9_]{1,80}$"#)
+        .unwrap()
+        .is_match(value)
+}
+
+fn metadata_stopword(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "address"
+            | "contract"
+            | "contracts"
+            | "name"
+            | "source"
+            | "code"
+            | "file"
+            | "of"
+            | "sol"
+            | "pragma"
+            | "solidity"
+            | "proxy"
+            | "implementation"
+            | "verified"
+            | "etherscan"
+            | "basescan"
+            | "moonscan"
+            | "arbiscan"
+            | "polygonscan"
+            | "blockscout"
+            | "div"
+            | "span"
+            | "href"
+            | "class"
+            | "row"
+            | "col"
+    )
+}
+
+fn deterministic_external_asset_resolution(
+    asset: &ExternalContractScopeAsset,
+    metadata: Option<&ExternalContractMetadata>,
+    definitions: &[SolidityDefinition],
+) -> Option<ExternalContractResolutionRecord> {
+    let mut paths = BTreeSet::new();
+    let mut matched_reasons = Vec::new();
+    let candidates = external_asset_name_candidates(asset, metadata);
+
+    for candidate in candidates {
+        let normalized = normalize_identifier(&candidate);
+        if normalized.is_empty() {
+            continue;
+        }
+        let matched = definitions
+            .iter()
+            .filter(|definition| {
+                definition.normalized_name == normalized
+                    || definition.normalized_file_stem == normalized
+            })
+            .collect::<Vec<_>>();
+        if matched.is_empty() {
+            continue;
+        }
+        matched_reasons.push(candidate);
+        for definition in matched {
+            paths.insert(definition.path.clone());
+        }
+    }
+
+    if paths.is_empty() {
+        return None;
+    }
+
+    Some(ExternalContractResolutionRecord {
+        label: asset.label.clone(),
+        address: asset.address.clone(),
+        explorer: asset.explorer.clone(),
+        url: asset.url.clone(),
+        paths: paths.into_iter().collect(),
+        confidence: if metadata.is_some() {
+            "High".to_string()
+        } else {
+            "Medium".to_string()
+        },
+        reason: format!(
+            "Matched explorer scope label/metadata candidates to local Solidity definitions: {}",
+            matched_reasons.join(", ")
+        ),
+    })
+}
+
+fn external_asset_name_candidates(
+    asset: &ExternalContractScopeAsset,
+    metadata: Option<&ExternalContractMetadata>,
+) -> Vec<String> {
+    let mut candidates = Vec::new();
+    push_name_candidate_variants(&mut candidates, &asset.label);
+
+    if let Some(metadata) = metadata {
+        for name in &metadata.contract_names {
+            push_name_candidate_variants(&mut candidates, name);
+        }
+        for source_file in &metadata.source_files {
+            if let Some(stem) = Path::new(source_file)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+            {
+                push_name_candidate_variants(&mut candidates, stem);
+            }
+        }
+    }
+
+    candidates.sort_by_key(|candidate| normalize_identifier(candidate));
+    candidates.dedup_by(|a, b| normalize_identifier(a) == normalize_identifier(b));
+    candidates
+}
+
+fn push_name_candidate_variants(candidates: &mut Vec<String>, raw: &str) {
+    let cleaned = clean_name_candidate_for_matching(raw);
+    if cleaned.is_empty() {
+        return;
+    }
+    candidates.push(cleaned.clone());
+
+    for delimiter in [" - ", ":"] {
+        if let Some((_, suffix)) = cleaned.rsplit_once(delimiter) {
+            let suffix = clean_name_candidate_for_matching(suffix);
+            if !suffix.is_empty() {
+                candidates.push(suffix);
+            }
+        }
+    }
+
+    for part in cleaned.split(['/', ',', ';', '|']) {
+        let part = clean_name_candidate_for_matching(part);
+        if !part.is_empty() {
+            candidates.push(part);
+        }
+    }
+
+    for separator in [" and ", " or "] {
+        for part in cleaned.split(separator) {
+            let part = clean_name_candidate_for_matching(part);
+            if !part.is_empty() {
+                candidates.push(part);
+            }
+        }
+    }
+}
+
+fn clean_name_candidate_for_matching(raw: &str) -> String {
+    let no_address = Regex::new(r#"(?i)0x[a-f0-9]{40}"#)
+        .unwrap()
+        .replace_all(raw, " ");
+    let no_url = Regex::new(r#"https?://\S+"#)
+        .unwrap()
+        .replace_all(&no_address, " ");
+    let generic_re = Regex::new(
+        r#"(?i)\b(smart|contract|contracts|address|link|proxy|implementation|source|code|base|ethereum|optimism|moonbeam|moonriver|arbitrum|polygon|bsc|mainnet|testnet)\b"#,
+    )
+    .unwrap();
+    generic_re
+        .replace_all(&no_url, " ")
+        .replace(['`', '*', '[', ']', '(', ')'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '/')
+        .to_string()
+}
+
+fn push_external_resolution_record(
+    resolution: &mut ExternalContractScopeResolution,
+    protocol_root: &Path,
+    record: ExternalContractResolutionRecord,
+) {
+    for path in &record.paths {
+        resolution.entries.push(ScopeFileEntry {
+            path: path.clone(),
+            exists: protocol_root.join(path.trim_start_matches("./")).exists(),
+            reason: Some(format!(
+                "Mapped from external explorer scope link: {} {}",
+                record.label, record.address
+            )),
+        });
+    }
+    resolution.resolved.push(record);
+}
+
+fn build_external_scope_agent() -> Result<AIAgent> {
+    AgentFactory::create_openai_agent(
+        &AgentConfig::new(None)
+            .with_model(OPENAI_MODEL)
+            .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
+            .with_preamble(
+                "You resolve external block-explorer bounty scope entries to local Solidity source files. \
+                 Use only the asset labels, explorer metadata, and local Solidity index provided in the prompt. \
+                 Return only paths that appear exactly in the local index. Do not invent paths, contracts, or scope. \
+                 If a mapping is uncertain, leave that asset unresolved.",
+            ),
+    )
+    .map_err(anyhow::Error::from)
+}
+
+async fn codex_resolve_external_scope(
+    agent: &AIAgent,
+    resolution: &ExternalContractScopeResolution,
+    definitions: &[SolidityDefinition],
+) -> Result<CodexExternalScopeResolution> {
+    let prompt = external_scope_codex_prompt(resolution, definitions)?;
+    agent.extract_with_retry(&prompt).await
+}
+
+fn external_scope_codex_prompt(
+    resolution: &ExternalContractScopeResolution,
+    definitions: &[SolidityDefinition],
+) -> Result<String> {
+    let unresolved = serde_json::to_string_pretty(&resolution.unresolved)?;
+    let metadata = serde_json::to_string_pretty(&resolution.metadata)?;
+    let local_index = render_solidity_definition_index_for_prompt(definitions);
+    Ok(format!(
+        r#"
+Map unresolved block-explorer contract scope assets to local Solidity files.
+
+Rules:
+- Return JSON matching the schema.
+- `paths` must be exact paths from the Local Solidity Index.
+- Prefer exact contract name and filename matches.
+- Split combined labels such as `Unitroller/Comptroller` and map each real in-scope contract when both names exist locally.
+- Convert spaced labels such as `Temporal Governor` to Solidity identifier form when appropriate.
+- Explorer metadata is stronger evidence than the public display label.
+- Do not map token symbols, chain names, proxy words, or generic labels to unrelated files.
+- If unsure, put the asset in `unresolved`; do not guess.
+
+Unresolved explorer assets:
+{unresolved}
+
+Fetched explorer metadata:
+{metadata}
+
+Local Solidity Index:
+{local_index}
+"#
+    ))
+}
+
+fn render_solidity_definition_index_for_prompt(definitions: &[SolidityDefinition]) -> String {
+    let mut lines = definitions
+        .iter()
+        .map(|definition| {
+            format!(
+                "- path={} name={} file_stem={} tokens={}",
+                definition.path,
+                definition.name,
+                definition.file_stem,
+                definition.tokens.join(",")
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.sort();
+    truncate_to_token_limit(lines.join("\n"), 15_000)
+}
+
+fn apply_codex_external_scope_resolution(
+    resolution: &mut ExternalContractScopeResolution,
+    protocol_root: &Path,
+    definitions: &[SolidityDefinition],
+    model_resolution: CodexExternalScopeResolution,
+) {
+    let valid_paths = definitions
+        .iter()
+        .map(|definition| definition.path.clone())
+        .collect::<BTreeSet<_>>();
+    let mut resolved_addresses = BTreeSet::new();
+
+    for item in model_resolution.resolutions {
+        let CodexExternalScopeResolvedAsset {
+            label,
+            address,
+            paths,
+            confidence,
+            reason,
+        } = item;
+        let paths = paths
+            .into_iter()
+            .filter(|path| {
+                let valid = valid_paths.contains(path);
+                if !valid {
+                    resolution.warnings.push(format!(
+                        "Codex scope resolver returned non-index path for {} ({}): {}",
+                        label, address, path
+                    ));
+                }
+                valid
+            })
+            .collect::<BTreeSet<_>>();
+        if paths.is_empty() {
+            continue;
+        }
+
+        let Some(asset) = resolution
+            .unresolved
+            .iter()
+            .find(|asset| {
+                asset.address.eq_ignore_ascii_case(&address)
+                    || normalize_identifier(&asset.label) == normalize_identifier(&label)
+            })
+            .cloned()
+        else {
+            resolution.warnings.push(format!(
+                "Codex scope resolver returned a mapping for an unknown asset: {} ({})",
+                label, address
+            ));
+            continue;
+        };
+
+        resolved_addresses.insert(asset.address.to_ascii_lowercase());
+        push_external_resolution_record(
+            resolution,
+            protocol_root,
+            ExternalContractResolutionRecord {
+                label: asset.label,
+                address: asset.address,
+                explorer: asset.explorer,
+                url: asset.url,
+                paths: paths.into_iter().collect(),
+                confidence,
+                reason: format!("Codex fallback mapping: {}", reason),
+            },
+        );
+    }
+
+    for item in model_resolution.unresolved {
+        resolution.warnings.push(format!(
+            "Codex scope resolver left unresolved: {} ({}) - {}",
+            item.label, item.address, item.reason
+        ));
+    }
+
+    resolution
+        .unresolved
+        .retain(|asset| !resolved_addresses.contains(&asset.address.to_ascii_lowercase()));
+}
+
+fn external_scope_resolution_report_path(output_path: &Path) -> PathBuf {
+    let stem = output_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("scope");
+    output_path.with_file_name(format!("{stem}-resolution.json"))
+}
+
+fn write_external_contract_scope_report(
+    output_path: &Path,
+    resolution: &ExternalContractScopeResolution,
+) -> Result<()> {
+    let report_path = external_scope_resolution_report_path(output_path);
+    let report = ExternalContractScopeResolutionReport {
+        assets: resolution.assets.clone(),
+        resolved: resolution.resolved.clone(),
+        unresolved: resolution.unresolved.clone(),
+        metadata: resolution.metadata.clone(),
+        warnings: resolution.warnings.clone(),
+    };
+    fs::write(&report_path, serde_json::to_string_pretty(&report)?)
+        .with_context(|| format!("Failed to write {}", report_path.display()))
+}
+
 fn bounty_contract_names_from_scope_sections(sources: &[SourceContent]) -> Vec<String> {
     let mut names = Vec::new();
     for source in sources {
@@ -1617,11 +3502,28 @@ fn solidity_definition_index(
     protocol_root: &Path,
     excluded_folders: &[String],
 ) -> BTreeMap<String, Vec<String>> {
+    let mut index = BTreeMap::<String, Vec<String>>::new();
+    for definition in solidity_definitions(protocol_root, excluded_folders) {
+        index
+            .entry(definition.name)
+            .or_default()
+            .push(definition.path);
+    }
+    for paths in index.values_mut() {
+        paths.sort_by_key(|path| (path.matches('/').count(), path.len(), path.clone()));
+    }
+    index
+}
+
+fn solidity_definitions(
+    protocol_root: &Path,
+    excluded_folders: &[String],
+) -> Vec<SolidityDefinition> {
     let definition_re = Regex::new(
         r#"\b(?:abstract\s+)?(?:contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)\b"#,
     )
     .unwrap();
-    let mut index = BTreeMap::<String, Vec<String>>::new();
+    let mut definitions = Vec::new();
 
     for entry in WalkDir::new(protocol_root)
         .into_iter()
@@ -1645,22 +3547,58 @@ fn solidity_definition_index(
         let Ok(content) = fs::read_to_string(path) else {
             continue;
         };
+        let file_stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+            .to_string();
         for captures in definition_re.captures_iter(&content) {
             let Some(name) = captures.get(1).map(|m| m.as_str().to_string()) else {
                 continue;
             };
-            index
-                .entry(name)
-                .or_default()
-                .push(format!("./{}", relative.trim_start_matches("./")));
+            let normalized_name = normalize_identifier(&name);
+            let normalized_file_stem = normalize_identifier(&file_stem);
+            let mut tokens = identifier_tokens(&name);
+            tokens.extend(identifier_tokens(&file_stem));
+            tokens.sort();
+            tokens.dedup();
+            definitions.push(SolidityDefinition {
+                name,
+                path: format!("./{}", relative.trim_start_matches("./")),
+                file_stem: file_stem.clone(),
+                normalized_name,
+                normalized_file_stem,
+                tokens,
+            });
         }
     }
 
-    for paths in index.values_mut() {
-        paths.sort_by_key(|path| (path.matches('/').count(), path.len(), path.clone()));
-    }
+    definitions.sort_by(|a, b| {
+        a.path
+            .cmp(&b.path)
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.file_stem.cmp(&b.file_stem))
+    });
+    definitions
+}
 
-    index
+fn normalize_identifier(raw: &str) -> String {
+    raw.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn identifier_tokens(raw: &str) -> Vec<String> {
+    let with_boundaries = Regex::new(r#"([a-z0-9])([A-Z])"#)
+        .unwrap()
+        .replace_all(raw, "$1 $2");
+    Regex::new(r#"[A-Za-z0-9]+"#)
+        .unwrap()
+        .find_iter(&with_boundaries)
+        .map(|m| m.as_str().to_ascii_lowercase())
+        .filter(|token| token.len() > 1 && !metadata_stopword(token))
+        .collect()
 }
 
 fn bounty_declared_oos_folders(sources: &[SourceContent], cli: &Cli) -> Vec<String> {
@@ -1720,8 +3658,9 @@ fn bounty_oos_excludes(relative: &str, excluded_folders: &[String]) -> bool {
 
 fn fallback_scope_from_code_folders(cli: &Cli, protocol_root: &Path) -> Vec<ScopeFileEntry> {
     let mut entries = Vec::new();
+    let code_folders = scope_fallback_code_folders(cli);
 
-    for folder in &cli.code_folders {
+    for folder in &code_folders {
         let trimmed_folder = folder.trim();
         if trimmed_folder.is_empty() {
             continue;
@@ -1770,6 +3709,31 @@ fn fallback_scope_from_code_folders(cli: &Cli, protocol_root: &Path) -> Vec<Scop
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     entries.dedup_by(|a, b| a.path == b.path);
     entries
+}
+
+fn scope_fallback_code_folders(cli: &Cli) -> Vec<String> {
+    if matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
+        && cli.code_folders == vec!["src".to_string()]
+        && !cli.repo_tree_paths.is_empty()
+    {
+        let mut folders = cli
+            .repo_tree_paths
+            .iter()
+            .map(|path| {
+                path.trim()
+                    .trim_matches('/')
+                    .trim_start_matches("./")
+                    .trim_end_matches('/')
+                    .to_string()
+            })
+            .filter(|path| !path.is_empty())
+            .collect::<Vec<_>>();
+        folders.sort();
+        folders.dedup();
+        folders
+    } else {
+        cli.code_folders.clone()
+    }
 }
 
 fn scope_fallback_excludes(relative: &str, cli: &Cli) -> bool {
@@ -1926,6 +3890,7 @@ Hard requirements:
 - Include ALL relevant audit scope context from the source material, but summarize aggressively when the raw source is long.
 - Include public known issues, files in/out of scope, areas of concern, invariants, trusted roles, and V12/prior findings when present.
 - For Code4rena bounty sources, explicitly preserve the global bounty out-of-scope scenarios and Critical/High eligibility criteria from the bounty criteria page.
+- For Immunefi bounty sources, explicitly preserve assets in scope, impacts in scope, out-of-scope rules, prohibited activities, PoC requirements, primacy rules, and prior-audit/known-issue exclusions.
 - For V12/prior findings, do not copy full reports. Summarize finding titles, affected areas, and audit implications.
 - Prefer exact file/path tables for scope. Prefer concise summaries for prose-heavy docs and historical reports.
 - If a source is generic, duplicated, marketing-oriented, or low-signal, omit it and record that in `omitted_items`.
@@ -1977,6 +3942,7 @@ Hard requirements:
 - Explain what the protocol does and how it works.
 - Focus on architecture, main flows, accounting/value flow, external integrations, trust boundaries, and security-relevant assumptions.
 - Pull only useful protocol documentation from entry and second-level sources.
+- For Immunefi bounty sources, treat Resources documentation links and the program overview as primary protocol documentation.
 - Be highly discriminating: include docs that help an auditor understand mechanics, assets, permissions, invariants, integrations, and failure modes.
 - Summarize large documentation pages instead of copying them. Do not include exhaustive docs, changelogs, marketing copy, setup instructions, or generic contest rules.
 - If multiple sources repeat the same concept, merge them into one concise explanation and cite/source-note the strongest source.
@@ -2036,7 +4002,7 @@ async fn enforce_markdown_token_limit(
             r#"
 Summarize and compress this {doc_kind} markdown to <= {effective_limit} tokens.
 
-Preserve required sections, scope, known issues, Code4rena bounty criteria/OOS rules, summarized V12/prior findings, invariants, trusted roles, and security-relevant protocol mechanics. Remove repetition, copied report prose, duplicated source material, generic docs, and low-value background first. Prefer concise tables and bullets.
+Preserve required sections, scope, known issues, Code4rena/Immunefi bounty criteria/OOS rules, summarized V12/prior findings, invariants, trusted roles, and security-relevant protocol mechanics. Remove repetition, copied report prose, duplicated source material, generic docs, and low-value background first. Prefer concise tables and bullets.
 
 Do not blindly truncate the tail. Rewrite overlong sections into compact summaries so important context is retained.
 
@@ -2303,9 +4269,10 @@ fn html_to_text(html: &str) -> String {
     let without_scripts = Regex::new(r"(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>")
         .unwrap()
         .replace_all(html, " ");
+    let with_anchor_links = preserve_html_anchor_links(&without_scripts);
     let with_newlines = Regex::new(r"(?i)</?(p|br|div|li|h[1-6]|tr|table|section|article)[^>]*>")
         .unwrap()
-        .replace_all(&without_scripts, "\n");
+        .replace_all(&with_anchor_links, "\n");
     let stripped = Regex::new(r"(?s)<[^>]+>")
         .unwrap()
         .replace_all(&with_newlines, " ");
@@ -2315,6 +4282,32 @@ fn html_to_text(html: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn preserve_html_anchor_links(html: &str) -> String {
+    Regex::new(r#"(?is)<a\b[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>"#)
+        .unwrap()
+        .replace_all(html, |captures: &regex::Captures<'_>| {
+            let href = decode_basic_entities(captures.get(1).map(|m| m.as_str()).unwrap_or(""));
+            let label_html = captures.get(2).map(|m| m.as_str()).unwrap_or("");
+            let label = decode_basic_entities(
+                &Regex::new(r"(?s)<[^>]+>")
+                    .unwrap()
+                    .replace_all(label_html, " "),
+            )
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+            if href.is_empty() {
+                label
+            } else if label.is_empty() || label == href {
+                href
+            } else {
+                format!("{label} ({href})")
+            }
+        })
+        .into_owned()
 }
 
 fn decode_basic_entities(text: &str) -> String {
@@ -2420,6 +4413,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prepare_code::immunefi::{ImmunefiAsset, ImmunefiBountyData, ImmunefiBountyUrls};
 
     #[test]
     fn artifact_prefix_preserves_repo_folder_identity() {
@@ -2433,6 +4427,185 @@ mod tests {
         );
         assert_eq!(artifact_prefix_from_repo_name("MyProtocol"), "MyProtocol");
         assert_eq!(artifact_prefix_from_repo_name("my-protocol"), "my-protocol");
+    }
+
+    #[test]
+    fn explorer_network_inference_covers_major_mainnets_and_testnets() {
+        assert_eq!(
+            infer_explorer_network(
+                "https://etherscan.io/address/0x1111111111111111111111111111111111111111",
+            )
+            .unwrap()
+            .id,
+            "ethereum-mainnet"
+        );
+        assert_eq!(
+            infer_explorer_network(
+                "https://basescan.org/address/0x1111111111111111111111111111111111111111",
+            )
+            .unwrap()
+            .id,
+            "base-mainnet"
+        );
+        assert_eq!(
+            infer_explorer_network(
+                "https://sepolia.arbiscan.io/address/0x1111111111111111111111111111111111111111",
+            )
+            .unwrap()
+            .id,
+            "arbitrum-sepolia"
+        );
+        assert_eq!(
+            infer_explorer_network(
+                "https://berascan.com/address/0x1111111111111111111111111111111111111111",
+            )
+            .unwrap()
+            .id,
+            "berachain-mainnet"
+        );
+    }
+
+    #[test]
+    fn immunefi_poc_runtime_extracts_deployed_assets_and_rpc_env_names() {
+        let bounty = ImmunefiBountyData {
+            input_url: "https://immunefi.com/bug-bounty/example/information/".to_string(),
+            urls: ImmunefiBountyUrls {
+                base: "https://immunefi.com/bug-bounty/example".to_string(),
+                information: "https://immunefi.com/bug-bounty/example/information/".to_string(),
+                scope: "https://immunefi.com/bug-bounty/example/scope/".to_string(),
+                resources: "https://immunefi.com/bug-bounty/example/resources/".to_string(),
+            },
+            project: "Example".to_string(),
+            slug: "example".to_string(),
+            description: None,
+            website_url: None,
+            github_url: None,
+            max_bounty: None,
+            launch_date: None,
+            updated_date: None,
+            proof_of_concept_type: None,
+            primacy: None,
+            severity_system: None,
+            rewards_token: None,
+            rewards_token_network: None,
+            codebases: Vec::new(),
+            documentations: Vec::new(),
+            audits: Vec::new(),
+            assets: vec![
+                ImmunefiAsset {
+                    url: "https://basescan.org/address/0xfbb21d0380bee3312b33c4353c8936a0f13ef26c"
+                        .to_string(),
+                    asset_type: Some("smart_contract".to_string()),
+                    description: Some("Vault".to_string()),
+                    is_primacy_of_impact: false,
+                },
+                ImmunefiAsset {
+                    url: "https://immunefi.com".to_string(),
+                    asset_type: Some("smart_contract".to_string()),
+                    description: Some("Primacy of Impact".to_string()),
+                    is_primacy_of_impact: true,
+                },
+            ],
+            impacts: Vec::new(),
+            rewards: Vec::new(),
+            default_out_of_scope_smart_contract: None,
+            default_out_of_scope_general: None,
+            prohibited_activities: None,
+            custom_out_of_scope: None,
+            known_issues: Vec::new(),
+            tabs: Vec::new(),
+        };
+        let mut rpc_env = BTreeMap::new();
+        rpc_env.insert(
+            "base-mainnet".to_string(),
+            "BASE_RPC_URL_FOR_POC_RUNTIME_TEST".to_string(),
+        );
+        let runtime = build_immunefi_poc_runtime(
+            &bounty,
+            &PocConfig {
+                allow_fork: true,
+                prefer_fork: true,
+                rpc_env,
+            },
+        );
+
+        assert_eq!(runtime.assets.len(), 1);
+        assert_eq!(runtime.assets[0].network, "base-mainnet");
+        assert_eq!(
+            runtime.assets[0].rpc_env_var,
+            "BASE_RPC_URL_FOR_POC_RUNTIME_TEST"
+        );
+        assert_eq!(runtime.networks.len(), 1);
+        let rendered = render_immunefi_poc_runtime_markdown(&runtime);
+        assert!(rendered.contains("BASE_RPC_URL_FOR_POC_RUNTIME_TEST"));
+        assert!(rendered.contains("Prefer a mainnet fork PoC"));
+    }
+
+    #[test]
+    fn immunefi_context_generates_even_with_complete_manual_context() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+custom_doc: "docs.md"
+audit_scope: "scope.md"
+scoped_files: "scope.txt"
+"#,
+        )
+        .unwrap();
+
+        assert!(should_generate_context(&cli));
+    }
+
+    #[tokio::test]
+    async fn immunefi_cached_context_reuses_artifacts_without_fetching() {
+        let tmp = tempfile::tempdir().unwrap();
+        let output_root = tmp.path().join("audit-docs");
+        let artifact_dir = output_root.join("protocol");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        for name in [
+            "protocol-scope.txt",
+            "protocol-scope.md",
+            "protocol-docs.md",
+            "protocol-immunefi-bounty-rules.md",
+            "protocol-immunefi-severity-rubric.md",
+            "protocol-immunefi-poc-runtime.md",
+        ] {
+            fs::write(artifact_dir.join(name), "# cached\n").unwrap();
+        }
+        let mut cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "not-an-immunefi-url"
+"#,
+        )
+        .unwrap();
+        cli.context = Some(ContextConfig {
+            output_dir: output_root.to_string_lossy().to_string(),
+            force_regenerate: false,
+            ..Default::default()
+        });
+
+        let context = generate_audit_context(
+            &cli,
+            tmp.path(),
+            tmp.path(),
+            "protocol",
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+        .await
+        .unwrap();
+
+        assert!(!context.regenerated);
+        assert_eq!(context.extra_docs.len(), 3);
+        assert!(
+            context
+                .extra_docs
+                .iter()
+                .any(|path| path.ends_with("protocol-immunefi-severity-rubric.md"))
+        );
     }
 
     #[test]
@@ -2617,6 +4790,17 @@ code_folders:
             classify_link("https://github.com/org/repo/blob/main/scope.txt", "scope"),
             LinkClassification::Scope
         );
+        assert_eq!(
+            classify_link("https://code4rena.com/bounties/moonwell", "Moonwell"),
+            LinkClassification::Scope
+        );
+        assert_eq!(
+            link_skip_reason(
+                "https://code4rena.com/bounties/moonwell",
+                &LinkClassification::Scope,
+            ),
+            None
+        );
     }
 
     #[test]
@@ -2789,6 +4973,196 @@ audit_type: "Code4renaBounty"
         assert_eq!(extracted.unmapped_names, Vec::<String>::new());
         assert_eq!(extracted.entries.len(), 1);
         assert_eq!(extracted.entries[0].path, "./src/access/LegionBouncer.sol");
+    }
+
+    #[test]
+    fn html_to_text_preserves_anchor_href_for_scope_links() {
+        let address = "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c";
+        let html = format!(
+            r#"<html><body><h2>Smart Contracts in Scope</h2><a href="https://basescan.org/address/{address}">Comptroller</a></body></html>"#
+        );
+
+        let text = html_to_text(&html);
+
+        assert!(text.contains(&format!(
+            "Comptroller (https://basescan.org/address/{address})"
+        )));
+    }
+
+    #[test]
+    fn external_contract_assets_extract_markdown_and_html_preserved_links() {
+        let address = "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c";
+        let sources = vec![SourceContent {
+            id: "source-1".to_string(),
+            kind: ContextSourceKind::LocalReadme,
+            location: "README.md".to_string(),
+            title: None,
+            content: format!(
+                r#"
+# Smart Contracts in Scope
+
+| Name | Address |
+| --- | --- |
+| [Smart Contract - Unitroller/Comptroller](https://basescan.org/address/{address}) | Base |
+"#
+            ),
+            decision: SourceDecision::UsedForBoth,
+            reason: ENTRY_CONTEXT_REASON.to_string(),
+        }];
+
+        let assets = external_contract_scope_assets_from_sources(&sources);
+
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].label, "Smart Contract - Unitroller/Comptroller");
+        assert_eq!(assets[0].address, address);
+        assert_eq!(assets[0].explorer, "basescan.org");
+    }
+
+    #[test]
+    fn external_contract_assets_ignore_docs_only_sources() {
+        let address = "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c";
+        let sources = vec![SourceContent {
+            id: "source-1".to_string(),
+            kind: ContextSourceKind::WebHtml,
+            location: "https://docs.example/protocol".to_string(),
+            title: None,
+            content: format!(
+                r#"
+# Smart Contracts in Scope
+
+Reference deployment: https://basescan.org/address/{address}
+"#
+            ),
+            decision: SourceDecision::UsedForDocs,
+            reason: "Documentation link".to_string(),
+        }];
+
+        let assets = external_contract_scope_assets_from_sources(&sources);
+
+        assert!(assets.is_empty());
+    }
+
+    #[test]
+    fn external_metadata_fetch_queue_prioritizes_unresolved_assets() {
+        let mut resolution = ExternalContractScopeResolution::default();
+        for index in 0..40 {
+            let address = format!("0x{index:040x}");
+            resolution.assets.push(ExternalContractScopeAsset {
+                label: format!("Resolved {index}"),
+                url: format!("https://basescan.org/address/{address}"),
+                address,
+                explorer: "basescan.org".to_string(),
+                source_location: "README.md".to_string(),
+            });
+        }
+        let unresolved = ExternalContractScopeAsset {
+            label: "Generic Proxy".to_string(),
+            url: "https://basescan.org/address/0xffffffffffffffffffffffffffffffffffffffff"
+                .to_string(),
+            address: "0xffffffffffffffffffffffffffffffffffffffff".to_string(),
+            explorer: "basescan.org".to_string(),
+            source_location: "README.md".to_string(),
+        };
+        resolution.assets.push(unresolved.clone());
+        resolution.unresolved.push(unresolved);
+
+        let queue = external_metadata_fetch_queue(&resolution);
+
+        assert_eq!(queue[0].label, "Generic Proxy");
+        assert!(
+            queue
+                .iter()
+                .take(MAX_EXTERNAL_CONTRACT_METADATA_FETCHES)
+                .any(|asset| asset.address == "0xffffffffffffffffffffffffffffffffffffffff")
+        );
+    }
+
+    #[test]
+    fn external_scope_asset_key_keeps_same_address_chains_distinct() {
+        let address = "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c";
+        let base = ExternalContractScopeAsset {
+            label: "Vault".to_string(),
+            url: format!("https://basescan.org/address/{address}"),
+            address: address.to_string(),
+            explorer: "basescan.org".to_string(),
+            source_location: "README.md".to_string(),
+        };
+        let arbitrum = ExternalContractScopeAsset {
+            label: "Vault".to_string(),
+            url: format!("https://arbiscan.io/address/{address}"),
+            address: address.to_string(),
+            explorer: "arbiscan.io".to_string(),
+            source_location: "README.md".to_string(),
+        };
+        let resolved = BTreeSet::from([external_scope_asset_key(&base)]);
+        let mut unresolved = vec![base.clone(), arbitrum.clone()];
+
+        unresolved.retain(|asset| !resolved.contains(&external_scope_asset_key(asset)));
+
+        assert_ne!(
+            external_scope_asset_key(&base),
+            external_scope_asset_key(&arbitrum)
+        );
+        assert_eq!(unresolved.len(), 1);
+        assert_eq!(unresolved[0].explorer, "arbiscan.io");
+    }
+
+    #[test]
+    fn scanner_metadata_parser_extracts_contract_names_source_files_and_implementation() {
+        let implementation = "0x1111111111111111111111111111111111111111";
+        let html = format!(
+            r#"
+<html>
+  <head><title>Moonwell: Comptroller | Address 0xfbb21d0380bee3312b33c4353c8936a0f13ef26c</title></head>
+  <body>
+    <div>Contract Name:</div><div><span>Unitroller</span></div>
+    <div>File 1 of 24 : Unitroller.sol</div>
+    <div>Implementation: {implementation}</div>
+    <pre>contract Unitroller {{}}</pre>
+  </body>
+</html>
+"#
+        );
+
+        let metadata =
+            external_contract_metadata_from_html("https://basescan.org/address/x", &html);
+
+        assert!(metadata.contract_names.contains(&"Comptroller".to_string()));
+        assert!(metadata.contract_names.contains(&"Unitroller".to_string()));
+        assert_eq!(metadata.source_files, vec!["Unitroller.sol"]);
+        assert_eq!(metadata.implementation_addresses, vec![implementation]);
+    }
+
+    #[test]
+    fn external_contract_scope_maps_split_labels_to_local_definitions() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("contracts")).unwrap();
+        fs::write(
+            tmp.path().join("contracts/Unitroller.sol"),
+            "contract Unitroller {}",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("contracts/Comptroller.sol"),
+            "contract Comptroller {}",
+        )
+        .unwrap();
+        let asset = ExternalContractScopeAsset {
+            label: "Smart Contract - Unitroller/Comptroller".to_string(),
+            url: "https://basescan.org/address/0xfbb21d0380bee3312b33c4353c8936a0f13ef26c"
+                .to_string(),
+            address: "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c".to_string(),
+            explorer: "basescan.org".to_string(),
+            source_location: "README.md".to_string(),
+        };
+        let definitions = solidity_definitions(tmp.path(), &[]);
+
+        let record = deterministic_external_asset_resolution(&asset, None, &definitions).unwrap();
+
+        assert_eq!(
+            record.paths,
+            vec!["./contracts/Comptroller.sol", "./contracts/Unitroller.sol"]
+        );
     }
 
     #[test]

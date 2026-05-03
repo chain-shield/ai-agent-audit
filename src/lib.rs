@@ -37,6 +37,8 @@ pub mod prepare_code {
     pub mod audit_context;
     /// Git cloning and native repository building
     pub mod git_clone;
+    /// Immunefi bounty metadata extraction
+    pub mod immunefi;
     pub mod repo_data;
 }
 

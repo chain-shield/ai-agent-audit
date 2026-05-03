@@ -124,7 +124,7 @@ where
                     let instruction_prompt =
                         dynamic_prompts::findings::generate_pattern_category_to_findings_prompt(
                             &category, repo,
-                        );
+                        )?;
                     let json_requirement_prompt =
                     dynamic_prompts::findings_template::get_post_json_requirement_for_multipattern(
                         category_spec.issues,

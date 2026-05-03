@@ -12,7 +12,7 @@ Three-shot means:
 5. optionally, round 4a performs a stricter V12 / prior-finding overlap sweep on post-R4 candidates
 6. optionally, round 5 creates runnable PoCs for post-R4/R4a submission candidates
 7. optionally, round 6 independently verifies or repairs PoCs and invalidates only unprovable findings
-8. optionally, round 7 creates one Code4rena submission-ready report per verified finding
+8. optionally, round 7 creates one submission-ready report per verified finding
 9. optionally, round 8 independently reviews and repairs each report, or flags it `Need Further Review`
 10. a separate scoring worker scores the assembled raw-validation run
 
@@ -21,6 +21,14 @@ For `validation_profile: code4rena-bounty`, the same controller uses bounty-spec
 1. round 1 screens for bounty scope, known issues, previous audits, closed bounty reports, sponsor OOS, and Code4rena global bounty OOS
 2. round 2 screens for current-code bug existence, concrete exploitability, unprivileged attacker preconditions, and plausible runnable PoC
 3. round 3 keeps only findings that map to Code4rena bounty Critical/High criteria
+4. round 4 dedup/group, PoC creation, PoC validation, report creation, and final review stay
+5. round 4a V12 sweep is disabled for bounties
+
+For `validation_profile: immunefi-bounty`, the controller uses Immunefi-specific prompts:
+
+1. round 1 screens for asset scope, impact scope, Primacy of Impact vs Primacy of Rules, known issues, prior audits, program OOS, prohibited behavior, and Immunefi-wide OOS
+2. round 2 screens for current-code bug existence, concrete exploitability, unprivileged attacker preconditions, and plausible later local PoC
+3. round 3 classifies severity against the generated per-bounty Immunefi severity rubric
 4. round 4 dedup/group, PoC creation, PoC validation, report creation, and final review stay
 5. round 4a V12 sweep is disabled for bounties
 
@@ -34,11 +42,11 @@ Recommended worker split:
 - optional round 4a V12 sweep worker: `gpt-5.4` with `high`
 - optional round 5 PoC generation workers: one fresh `gpt-5.5` / `xhigh` worker per finding
 - optional round 6 PoC verification workers: one fresh `gpt-5.5` / `xhigh` worker per finding
-- optional round 7 C4 report generation workers: one fresh `gpt-5.5` / `xhigh` worker per finding
-- optional round 8 C4 report review workers: one fresh `gpt-5.5` / `xhigh` worker per finding
+- optional round 7 report generation workers: one fresh `gpt-5.5` / `xhigh` worker per finding
+- optional round 8 report review workers: one fresh `gpt-5.5` / `xhigh` worker per finding
 - scoring worker: `gpt-5.4` with `xhigh`
-- PoC workers must produce C4-ready artifacts: filenames include finding IDs for traceability, Solidity names avoid pipeline IDs and use descriptive vulnerability names, comments tersely explain setup/trigger/proof, and each final finding preferably gets one standalone PoC file. Existing template files are read-only seeds: workers copy, rename, and edit the copied finding-specific file rather than touching the template.
-- Report workers must produce ultra-concise C4-ready reports: one fresh worker per finding, about 200-300 words excluding code, two primary sections plus proof of concept, and `Need Further Review` when not submission-ready.
+- PoC workers must produce submission-ready artifacts: filenames include finding IDs for traceability, Solidity names avoid pipeline IDs and use descriptive vulnerability names, comments tersely explain setup/trigger/proof, and each final finding preferably gets one standalone PoC file. Existing template files are read-only seeds: workers copy, rename, and edit the copied finding-specific file rather than touching the template.
+- Report workers must produce ultra-concise submission-ready reports: one fresh worker per finding, about 200-300 words excluding code, two primary sections plus proof of concept, and `Need Further Review` when not submission-ready.
 
 Each validation round should be run by a separate spawned minimal Codex worker with cleared context. For R5-R8, each individual finding must get its own fresh minimal worker and isolated prompt/output files. Minimal workers are expected to read the local files listed in their prompt and may use native web search to verify cited public source URLs.
 
@@ -53,27 +61,23 @@ Configuration:
 - `context_docs` is the authoritative YAML list of files every three-shot worker must read. It supports exact paths and glob patterns, including `{{SOURCE_ROOT}}` and `{{THREE_SHOT_ROOT}}` placeholders.
 - The reusable V12 duplicate decision checklist is stored at `validation-three-shot/v12-checklist.md`; include it in `context_docs`.
 - The reusable Code4rena bounty criteria summary is stored at `validation-three-shot/code4rena-bounty-criteria.md`; include it in `context_docs` for `validation_profile: code4rena-bounty`.
+- Immunefi bounty configs must include the generated per-protocol files under `audit-docs/<protocol>/`, especially `<protocol>-immunefi-bounty-rules.md` and `<protocol>-immunefi-severity-rubric.md`.
 - Benchmark prior findings can be a standalone `v12-findings.md` entry or embedded in a `*-scope.md` file. If embedded, omit the standalone `v12-findings.md` entry from `context_docs`.
 - `prompt_version` is the reusable prompt/artifact namespace. Keep `v2` for the current production prompts unless intentionally testing a new prompt version.
 - Worker model, reasoning, and launcher settings also live there. Keep `workers.default.launcher` pointed at the minimal Codex worker launcher unless intentionally debugging a single worker.
 - Each `prepare-*` command emits `worker_launcher`, `requires_minimal_codex_worker`, `worker_spawn_command_template`, and, when `--write-prompt` is used, an exact `worker_spawn_command`; use those fields instead of the desktop `spawn_agent` path for production fanout.
 - CLI flags still work as one-off overrides.
-- All live worker prompts and shared validation rubrics live in `validation-three-shot/prompts/`.
+- Live worker prompts live in profile subfolders under `validation-three-shot/prompts/`.
 - The old top-level `validation-prompts/` directory and old `validation-three-shot/validation-prompts/` directory are not required by this workflow.
 
 Editable round prompts:
 
-- `validation-three-shot/prompts/r1.md`
-- `validation-three-shot/prompts/r2.md`
-- `validation-three-shot/prompts/r3.md`
-- `validation-three-shot/prompts/r4.md`
-- `validation-three-shot/prompts/r4a.md`
-- `validation-three-shot/prompts/r5.md`
-- `validation-three-shot/prompts/r6.md`
-- `validation-three-shot/prompts/r7.md`
-- `validation-three-shot/prompts/r8.md`
+- `validation-three-shot/prompts/code4rena/r1.md` through `r8.md`
+- `validation-three-shot/prompts/code4rena-bounty/r1.md` through `r8.md`
+- `validation-three-shot/prompts/immunefi-bounty/r1.md` through `r8.md`
+- `validation-three-shot/prompts/default/r1.md` through `r8.md`
 - `validation-three-shot/prompts/validation-v2.md`
-- `validation-three-shot/prompts/scoring.md`
+- `validation-three-shot/prompts/<profile>/score.md`
 
 Editable prompt changelog:
 

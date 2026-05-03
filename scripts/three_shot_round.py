@@ -3,8 +3,8 @@
 
 Three-shot validation splits the full-report pass into:
 1. scope / known-issue screening
-2. unsupported-token screening, or bounty exploitability screening for Code4rena bounties
-3. full validation on the surviving findings, or Critical/High eligibility for Code4rena bounties
+2. unsupported-token screening, or bounty exploitability screening for bounty profiles
+3. full validation on the surviving findings, or severity/eligibility classification for bounty profiles
 4. optional canonicalization cleanup on the surviving reportable candidates
 4a. optional second V12 overlap sweep on post-canonicalization candidates for competition runs
 5. optional PoC generation and verification on submission candidates
@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import os
 import re
 import shlex
 from dataclasses import dataclass
@@ -456,7 +457,19 @@ def validation_profile(config: dict[str, object] | None = None) -> str:
 
 
 def is_bounty_profile(config: dict[str, object] | None = None) -> bool:
-    return validation_profile(config) == "code4rena-bounty"
+    return validation_profile(config) in {"code4rena-bounty", "immunefi-bounty"}
+
+
+def is_immunefi_bounty_profile(config: dict[str, object] | None = None) -> bool:
+    return validation_profile(config) == "immunefi-bounty"
+
+
+def reportable_severities(config: dict[str, object] | None = None) -> set[str]:
+    if is_immunefi_bounty_profile(config):
+        return {"Critical", "High", "Medium", "Low"}
+    if is_bounty_profile(config):
+        return {"Critical", "High"}
+    return {"High", "Medium"}
 
 
 def resolve_run_args(args: argparse.Namespace) -> dict[str, object]:
@@ -591,6 +604,119 @@ def markdown_path_list(paths: list[Path]) -> str:
     return "\n".join(f"- `{path}`" for path in paths)
 
 
+def context_docs_with_suffix(paths: list[Path], suffix: str) -> list[Path]:
+    return [path for path in paths if path.name.endswith(suffix)]
+
+
+def prompt_file_contents(paths: list[Path], label: str, max_chars: int = 24000) -> str:
+    if not paths:
+        return f"_No {label} file configured._"
+    blocks: list[str] = []
+    for path in paths:
+        if not path.exists():
+            blocks.append(f"## `{path}`\n\n_Missing file._")
+            continue
+        text = path.read_text(errors="replace")
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip() + "\n\n[truncated]"
+        blocks.append(f"## `{path}`\n\n{text}")
+    return "\n\n".join(blocks)
+
+
+def load_dotenv_values(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].lstrip()
+        if "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        value = value.strip()
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in {"'", '"'}
+        ):
+            value = value[1:-1]
+        if value:
+            values[key] = value
+    return values
+
+
+def env_var_available(env_var: str, dotenv_values: dict[str, str]) -> bool:
+    return bool(os.environ.get(env_var) or dotenv_values.get(env_var))
+
+
+def immunefi_poc_runtime_json_paths(source_root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for doc in context_docs_with_suffix(benchmark_scope_docs(source_root), "-immunefi-poc-runtime.md"):
+        candidate = doc.with_suffix(".json")
+        if candidate.exists():
+            paths.append(candidate)
+    return paths
+
+
+def immunefi_poc_runtime_payload(benchmark: str) -> dict[str, object]:
+    source_root = benchmark_source_root(benchmark)
+    runtime_paths = immunefi_poc_runtime_json_paths(source_root)
+    repo_dotenv = REPO_ROOT / ".env"
+    dotenv_values = load_dotenv_values(repo_dotenv)
+    payloads: list[dict[str, object]] = []
+    available_env: set[str] = set()
+    missing_env: set[str] = set()
+    in_scope_addresses: list[dict[str, object]] = []
+
+    for path in runtime_paths:
+        try:
+            payload = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        payloads.append(payload)
+        for network in payload.get("networks", []):
+            if not isinstance(network, dict):
+                continue
+            env_var = str(network.get("rpc_env_var", ""))
+            if not env_var:
+                continue
+            if env_var_available(env_var, dotenv_values):
+                available_env.add(env_var)
+            else:
+                missing_env.add(env_var)
+        for asset in payload.get("assets", []):
+            if not isinstance(asset, dict):
+                continue
+            in_scope_addresses.append({
+                "address": asset.get("address"),
+                "network": asset.get("network"),
+                "rpc_env_var": asset.get("rpc_env_var"),
+                "description": asset.get("description"),
+                "explorer_url": asset.get("explorer_url"),
+            })
+
+    return {
+        "runtime_json_paths": [str(path) for path in runtime_paths],
+        "prefer_fork": any(bool(payload.get("prefer_fork")) for payload in payloads),
+        "allow_fork": any(bool(payload.get("allow_fork")) for payload in payloads),
+        "available_rpc_env": sorted(available_env),
+        "missing_rpc_env": sorted(missing_env - available_env),
+        "in_scope_addresses": in_scope_addresses,
+        "env_sources_checked": [
+            "process environment",
+            str(repo_dotenv) if repo_dotenv.exists() else f"{repo_dotenv} (missing)",
+        ],
+    }
+
+
 def render_findings_blocks(findings: list[Finding]) -> str:
     return "\n\n".join(
         [
@@ -628,8 +754,22 @@ def write_round_input(path: Path, benchmark: str, findings: list[Finding]) -> Pa
     return path
 
 
-def render_stage_prompt(template_name: str, replacements: dict[str, object]) -> str:
-    template_path = THREE_SHOT_PROMPT_ROOT / template_name
+def prompt_template_path(template_name: str, config: dict[str, object] | None = None) -> Path:
+    profile = validation_profile(config)
+    candidates = [THREE_SHOT_PROMPT_ROOT / profile / template_name]
+    if profile != "default":
+        candidates.append(THREE_SHOT_PROMPT_ROOT / "default" / template_name)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise SystemExit(
+        "Missing three-shot prompt template: "
+        + " or ".join(str(candidate) for candidate in candidates)
+    )
+
+
+def render_stage_prompt(template_name: str, replacements: dict[str, object], config: dict[str, object] | None = None) -> str:
+    template_path = prompt_template_path(template_name, config)
     if not template_path.exists():
         raise SystemExit(f"Missing three-shot prompt template: {template_path}")
 
@@ -646,10 +786,6 @@ def render_stage_prompt(template_name: str, replacements: dict[str, object]) -> 
             f"Unresolved placeholders in {template_path}: " + ", ".join(unresolved)
         )
     return text
-
-
-def profile_prompt(default_template: str, bounty_template: str, config: dict[str, object]) -> str:
-    return bounty_template if is_bounty_profile(config) else default_template
 
 
 def clean(value: str) -> str:
@@ -1172,7 +1308,7 @@ def dedup_candidates(prompt_version: str, benchmark: str, run_id: str) -> list[t
 
     findings_by_id = {finding.fid: finding for finding in all_findings(benchmark)}
     blocks = raw_finding_blocks(run_path)
-    reportable_severities = {"Critical", "High"} if is_bounty_profile() else {"High", "Medium"}
+    severities = reportable_severities()
     candidates: list[tuple[Finding, str]] = []
     for finding in all_findings(benchmark):
         block = blocks.get(finding.fid)
@@ -1180,7 +1316,7 @@ def dedup_candidates(prompt_version: str, benchmark: str, run_id: str) -> list[t
             continue
         if block_field(block, "Decision") != "Valid":
             continue
-        if block_field(block, "Severity Assessment") not in reportable_severities:
+        if block_field(block, "Severity Assessment") not in severities:
             continue
         candidates.append((findings_by_id[finding.fid], block))
     return candidates
@@ -1219,11 +1355,11 @@ def write_round4_input(
             f"Source assembled run: `{final_run_path(prompt_version, benchmark, run_id)}`",
             f"Candidate count: `{len(candidates)}`",
             "",
-            "This file contains only findings currently marked `Valid` with `High` or `Medium` severity.",
+            "This file contains only findings currently marked `Valid` with reportable severity for the configured validation profile.",
             "",
             "## Candidates",
             "",
-            "\n".join(sections) if sections else "_No H/M candidates to dedup._",
+            "\n".join(sections) if sections else "_No reportable candidates to dedup._",
             "",
         ]
     )
@@ -1564,8 +1700,12 @@ def write_round8_input(
 
 def render_common_replacements(prompt_version: str, benchmark: str) -> dict[str, object]:
     source_root = benchmark_source_root(benchmark)
-    scope_paths = sorted(source_root.glob("*-scope.md"))
-    docs_paths = sorted(source_root.glob("*-docs.md"))
+    context_docs = benchmark_scope_docs(source_root)
+    scope_paths = sorted({*source_root.glob("*-scope.md"), *context_docs_with_suffix(context_docs, "-scope.md")})
+    docs_paths = sorted({*source_root.glob("*-docs.md"), *context_docs_with_suffix(context_docs, "-docs.md")})
+    immunefi_rules = context_docs_with_suffix(context_docs, "-immunefi-bounty-rules.md")
+    immunefi_rubrics = context_docs_with_suffix(context_docs, "-immunefi-severity-rubric.md")
+    immunefi_poc_runtime = context_docs_with_suffix(context_docs, "-immunefi-poc-runtime.md")
     return {
         "REPO_ROOT": REPO_ROOT,
         "BENCHMARK": benchmark,
@@ -1573,9 +1713,15 @@ def render_common_replacements(prompt_version: str, benchmark: str) -> dict[str,
         "SOURCE_ROOT": source_root,
         "PROMPT": validation_prompt_path(prompt_version),
         "README_PATH": source_root / "README.md",
-        "SCOPE_DOC_PATHS": markdown_path_list(benchmark_scope_docs(source_root)),
+        "SCOPE_DOC_PATHS": markdown_path_list(context_docs),
         "SCOPE_PATHS": markdown_path_list(scope_paths) if scope_paths else "- `(none found)`",
         "DOCS_PATHS": markdown_path_list(docs_paths) if docs_paths else "- `(none found)`",
+        "IMMUNEFI_BOUNTY_RULES_PATHS": markdown_path_list(immunefi_rules) if immunefi_rules else "- `(none configured)`",
+        "IMMUNEFI_SEVERITY_RUBRIC_PATHS": markdown_path_list(immunefi_rubrics) if immunefi_rubrics else "- `(none configured)`",
+        "IMMUNEFI_POC_RUNTIME_PATHS": markdown_path_list(immunefi_poc_runtime) if immunefi_poc_runtime else "- `(none configured)`",
+        "IMMUNEFI_BOUNTY_RULES": prompt_file_contents(immunefi_rules, "Immunefi bounty rules"),
+        "IMMUNEFI_SEVERITY_RUBRIC": prompt_file_contents(immunefi_rubrics, "Immunefi severity rubric"),
+        "IMMUNEFI_POC_RUNTIME": prompt_file_contents(immunefi_poc_runtime, "Immunefi PoC runtime"),
         "V12_FINDINGS_PATH": source_root / "v12-findings.md",
         "V12_CHECKLIST_PATH": V12_CHECKLIST_PATH,
     }
@@ -1588,13 +1734,14 @@ def render_scope_prompt(prompt_version: str, benchmark: str, run_id: str, config
         all_findings(benchmark),
     )
     return render_stage_prompt(
-        profile_prompt("r1.md", "r1-bounty.md", config),
+        "r1.md",
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r1", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
             "STAGE_PATH": scope_screen_path(prompt_version, benchmark, run_id),
             "INPUT_PATH": input_path,
         },
+        config,
     )
 
 
@@ -1605,13 +1752,14 @@ def render_token_prompt(prompt_version: str, benchmark: str, run_id: str, config
         kept_after_scope(prompt_version, benchmark, run_id),
     )
     return render_stage_prompt(
-        profile_prompt("r2.md", "r2-bounty.md", config),
+        "r2.md",
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r2", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
             "STAGE_PATH": token_screen_path(prompt_version, benchmark, run_id),
             "INPUT_PATH": input_path,
         },
+        config,
     )
 
 
@@ -1622,7 +1770,7 @@ def render_stage3_prompt(prompt_version: str, benchmark: str, run_id: str, confi
         kept_after_token(prompt_version, benchmark, run_id),
     )
     return render_stage_prompt(
-        profile_prompt("r3.md", "r3-bounty.md", config),
+        "r3.md",
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r3", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
@@ -1630,6 +1778,7 @@ def render_stage3_prompt(prompt_version: str, benchmark: str, run_id: str, confi
             "APPEND_ANCHOR": APPEND_ANCHOR,
             "INPUT_PATH": input_path,
         },
+        config,
     )
 
 
@@ -1651,6 +1800,7 @@ def render_dedup_prompt(prompt_version: str, benchmark: str, run_id: str, config
             "FINAL_RUN_PATH": final_run_path(prompt_version, benchmark, run_id),
             "SUBMISSION_PATH": submission_candidates_path(prompt_version, benchmark, run_id),
         },
+        config,
     )
 
 
@@ -1670,6 +1820,7 @@ def render_v12_sweep_prompt(prompt_version: str, benchmark: str, run_id: str, co
             "STAGE_PATH": v12_sweep_screen_path(prompt_version, benchmark, run_id),
             "SUBMISSION_PATH": submission_candidates_path(prompt_version, benchmark, run_id),
         },
+        config,
     )
 
 
@@ -1702,6 +1853,7 @@ def render_poc_prompt(
             "POC_RUN_PATH": poc_unit_path(prompt_version, benchmark, run_id, finding_id),
             "POC_RUN_JSON_PATH": poc_unit_json_path(prompt_version, benchmark, run_id, finding_id),
         },
+        config,
     )
 
 
@@ -1740,6 +1892,7 @@ def render_poc_review_prompt(
             "POC_REVIEW_PATH": poc_review_unit_path(prompt_version, benchmark, run_id, finding_id),
             "POC_REVIEW_JSON_PATH": poc_review_unit_json_path(prompt_version, benchmark, run_id, finding_id),
         },
+        config,
     )
 
 
@@ -1761,7 +1914,7 @@ def render_finding_report_prompt(
         blocks[finding_id],
     )
     return render_stage_prompt(
-        profile_prompt("r7.md", "r7-bounty.md", config),
+        "r7.md",
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r7", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
@@ -1770,6 +1923,7 @@ def render_finding_report_prompt(
             "FINDING_REPORT_PATH": finding_report_unit_path(prompt_version, benchmark, run_id, finding_id),
             "FINDING_REPORT_JSON_PATH": finding_report_unit_json_path(prompt_version, benchmark, run_id, finding_id),
         },
+        config,
     )
 
 
@@ -1791,7 +1945,7 @@ def render_finding_report_review_prompt(
         blocks[finding_id],
     )
     return render_stage_prompt(
-        profile_prompt("r8.md", "r8-bounty.md", config),
+        "r8.md",
         {
             **render_common_replacements(prompt_version, benchmark),
             **worker_replacements(config, "r8", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
@@ -1801,6 +1955,7 @@ def render_finding_report_review_prompt(
             "FINDING_REPORT_REVIEW_PATH": finding_report_review_unit_path(prompt_version, benchmark, run_id, finding_id),
             "FINDING_REPORT_REVIEW_JSON_PATH": finding_report_review_unit_json_path(prompt_version, benchmark, run_id, finding_id),
         },
+        config,
     )
 
 
@@ -2266,7 +2421,7 @@ def cmd_prepare_scope(args: argparse.Namespace) -> None:
         else "three-shot-r1-scope",
         **worker_payload(config, "r1", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
         "worker_prompt_source": str(
-            THREE_SHOT_PROMPT_ROOT / profile_prompt("r1.md", "r1-bounty.md", config)
+            prompt_template_path("r1.md", config)
         ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
@@ -2299,7 +2454,7 @@ def cmd_prepare_token(args: argparse.Namespace) -> None:
         else "three-shot-r2-token",
         **worker_payload(config, "r2", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
         "worker_prompt_source": str(
-            THREE_SHOT_PROMPT_ROOT / profile_prompt("r2.md", "r2-bounty.md", config)
+            prompt_template_path("r2.md", config)
         ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
@@ -2320,12 +2475,14 @@ def cmd_prepare_final(args: argparse.Namespace) -> None:
         "run_id": args.run_id,
         "stage_path": str(path),
         "input_findings": len(input_findings),
-        "worker_type": "three-shot-r3-bounty-critical-high-validation"
+        "worker_type": "three-shot-r3-immunefi-severity-validation"
+        if is_immunefi_bounty_profile(config)
+        else "three-shot-r3-bounty-critical-high-validation"
         if is_bounty_profile(config)
         else "three-shot-r3-final-validation",
         **worker_payload(config, "r3", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
         "worker_prompt_source": str(
-            THREE_SHOT_PROMPT_ROOT / profile_prompt("r3.md", "r3-bounty.md", config)
+            prompt_template_path("r3.md", config)
         ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
@@ -2348,7 +2505,7 @@ def cmd_prepare_dedup(args: argparse.Namespace) -> None:
         "input_findings": len(candidates),
         "worker_type": "three-shot-r4-canonicalization",
         **worker_payload(config, "r4", DEDUP_WORKER_MODEL, DEDUP_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r4.md"),
+        "worker_prompt_source": str(prompt_template_path("r4.md", config)),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2365,7 +2522,7 @@ def cmd_prepare_v12_sweep(args: argparse.Namespace) -> None:
             "prompt_version": args.prompt_version,
             "run_id": args.run_id,
             "worker_type": "none",
-            "reason": "R4a V12 sweep is disabled for code4rena-bounty validation_profile.",
+            "reason": f"R4a V12 sweep is disabled for {validation_profile(config)} validation_profile.",
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
@@ -2380,7 +2537,7 @@ def cmd_prepare_v12_sweep(args: argparse.Namespace) -> None:
         "input_findings": len(blocks),
         "worker_type": "three-shot-r4a-v12-sweep",
         **worker_payload(config, "r4a", V12_SWEEP_WORKER_MODEL, V12_SWEEP_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r4a.md"),
+        "worker_prompt_source": str(prompt_template_path("r4a.md", config)),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2434,6 +2591,9 @@ def cmd_prepare_poc(args: argparse.Namespace) -> None:
         "json_path": str(poc_unit_json_path(args.prompt_version, args.benchmark, args.run_id, finding_id)),
         "single_finding_input_path": str(input_path),
         "source_candidates_path": str(submission_candidates_path(args.prompt_version, args.benchmark, args.run_id)),
+        "poc_runtime": immunefi_poc_runtime_payload(args.benchmark)
+        if is_immunefi_bounty_profile(config)
+        else None,
         "input_scope": "single_post_r4_submission_candidate",
         "input_findings": 1,
         "total_findings": len(blocks),
@@ -2441,7 +2601,7 @@ def cmd_prepare_poc(args: argparse.Namespace) -> None:
         "remaining_findings": len(blocks) - completed,
         "worker_type": "three-shot-r5-poc-generation-finding",
         **worker_payload(config, "r5", POC_WORKER_MODEL, POC_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r5.md"),
+        "worker_prompt_source": str(prompt_template_path("r5.md", config)),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2505,6 +2665,9 @@ def cmd_prepare_poc_review(args: argparse.Namespace) -> None:
         "stage_path": str(path),
         "json_path": str(poc_review_unit_json_path(args.prompt_version, args.benchmark, args.run_id, finding_id)),
         "source_candidates_path": str(submission_candidates_path(args.prompt_version, args.benchmark, args.run_id)),
+        "poc_runtime": immunefi_poc_runtime_payload(args.benchmark)
+        if is_immunefi_bounty_profile(config)
+        else None,
         "input_scope": "single_post_r4_submission_candidate",
         "input_findings": 1,
         "total_findings": len(blocks),
@@ -2512,7 +2675,7 @@ def cmd_prepare_poc_review(args: argparse.Namespace) -> None:
         "remaining_findings": len(blocks) - completed,
         "worker_type": "three-shot-r6-poc-verification-finding",
         **worker_payload(config, "r6", POC_WORKER_MODEL, POC_WORKER_REASONING),
-        "worker_prompt_source": str(THREE_SHOT_PROMPT_ROOT / "r6.md"),
+        "worker_prompt_source": str(prompt_template_path("r6.md", config)),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -2543,7 +2706,7 @@ def cmd_prepare_report(args: argparse.Namespace) -> None:
         )
         phase = "complete" if completed_r6 == len(blocks) and completed == len(reportable) else "blocked"
         summary = (
-            "All R7 per-finding C4 report units are complete."
+            "All R7 per-finding report units are complete."
             if phase == "complete"
             else "No reportable R7 unit is available because some R6 units are incomplete or not verified."
         )
@@ -2596,12 +2759,14 @@ def cmd_prepare_report(args: argparse.Namespace) -> None:
         "total_reportable_findings": len(reportable),
         "completed_findings": completed,
         "remaining_findings": len(reportable) - completed,
-        "worker_type": "three-shot-r7-c4-bounty-report-finding"
+        "worker_type": "three-shot-r7-immunefi-report-finding"
+        if is_immunefi_bounty_profile(config)
+        else "three-shot-r7-c4-bounty-report-finding"
         if is_bounty_profile(config)
         else "three-shot-r7-c4-report-finding",
         **worker_payload(config, "r7", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
         "worker_prompt_source": str(
-            THREE_SHOT_PROMPT_ROOT / profile_prompt("r7.md", "r7-bounty.md", config)
+            prompt_template_path("r7.md", config)
         ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
@@ -2647,7 +2812,7 @@ def cmd_prepare_report_review(args: argparse.Namespace) -> None:
             else "blocked"
         )
         summary = (
-            "All R8 per-finding C4 report review units are complete."
+            "All R8 per-finding report review units are complete."
             if phase == "complete"
             else "No reviewable R8 unit is available because some R7 report units are incomplete."
         )
@@ -2703,12 +2868,14 @@ def cmd_prepare_report_review(args: argparse.Namespace) -> None:
         "total_reportable_findings": len(reviewable),
         "completed_findings": completed,
         "remaining_findings": len(reviewable) - completed,
-        "worker_type": "three-shot-r8-c4-bounty-report-review-finding"
+        "worker_type": "three-shot-r8-immunefi-report-review-finding"
+        if is_immunefi_bounty_profile(config)
+        else "three-shot-r8-c4-bounty-report-review-finding"
         if is_bounty_profile(config)
         else "three-shot-r8-c4-report-review-finding",
         **worker_payload(config, "r8", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
         "worker_prompt_source": str(
-            THREE_SHOT_PROMPT_ROOT / profile_prompt("r8.md", "r8-bounty.md", config)
+            prompt_template_path("r8.md", config)
         ),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
@@ -2875,7 +3042,7 @@ def cmd_apply_v12_sweep(args: argparse.Namespace) -> None:
             "prompt_version": args.prompt_version,
             "run_id": args.run_id,
             "skipped": True,
-            "reason": "R4a V12 sweep is disabled for code4rena-bounty validation_profile.",
+            "reason": f"R4a V12 sweep is disabled for {validation_profile(config)} validation_profile.",
         }, indent=2, sort_keys=True))
         return
     print(json.dumps(apply_v12_sweep(args.prompt_version, args.benchmark, args.run_id), indent=2, sort_keys=True))
@@ -2898,7 +3065,7 @@ def cmd_score_prompt(args: argparse.Namespace) -> None:
         raise SystemExit(f"Missing assembled three-shot run file: {run_path}")
 
     prompt_text = render_stage_prompt(
-        "scoring.md",
+        "score.md",
         {
             "REPO_ROOT": REPO_ROOT,
             "PROMPT_VERSION": args.prompt_version,
@@ -2912,6 +3079,7 @@ def cmd_score_prompt(args: argparse.Namespace) -> None:
             "C4_APPROVED_FINDINGS": REPO_ROOT / "C4_APPROVED_FINDINGS.md",
             "APPROVED_FINDINGS_KEY": truth_key_path(args.benchmark),
         },
+        config,
     )
     payload = {
         "benchmark": args.benchmark,
@@ -3000,7 +3168,7 @@ def main() -> None:
     add_run_args(assemble_poc_review)
     assemble_poc_review.set_defaults(func=cmd_assemble_poc_review)
 
-    prepare_report = subparsers.add_parser("prepare-report", help="Initialize round 7 C4 report creation for one finding.")
+    prepare_report = subparsers.add_parser("prepare-report", help="Initialize round 7 report creation for one finding.")
     add_run_args(prepare_report)
     prepare_report.add_argument("--finding-id", help="Prepare this exact finding. Defaults to the next R6-verified/R7-unfinished unit.")
     prepare_report.add_argument("--include-prompt", action="store_true")
@@ -3008,7 +3176,7 @@ def main() -> None:
     prepare_report.add_argument("--reset", action="store_true", help="Reset this finding's round 7 report before emitting the prompt.")
     prepare_report.set_defaults(func=cmd_prepare_report)
 
-    prepare_report_review = subparsers.add_parser("prepare-report-review", help="Initialize round 8 C4 report review for one finding.")
+    prepare_report_review = subparsers.add_parser("prepare-report-review", help="Initialize round 8 report review for one finding.")
     add_run_args(prepare_report_review)
     prepare_report_review.add_argument("--finding-id", help="Prepare this exact finding. Defaults to the next R7-complete/R8-unfinished unit.")
     prepare_report_review.add_argument("--include-prompt", action="store_true")
