@@ -451,7 +451,7 @@ fn resolve_import_to_file(
     let parent_file = if resolved_path.is_absolute() {
         resolved_path
     } else {
-        repo.root.join(&repo.repo_name).join(&resolved_path)
+        repo.get_protocol_root().join(&resolved_path)
     };
 
     // Return the path without canonicalization to match the format in repo.sol_files

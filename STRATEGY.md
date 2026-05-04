@@ -2,7 +2,7 @@
 
 Living strategy doc. Updated during founder office-hours discussions.
 
-Last updated: 2026-04-30
+Last updated: 2026-05-03
 
 ## One-Line Thesis
 
@@ -91,8 +91,8 @@ YC should leave the application thinking:
 1. This founder can build unusually hard technical systems.
 2. The market pain is real: smart contract audits are slow, expensive, and still miss serious bugs.
 3. ChainShield has rare proof: live Code4rena results, not self-reported benchmarks.
-4. The product is already producing professional-grade findings with PoCs in 1-2 days.
-5. The next step is obvious: sell 48-hour pre-launch discovery runs to budget-constrained DeFi teams.
+4. The product is already producing professional-grade findings with PoCs in about 24 hours for standard scopes and 1-2 days for larger protocols.
+5. The next step is obvious: sell 24-hour pre-launch discovery runs to budget-constrained DeFi teams.
 6. If this works in Solidity, it can expand into the security layer for AI-generated software.
 
 ### Application Story
@@ -101,11 +101,15 @@ Do not lead with the $3M-$4M raise. Lead with proof and speed.
 
 Best one-liner:
 
-> ChainShield automates professional-grade smart contract security audits, producing validated High/Medium findings with PoCs in 48 hours instead of weeks.
+> ChainShield automates professional-grade smart contract security discovery, producing validated High/Medium findings with proof artifacts in about 24 hours for standard scopes instead of weeks.
 
 Sharper YC version:
 
 > We use AI agents to find and validate serious smart contract vulnerabilities. The proof is not a private benchmark: our system has helped produce live Code4rena results under a public SR Warden profile.
+
+Updated strongest YC version:
+
+> ChainShield turns Solidity repos into validated exploit findings and proof artifacts in about 24 hours, using AI agents plus static program analysis, with live third-party validation from Code4rena.
 
 ### Application Proof Points
 
@@ -115,7 +119,7 @@ Use concrete facts:
 - 8 High and 7 Medium valid findings on the public profile as of 2026-04-30.
 - 8th-place finishes in SukukFi and Brix Money.
 - Large protocol audit runtime: roughly 1-2 days.
-- Findings include PoCs.
+- Findings include PoCs or proof artifacts, with runnable PoCs produced when the three-shot validation/submission workflow supports them.
 - Cost per audit run is low relative to human audit cost.
 - Automated validation was recently added to reduce false positives.
 - Website is live at chainshield.ai.
@@ -131,7 +135,7 @@ Translate those into specifics:
 
 - "Traditional audits can cost tens or hundreds of thousands and take weeks."
 - "Our initial wedge is pre-launch DeFi teams that cannot afford a six-figure audit but cannot safely skip review."
-- "We are selling a 48-hour discovery pass before a full audit, contest, or mainnet launch."
+- "We are selling a 24-hour discovery pass before a full audit, contest, or mainnet launch."
 
 ### Before Applying
 
@@ -193,6 +197,44 @@ Answer:
 Answer with specific proof:
 
 > We built the system, used it in live Code4rena competitions, and reached SR Warden status with accepted High/Medium findings. We are not theorizing about AI audits. We are proving it in adversarial public markets.
+
+### What To Say If Asked About Founder-Market Fit
+
+YC may not literally ask:
+
+> What is your founder-market fit?
+
+But they will test it through questions like:
+
+- Why are you the right person to build this?
+- How do you know this problem is real?
+- Why will you win against security firms and AI tools?
+- Are you technical enough to build the product yourself?
+- Why do customers trust you?
+
+Do not apologize for being self-taught in Web3. Frame it as learning velocity plus proof.
+
+Best answer:
+
+> I was not a professional Web3 auditor when I started. I was a repeat software founder with a physics PhD, deep software/business experience, and a history of scaling software revenue. I taught myself Solidity and security because I saw that smart contract audits were bottlenecked by expert labor. Then I built the system, used it in public Code4rena competitions, and got third-party validation through accepted findings and rankings. My founder-market fit is the combination of technical learning speed, security obsession, software company building, and real validation from the exact market we serve.
+
+Founder-market-fit proof stack:
+
+- Repeat founder/operator: built Boost Software to $11.6M revenue and Inc. 5000 #646.
+- Technical depth: PhD in theoretical physics, MIT Lincoln Laboratory systems analysis, modern software stack, Rust/AI/security product building.
+- Security adjacency: PC security/optimization software, cyber crisis exposure, and now smart contract security.
+- Adaptation speed: self-taught Solidity/Web3, built the audit engine, achieved Code4rena validation.
+- Commercial edge: knows distribution, pricing, funnels, customer acquisition, and how to turn technical leverage into revenue.
+
+Avoid:
+
+> I am new to Web3, but I think this is interesting.
+
+Say:
+
+> I entered Web3 from the outside, saw the labor bottleneck clearly, built the automation layer, and proved it in public adversarial environments.
+
+The risk is not weak founder-market fit. The risk is under-explaining it.
 
 ### Biggest Application Risk
 
@@ -958,7 +1000,7 @@ Best update:
 
 1. Public proof: Code4rena SR Warden profile, accepted H/M findings, contest placements.
 2. Customer proof: paid pilots, repo access, repeat requests, testimonials.
-3. Speed: 48-hour audit discovery versus weeks/months.
+3. Speed: 24-hour audit discovery versus weeks/months.
 4. Economics: low run cost versus high audit spend.
 5. Repeatability: human minutes per accepted finding trending down.
 6. Market expansion: Solidity first, then continuous security for AI-generated software.
@@ -989,16 +1031,32 @@ That is the long-term thesis, but it invites skepticism too early.
 
 Lead with:
 
-> Before you spend $80k-$150k and wait weeks for a traditional audit, ChainShield runs a 48-hour pre-launch discovery pass on your Solidity repo. You get validated Medium/High findings with PoCs, so your team can patch the serious issues before a full audit, contest, or mainnet launch.
+> Before you spend tens or hundreds of thousands and wait weeks for a traditional audit, ChainShield runs a 24-hour pre-launch discovery pass on your Solidity repo. You get validated Medium/High findings and proof artifacts, so your team can patch the serious issues before a full audit, contest, or mainnet launch.
+
+Investor/YC positioning:
+
+> ChainShield is the AI-native security verification layer for Web3 codebases. We ingest a repo and scope, run agentic analysis plus static program context, and produce validated exploit findings with proof artifacts in hours.
+
+Customer positioning:
+
+> Before you pay for a six-figure audit or launch, we run a 24-hour pre-audit discovery pass and surface the serious issues worth fixing now.
 
 Core positioning:
 
 - Faster serious-risk discovery.
 - Validated H/M findings, not noisy scanner output.
-- PoC-backed results.
+- PoC-backed or proof-artifact-backed results.
 - Affordable for pre-launch teams.
 - Useful before a formal audit, contest, or launch.
 - Eventually continuous on every commit.
+
+Claim discipline:
+
+- Do not overpromise that every repo gets perfect runnable PoCs immediately.
+- Say "validated findings with proof artifacts" as the default claim.
+- Say "runnable PoCs" when the three-shot validation workflow or submission candidate path has actually produced them.
+- Do not claim "70%-90% audit replacement" unless measured.
+- Say the current target is to compress serious finding discovery and triage, then become the default first-pass audit layer.
 
 ## Beachhead Customer
 
@@ -1264,11 +1322,11 @@ Include:
 
 Primary wedge offer:
 
-> 48-hour pre-launch discovery run. Validated Medium/High findings with PoCs. Small upfront fee, pay only for valid serious findings, capped below a traditional audit.
+> 24-hour pre-launch discovery run. Validated Medium/High findings with proof artifacts. Small upfront fee, pay only for valid serious findings, capped below a traditional audit.
 
 Alternative case-study offer:
 
-> Free or discounted 48-hour run in exchange for permission to publish anonymized metrics: repo size, runtime, validated findings, and customer quote.
+> Free or discounted 24-hour run in exchange for permission to publish anonymized metrics: repo size, runtime, validated findings, and customer quote.
 
 Rule:
 
@@ -1281,7 +1339,7 @@ Hey {name}, I saw {specific launch/repo/product signal}.
 
 I am building ChainShield, a fast security discovery pass for pre-launch Solidity teams.
 
-Traditional audits can take weeks and cost $80k+. We run a 48-hour pass that produces validated Medium/High findings with PoCs, so teams can patch the serious issues before a full audit, contest, or mainnet launch.
+Traditional audits can take weeks and cost tens or hundreds of thousands. We run a 24-hour pass that produces validated Medium/High findings with proof artifacts, so teams can patch the serious issues before a full audit, contest, or mainnet launch.
 
 We have already used the system to produce valid Code4rena findings, including high-severity results.
 
@@ -1297,7 +1355,7 @@ Ask:
 3. Have you budgeted for an audit yet?
 4. What would delay launch if security review takes too long?
 5. What part of the protocol worries you most?
-6. If we found one valid Medium/High issue in 48 hours, what would that be worth to you?
+6. If we found one valid Medium/High issue in 24 hours, what would that be worth to you?
 7. Would you be willing to give repo access for a limited discovery pass?
 
 Listen for:
@@ -1358,6 +1416,41 @@ The defensibility story should be:
 4. ChainShield learns from customer outcomes: what was valid, invalid, exploitable, patched, and paid for.
 5. ChainShield becomes embedded in the customer's release workflow.
 6. ChainShield builds trust as a security authority, not just as a scanner.
+
+### The Wrapper Objection
+
+Investors will likely ask:
+
+> Is this just a wrapper around GPT/Claude/Codex plus Slither?
+
+Answer:
+
+> No. The hard part is not calling an LLM. The hard part is turning an arbitrary repo and scope into validated, severity-classified, proof-backed security findings with low false positives.
+
+The system includes:
+
+- Repo ingestion and scope handling.
+- Build-system understanding.
+- Static analysis extraction.
+- Call graph and storage-context construction.
+- Vulnerability-specific search orchestration.
+- Context retrieval.
+- Exploitability verification.
+- PoC and proof-artifact synthesis.
+- Severity classification under contest/client rules.
+- False-positive suppression.
+- Patch and regression verification.
+- Historical finding feedback loops.
+
+Investor-safe phrase:
+
+> ChainShield is an agentic verification engine, not a chat wrapper.
+
+Customer-safe phrase:
+
+> ChainShield is a 24-hour pre-audit exploit discovery layer for Solidity teams.
+
+Use the technical phrase with investors and technical buyers. Use the simple customer phrase in outreach.
 
 ### The Real Moats
 
@@ -1422,6 +1515,14 @@ Messaging principle:
 Investor/customer-safe version:
 
 > ChainShield does not rely on self-reported benchmark claims. We prove performance in live adversarial competitions where independent judges decide what is valid.
+
+Add the economics proof:
+
+> ChainShield combines live third-party validation with unusual unit economics: about 24-hour delivery, near-zero marginal tooling cost, and roughly one hour of human review per audit today.
+
+This is the venture story:
+
+> The labor curve broke. A workflow that used to require weeks of scarce expert time can now produce serious, validated findings in hours, with human judgment focused on final review rather than raw discovery.
 
 #### 3. Workflow Moat
 

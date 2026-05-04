@@ -1,5 +1,13 @@
 # Validation Prompt Changelog
 
+## Bounty PoC portability update on 2026-05-04
+
+- Tightened bounty R5/R6 PoC rules so final PoCs must be copy/paste runnable from the repo's top-level `test/` folder.
+- Tightened bounty R7/R8 report rules to require `Save as:` and portable `Run:` lines with relative paths and env var placeholders.
+- Added explicit rejection/repair criteria for PoCs that only compile from generated nested test paths.
+- Clarified that submission-facing PoC filenames must be vulnerability-descriptive and omit pipeline IDs such as `M-9` or `C-5`, even when internal artifacts keep IDs for traceability.
+- Added optional Immunefi-only R3a feasibility-limitations gate between R3 and R4 so R3 stays focused on bug/severity validation.
+
 ## Runtime worker spec update on 2026-04-27
 
 - Added `{{WORKER_LAUNCHER}}` to R1-R8 prompt headers.

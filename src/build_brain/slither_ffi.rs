@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -64,7 +64,7 @@ pub struct StorageVar {
 /// Return “context file list” as LF-separated string.
 pub fn get_all_files_src(repo: &RepoPaths) -> Result<String> {
     //   e.g.,   contracts/plume/
-    let code_root = repo.root.join(&repo.repo_name);
+    let code_root = repo.get_protocol_root();
 
     let mut files = Vec::<String>::new();
 
@@ -149,7 +149,7 @@ enum ProjectType {
 
 #[allow(dead_code)]
 fn detect_project_type(repo: &RepoPaths) -> ProjectType {
-    detect_project_type_at_path(&repo.root.join(&repo.repo_name))
+    detect_project_type_at_path(&repo.get_protocol_root())
 }
 
 fn detect_project_type_at_path(repo_path: &Path) -> ProjectType {
@@ -170,14 +170,21 @@ fn detect_project_type_at_path(repo_path: &Path) -> ProjectType {
 
     // Priority-based detection to handle overlapping configurations
 
-    // 1. Prefer explicit Hardhat configuration even if Foundry is also present
+    // 1. Prefer explicit Foundry build artifacts when present. Mixed repos can
+    // carry both Hardhat and Foundry configs, but if the app just built `out/`,
+    // Slither should read the Foundry project instead of chasing Hardhat.
+    if has_foundry && has_out_dir {
+        return ProjectType::Foundry;
+    }
+
+    // 2. Prefer explicit Hardhat configuration even if Foundry is also present
     if has_hardhat_config && has_package_json {
         // Hardhat projects typically have package.json and hardhat config
         // Some repos include foundry.toml for tooling; Hardhat should take precedence here
         return ProjectType::Hardhat;
     }
 
-    // 2. Check for hybrid Foundry + Node.js package manager projects (but not Hardhat)
+    // 3. Check for hybrid Foundry + Node.js package manager projects (but not Hardhat)
     if has_foundry
         && has_package_json
         && (has_yarn_lock || has_npm_lock || has_pnpm_lock)
@@ -187,14 +194,9 @@ fn detect_project_type_at_path(repo_path: &Path) -> ProjectType {
         return ProjectType::FoundryYarn;
     }
 
-    // 3. Check for Truffle projects
+    // 4. Check for Truffle projects
     if has_truffle_config && has_package_json {
         return ProjectType::Truffle;
-    }
-
-    // 4. Check for pure Foundry projects (with build artifacts)
-    if has_foundry && has_out_dir {
-        return ProjectType::Foundry;
     }
 
     // 5. Fallback: if foundry.toml exists but no clear package manager setup
@@ -222,7 +224,7 @@ pub fn build_slither_args(
     let target_path = if let Some(ref folder) = subfolder {
         folder.clone()
     } else {
-        repo.root.join(&repo.repo_name)
+        repo.get_protocol_root()
     };
 
     // Detect project type based on the actual target path (which may include subfolder)
@@ -319,7 +321,12 @@ pub fn build_slither_args(
         let relative_folder = folder.strip_prefix(&repo.root).unwrap_or(&folder);
         relative_folder.to_string_lossy().to_string()
     } else {
-        repo.repo_name.clone()
+        repo.get_protocol_root()
+            .strip_prefix(&repo.root)
+            .ok()
+            .filter(|relative| !relative.as_os_str().is_empty())
+            .map(|relative| relative.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string())
     };
     args.push(target_dir);
 
@@ -570,6 +577,300 @@ pub async fn run_printer_json_inheritance(
     Ok(text)
 }
 
+#[derive(Debug)]
+struct SlitherAttempt {
+    label: String,
+    current_dir: PathBuf,
+    args: Vec<String>,
+}
+
+fn slither_target_path(repo: &RepoPaths, subfolder: Option<&Path>) -> PathBuf {
+    subfolder
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| repo.get_protocol_root())
+}
+
+fn build_slither_args_with_dot_target(
+    repo: &RepoPaths,
+    printer: &str,
+    subfolder: Option<PathBuf>,
+    json_output: bool,
+    use_ignore_compile: bool,
+) -> Vec<String> {
+    let mut args = build_slither_args(
+        repo,
+        Some(printer),
+        subfolder,
+        json_output,
+        use_ignore_compile,
+    );
+    if let Some(target) = args.last_mut() {
+        *target = ".".to_string();
+    }
+    args
+}
+
+fn build_foundry_slither_args(
+    repo: &RepoPaths,
+    printer: &str,
+    subfolder: Option<PathBuf>,
+    json_output: bool,
+    use_ignore_compile: bool,
+    dot_target: bool,
+) -> Vec<String> {
+    let target_path = slither_target_path(repo, subfolder.as_deref());
+    let mut args = Vec::new();
+
+    args.extend([
+        "--compile-force-framework".to_string(),
+        "foundry".to_string(),
+    ]);
+
+    if use_ignore_compile && target_path.join("out").exists() {
+        args.extend([
+            "--foundry-ignore-compile".to_string(),
+            "--foundry-out-directory".to_string(),
+            "out".to_string(),
+        ]);
+    }
+
+    args.extend(["--print".to_string(), printer.to_string()]);
+    args.extend([
+        "--exclude-low".to_string(),
+        "--exclude-medium".to_string(),
+        "--exclude-high".to_string(),
+        "--exclude-informational".to_string(),
+        "--disable-color".to_string(),
+    ]);
+
+    if json_output {
+        args.extend(["--json".to_string(), "-".to_string()]);
+    }
+
+    let target = if dot_target {
+        ".".to_string()
+    } else if let Some(folder) = subfolder {
+        folder
+            .strip_prefix(&repo.root)
+            .unwrap_or(&folder)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        repo.get_protocol_root()
+            .strip_prefix(&repo.root)
+            .ok()
+            .filter(|relative| !relative.as_os_str().is_empty())
+            .map(|relative| relative.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string())
+    };
+    args.push(target);
+
+    args
+}
+
+fn has_foundry_config(path: &Path) -> bool {
+    path.join("foundry.toml").exists() || path.join("forge.toml").exists()
+}
+
+fn json_slither_attempts(
+    repo: &RepoPaths,
+    printer: &str,
+    subfolder: Option<PathBuf>,
+) -> Vec<SlitherAttempt> {
+    let target_path = slither_target_path(repo, subfolder.as_deref());
+    let mut attempts = vec![
+        SlitherAttempt {
+            label: "default target with existing artifacts".to_string(),
+            current_dir: repo.root.clone(),
+            args: build_slither_args(repo, Some(printer), subfolder.clone(), true, true),
+        },
+        SlitherAttempt {
+            label: "default target with Slither compile".to_string(),
+            current_dir: repo.root.clone(),
+            args: build_slither_args(repo, Some(printer), subfolder.clone(), true, false),
+        },
+        SlitherAttempt {
+            label: "protocol cwd with existing artifacts".to_string(),
+            current_dir: target_path.clone(),
+            args: build_slither_args_with_dot_target(repo, printer, subfolder.clone(), true, true),
+        },
+        SlitherAttempt {
+            label: "protocol cwd with Slither compile".to_string(),
+            current_dir: target_path.clone(),
+            args: build_slither_args_with_dot_target(repo, printer, subfolder.clone(), true, false),
+        },
+    ];
+
+    if has_foundry_config(&target_path) {
+        attempts.extend([
+            SlitherAttempt {
+                label: "forced Foundry target with existing artifacts".to_string(),
+                current_dir: repo.root.clone(),
+                args: build_foundry_slither_args(
+                    repo,
+                    printer,
+                    subfolder.clone(),
+                    true,
+                    true,
+                    false,
+                ),
+            },
+            SlitherAttempt {
+                label: "forced Foundry target with Slither compile".to_string(),
+                current_dir: repo.root.clone(),
+                args: build_foundry_slither_args(
+                    repo,
+                    printer,
+                    subfolder.clone(),
+                    true,
+                    false,
+                    false,
+                ),
+            },
+            SlitherAttempt {
+                label: "protocol cwd forced Foundry with existing artifacts".to_string(),
+                current_dir: target_path.clone(),
+                args: build_foundry_slither_args(
+                    repo,
+                    printer,
+                    subfolder.clone(),
+                    true,
+                    true,
+                    true,
+                ),
+            },
+            SlitherAttempt {
+                label: "protocol cwd forced Foundry with Slither compile".to_string(),
+                current_dir: target_path,
+                args: build_foundry_slither_args(repo, printer, subfolder, true, false, true),
+            },
+        ]);
+    }
+
+    attempts
+}
+
+fn run_slither_attempt(attempt: &SlitherAttempt) -> Result<Output> {
+    Ok(Command::new("slither")
+        .current_dir(&attempt.current_dir)
+        .args(&attempt.args)
+        .output()?)
+}
+
+fn slither_command_for_log(attempt: &SlitherAttempt) -> String {
+    format!(
+        "(cd {} && slither {})",
+        attempt.current_dir.display(),
+        attempt
+            .args
+            .iter()
+            .map(|arg| {
+                if arg.chars().any(char::is_whitespace) {
+                    format!("{arg:?}")
+                } else {
+                    arg.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+}
+
+fn slither_output_preview(text: &str) -> String {
+    const MAX_CHARS: usize = 12_000;
+    let mut chars = text.chars();
+    let preview = chars.by_ref().take(MAX_CHARS).collect::<String>();
+    if chars.next().is_some() {
+        format!(
+            "{preview}\n... output truncated; rerun the command above for full Slither output ..."
+        )
+    } else {
+        preview
+    }
+}
+
+fn slither_failure_summary(attempt: &SlitherAttempt, output: &Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    format!(
+        "{} failed with exit code {:?}\nCommand: {}\nStdout: {}\nStderr: {}",
+        attempt.label,
+        output.status.code(),
+        slither_command_for_log(attempt),
+        slither_output_preview(&stdout),
+        slither_output_preview(&stderr)
+    )
+}
+
+fn run_slither_json_with_fallbacks(
+    repo: &RepoPaths,
+    printer: &str,
+    subfolder: Option<PathBuf>,
+) -> Result<String> {
+    let attempts = json_slither_attempts(repo, printer, subfolder);
+    let mut failures = Vec::new();
+
+    for (idx, attempt) in attempts.iter().enumerate() {
+        if idx > 0 {
+            log::warn!(
+                "Retrying Slither {} using {}",
+                printer,
+                attempt.label.as_str()
+            );
+        }
+
+        log::debug!(
+            "Running Slither {} attempt `{}`: {}",
+            printer,
+            attempt.label,
+            slither_command_for_log(attempt)
+        );
+
+        let output = run_slither_attempt(attempt)?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+
+        if output.status.success() && !stdout.trim().is_empty() {
+            if idx > 0 {
+                log::warn!(
+                    "Slither {} succeeded after fallback attempt `{}`",
+                    printer,
+                    attempt.label
+                );
+            }
+            return Ok(stdout);
+        }
+
+        let summary = if output.status.success() {
+            format!(
+                "{} succeeded but produced empty JSON output\nCommand: {}\nStderr: {}",
+                attempt.label,
+                slither_command_for_log(attempt),
+                slither_output_preview(&String::from_utf8_lossy(&output.stderr))
+            )
+        } else {
+            slither_failure_summary(attempt, &output)
+        };
+
+        if idx == 0 {
+            log::warn!(
+                "Slither {} failed on primary attempt; trying fallbacks. {}",
+                printer,
+                summary
+            );
+        } else {
+            log::warn!("Slither {} fallback failed. {}", printer, summary);
+        }
+        failures.push(summary);
+    }
+
+    anyhow::bail!(
+        "slither {} failed after {} attempts:\n\n{}",
+        printer,
+        failures.len(),
+        failures.join("\n\n")
+    )
+}
+
 // use for call-graph (inheritance now uses run_printer_json_inheritance)
 pub async fn run_printer_json(
     repo: &RepoPaths,
@@ -587,103 +888,12 @@ pub async fn run_printer_json(
         }
     } // Lock is dropped here
 
-    // log::info!("Running Slither printer: {}", printer);
-
-    // Try with --foundry-ignore-compile first (faster if artifacts are compatible)
-    let args = build_slither_args(repo, Some(printer), subfolder.clone(), true, true);
-
     ensure_runtime_dependencies(
         &format!("Slither JSON printer `{}`", printer),
         &[RuntimeDependency::Slither],
     )?;
 
-    let out = Command::new("slither")
-        .current_dir(&repo.root)
-        .args(&args)
-        .output()?;
-
-    let text = if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let stdout = String::from_utf8_lossy(&out.stdout);
-
-        // Debug: log what we captured
-        log::debug!(
-            "Slither {} failed. Stderr length: {}, Stdout length: {}",
-            printer,
-            stderr.len(),
-            stdout.len()
-        );
-        log::debug!(
-            "Stderr preview: {}",
-            &stderr.chars().take(500).collect::<String>()
-        );
-        log::debug!(
-            "Stdout preview: {}",
-            &stdout.chars().take(500).collect::<String>()
-        );
-
-        // Check if failure is due to incompatible build artifacts
-        // Empty output with exit code 1 often indicates compilation failure with --foundry-ignore-compile
-        let is_artifact_error = stderr.contains("KeyError: 'output'")
-            || stderr.contains("hardhat_like_parsing")
-            || stdout.contains("KeyError: 'output'")
-            || stdout.contains("hardhat_like_parsing")
-            || (stderr.is_empty() && stdout.is_empty()); // Empty output suggests early compilation failure
-
-        if is_artifact_error {
-            log::warn!(
-                "Slither {} failed with artifact parsing error. Retrying without --foundry-ignore-compile...",
-                printer
-            );
-
-            // Retry without --foundry-ignore-compile
-            let args_no_ignore =
-                build_slither_args(repo, Some(printer), subfolder.clone(), true, false);
-            let out_retry = Command::new("slither")
-                .current_dir(&repo.root)
-                .args(&args_no_ignore)
-                .output()?;
-
-            if !out_retry.status.success() {
-                let stderr_retry = String::from_utf8_lossy(&out_retry.stderr);
-                let stdout_retry = String::from_utf8_lossy(&out_retry.stdout);
-                log::error!(
-                    "Slither {} failed even after retry with exit code: {:?}",
-                    printer,
-                    out_retry.status.code()
-                );
-                log::error!("Stdout: {}", stdout_retry);
-                log::error!("Stderr: {}", stderr_retry);
-                anyhow::bail!(
-                    "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
-                    printer,
-                    out_retry.status.code(),
-                    stdout_retry,
-                    stderr_retry
-                );
-            }
-
-            String::from_utf8_lossy(&out_retry.stdout).into_owned()
-        } else {
-            // Different error, fail immediately
-            log::error!(
-                "Slither {} failed with exit code: {:?}",
-                printer,
-                out.status.code()
-            );
-            log::error!("Stdout: {}", stdout);
-            log::error!("Stderr: {}", stderr);
-            anyhow::bail!(
-                "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
-                printer,
-                out.status.code(),
-                stdout,
-                stderr
-            );
-        }
-    } else {
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    };
+    let text = run_slither_json_with_fallbacks(repo, printer, subfolder)?;
 
     // Save to cache and return
     info!(

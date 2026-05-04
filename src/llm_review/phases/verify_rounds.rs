@@ -154,14 +154,7 @@ pub async fn execute_rounds(
     let verify_findings_vec: Vec<Finding> = verified_findings
         .findings
         .into_iter()
-        .filter(|f| {
-            f.status.as_ref().is_some_and(|s| {
-                s.len() == 1
-                    || (s.len() <= 2 // edge case in case is Critical Impact and rare  => Medium
-                        && s.contains(&FindingStatus::LowSeverityDueToRareLikelihood)
-                        && !s.contains(&FindingStatus::LowSeverityDueToLowImpact))
-            })
-        })
+        .filter(|f| f.status.as_ref().is_some_and(|s| s.len() <= 1))
         .collect();
 
     info!(
@@ -453,4 +446,33 @@ pub async fn run_round_validation(
     Ok(Findings {
         findings: r_validated_findings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn retained_status_count(statuses: &[FindingStatus]) -> bool {
+        Some(statuses).is_some_and(|s| s.len() <= 1)
+    }
+
+    #[test]
+    fn universal_verification_retention_keeps_valid_findings() {
+        assert!(retained_status_count(&[FindingStatus::Valid]));
+    }
+
+    #[test]
+    fn universal_verification_retention_keeps_one_invalidation_label() {
+        assert!(retained_status_count(&[
+            FindingStatus::InvalidBugDoesNotExist
+        ]));
+    }
+
+    #[test]
+    fn universal_verification_retention_drops_two_invalidation_labels() {
+        assert!(!retained_status_count(&[
+            FindingStatus::InvalidBugDoesNotExist,
+            FindingStatus::InvalidNotExploitable,
+        ]));
+    }
 }

@@ -19,7 +19,7 @@ use std::{
 };
 use walkdir::WalkDir;
 
-use crate::cli_args::parse::{BuilderType, Cli};
+use crate::cli_args::parse::{BuilderType, Cli, ResolvedRepoConfig};
 use crate::config::{AuditType, audit_config};
 use crate::prepare_code::audit_context::{
     GeneratedAuditContext, generate_audit_context, should_generate_context,
@@ -103,6 +103,9 @@ pub async fn clone_and_filter_git_repo(
         configure_immunefi_bounty_cli(&mut effective_cli).await?;
     }
     let cli = &effective_cli;
+    if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) && cli.resolved_repos.len() > 1 {
+        return clone_and_filter_immunefi_polyrepo(cli).await;
+    }
     let repo_url = cli.get_repo();
 
     // 🔐 Validate the repository URL for safety
@@ -134,12 +137,6 @@ pub async fn clone_and_filter_git_repo(
     let project_id = format!("{}-{}", repo_name.replace("/", "-"), &commit_hash[..6]);
     let root = clone_and_build_repo(cli, &repo_name, &project_id)?;
 
-    // 6. Build .gitignore matcher
-    let mut ign = GitignoreBuilder::new(&root);
-    ign.add_line(None, "dist")?;
-    ign.add_line(None, "out")?;
-    let ign = ign.build()?;
-
     // Determine the search root - if subfolder is specified, search within that subdirectory
     let search_root = root.join(&repo_name);
     info!("search_root => {}", search_root.display());
@@ -151,6 +148,32 @@ pub async fn clone_and_filter_git_repo(
             repo_name
         );
     }
+
+    collect_repo_paths_after_clone(
+        cli,
+        root,
+        search_root,
+        repo_name,
+        project_id,
+        github_url,
+        commit_hash,
+    )
+    .await
+}
+
+async fn collect_repo_paths_after_clone(
+    cli: &Cli,
+    root: PathBuf,
+    search_root: PathBuf,
+    repo_name: String,
+    project_id: String,
+    github_url: String,
+    commit_hash: String,
+) -> Result<RepoPaths> {
+    let mut ign = GitignoreBuilder::new(&root);
+    ign.add_line(None, "dist")?;
+    ign.add_line(None, "out")?;
+    let ign = ign.build()?;
 
     let generated_context = if should_generate_context(cli) {
         Some(generate_audit_context(cli, &root, &search_root, &repo_name, &commit_hash).await?)
@@ -188,7 +211,6 @@ pub async fn clone_and_filter_git_repo(
         .map(|context| context.scope_txt.to_string_lossy().to_string())
         .or_else(|| cli.scoped_files.clone());
 
-    // create excluded folders
     let excluded_folders = if let Some(folders) = &cli.exclude_folders {
         let folder_paths: Vec<PathBuf> = folders
             .iter()
@@ -200,7 +222,6 @@ pub async fn clone_and_filter_git_repo(
         None
     };
 
-    // check if custom doc folder set it up
     let mut docs = Vec::new();
 
     let has_custom_docs = match &effective_custom_doc {
@@ -249,7 +270,6 @@ pub async fn clone_and_filter_git_repo(
         &repo_name,
     )?;
 
-    // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
     let mut test_files = Vec::new();
     let mut script_files = Vec::new();
@@ -266,7 +286,6 @@ pub async fn clone_and_filter_git_repo(
                 .and_then(|n| n.to_str())
                 .unwrap_or_default()
                 .to_ascii_lowercase();
-            // Skip out/, cache/, and .git
             !(name == "out" || name == "cache" || name == ".git")
         })
         .filter_map(Result::ok)
@@ -276,14 +295,12 @@ pub async fn clone_and_filter_git_repo(
         if entry.file_type().is_dir() {
             continue;
         }
-        // skip if gitignore or symlink
         if ign.matched(path, false).is_ignore()
             || fs::symlink_metadata(path)?.file_type().is_symlink()
         {
             continue;
         }
 
-        // Parse remappings.txt and store in global cache
         if (path.file_name() == Some(OsStr::new("remapping.txt"))
             || path.file_name() == Some(OsStr::new("remappings.txt")))
             && path.parent() == Some(&search_root)
@@ -303,7 +320,6 @@ pub async fn clone_and_filter_git_repo(
             }
         }
 
-        //only get md docs from root folder /*.md
         match path.extension().and_then(|e| e.to_str()) {
             Some("sol") => {
                 if is_test_file(path, search_root.as_path()) {
@@ -361,7 +377,6 @@ pub async fn clone_and_filter_git_repo(
         None => None,
     };
 
-    // Return the collected paths
     Ok(RepoPaths {
         github_url,
         project_id,
@@ -381,6 +396,57 @@ pub async fn clone_and_filter_git_repo(
         monorepo_folders,
         commit_hash,
     })
+}
+
+async fn clone_and_filter_immunefi_polyrepo(cli: &Cli) -> Result<RepoPaths> {
+    ensure_runtime_dependencies(
+        "polyrepo cloning",
+        &[RuntimeDependency::Git, RuntimeDependency::Shell],
+    )?;
+    let slug = cli
+        .immunefi_bounty
+        .as_deref()
+        .and_then(immunefi_slug_from_url)
+        .unwrap_or("immunefi-polyrepo")
+        .to_string();
+    let commits = cli
+        .resolved_repos
+        .iter()
+        .map(|repo| get_commit_hash(&repo.repo_url, repo.branch.as_deref()))
+        .collect::<Result<Vec<_>>>()?;
+    let fingerprint = polyrepo_workspace_fingerprint(&cli.resolved_repos, &commits);
+    let commit_hash = format!("{}-{}", fingerprint, commits.join("-"));
+    let project_id = format!("{}-{}", sanitize_artifact_name(&slug), fingerprint);
+    let root = clone_and_build_polyrepo_workspace(cli, &project_id, &commits)?;
+    let search_root = root.clone();
+    let github_url = cli
+        .resolved_repos
+        .iter()
+        .map(|repo| {
+            let commit = commits
+                .get(
+                    cli.resolved_repos
+                        .iter()
+                        .position(|candidate| candidate.repo_url == repo.repo_url)
+                        .unwrap_or(0),
+                )
+                .map(|hash| hash.as_str())
+                .unwrap_or("HEAD");
+            format!("{}/blob/{}", repo.repo_url.trim_end_matches(".git"), commit)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    collect_repo_paths_after_clone(
+        cli,
+        root,
+        search_root,
+        slug,
+        project_id,
+        github_url,
+        commit_hash,
+    )
+    .await
 }
 
 /// Adds GitHub authentication token to URL if GITHUB_TOKEN env var is set.
@@ -406,25 +472,79 @@ async fn configure_immunefi_bounty_cli(cli: &mut Cli) -> Result<()> {
     let bounty = fetch_immunefi_bounty(bounty_url)
         .await
         .with_context(|| format!("Failed to fetch Immunefi bounty metadata from {bounty_url}"))?;
-    let mut codebase = bounty.resolved_git_codebase()?;
-    resolve_github_tree_refs(&mut codebase)?;
-
-    apply_immunefi_resolved_repo(cli, &codebase, &bounty.project)?;
-
-    if cli.repo_branch.is_none()
-        && let Some(branch) = codebase.branch
-    {
-        info!("Derived repository branch from Immunefi codebase URL: {branch}");
-        cli.repo_branch = Some(branch);
+    let mut codebases = match bounty.resolved_git_codebases() {
+        Ok(codebases) => codebases,
+        Err(err) if cli.repo.is_some() => {
+            warn!(
+                "Could not derive a unique Immunefi smart-contract repo for `{}`; using manually configured repo. Derivation error: {err:#}",
+                bounty.project
+            );
+            Vec::new()
+        }
+        Err(err) => return Err(err),
+    };
+    for codebase in &mut codebases {
+        resolve_github_tree_refs(codebase)?;
     }
 
-    if !codebase.tree_paths.is_empty() {
-        info!(
-            "Derived repository tree path hints from Immunefi codebase URL: {:?}",
-            codebase.tree_paths
+    if let Some(configured_repo) = cli.repo.as_deref() {
+        let matched_codebase = codebases
+            .iter()
+            .find(|codebase| same_github_repo(configured_repo, &codebase.repo_url))
+            .cloned();
+        if !codebases.is_empty() && matched_codebase.is_none() {
+            anyhow::bail!(
+                "Configured repo `{}` does not match any Immunefi Smart Contract GitHub repo for `{}`: {}. Refusing to audit the wrong repository.",
+                configured_repo,
+                bounty.project,
+                codebases
+                    .iter()
+                    .map(|codebase| codebase.repo_url.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if let Some(codebase) = matched_codebase {
+            apply_immunefi_resolved_repo(cli, &codebase, &bounty.project)?;
+            apply_immunefi_codebase_location_hints(cli, &codebase);
+        }
+        return Ok(());
+    }
+
+    if codebases.is_empty() {
+        anyhow::bail!(
+            "Could not derive a cloneable Immunefi Smart Contract repo for `{}`. Specify `repo` manually.",
+            bounty.project
         );
-        cli.repo_tree_paths = codebase.tree_paths;
     }
+
+    cli.resolved_repos = codebases
+        .iter()
+        .map(|codebase| ResolvedRepoConfig {
+            repo_url: codebase.repo_url.clone(),
+            branch: codebase.branch.clone(),
+            tree_paths: codebase.tree_paths.clone(),
+        })
+        .collect();
+
+    if codebases.len() > 1 {
+        info!(
+            "Derived {} repositories from Immunefi bounty `{}`: {}",
+            codebases.len(),
+            bounty.project,
+            codebases
+                .iter()
+                .map(|codebase| codebase.repo_url.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        cli.repo = Some(codebases[0].repo_url.clone());
+        return Ok(());
+    }
+
+    let codebase = codebases.remove(0);
+    apply_immunefi_resolved_repo(cli, &codebase, &bounty.project)?;
+    apply_immunefi_codebase_location_hints(cli, &codebase);
 
     Ok(())
 }
@@ -452,6 +572,23 @@ fn apply_immunefi_resolved_repo(
     cli.repo = Some(codebase.repo_url.clone());
 
     Ok(())
+}
+
+fn apply_immunefi_codebase_location_hints(cli: &mut Cli, codebase: &ResolvedGitCodebase) {
+    if cli.repo_branch.is_none()
+        && let Some(branch) = &codebase.branch
+    {
+        info!("Derived repository branch from Immunefi codebase URL: {branch}");
+        cli.repo_branch = Some(branch.clone());
+    }
+
+    if cli.repo_tree_paths.is_empty() && !codebase.tree_paths.is_empty() {
+        info!(
+            "Derived repository tree path hints from Immunefi codebase URL: {:?}",
+            codebase.tree_paths
+        );
+        cli.repo_tree_paths = codebase.tree_paths.clone();
+    }
 }
 
 fn resolve_github_tree_refs(codebase: &mut ResolvedGitCodebase) -> Result<()> {
@@ -630,6 +767,14 @@ fn infer_code_folders_from_scope_txt(scope_txt: &Path, search_root: &Path) -> Re
     let mut folders = Vec::new();
     for line in raw.lines().map(str::trim).filter(|line| !line.is_empty()) {
         let relative = line.trim_start_matches("./").trim_start_matches('/');
+        if relative.split('/').any(|part| {
+            matches!(
+                part,
+                "node_modules" | ".git" | "out" | "cache" | "artifacts"
+            )
+        }) {
+            continue;
+        }
         let parts = relative.split('/').collect::<Vec<_>>();
         if parts.len() <= 1 {
             continue;
@@ -739,6 +884,36 @@ fn sanitize_artifact_name(raw: &str) -> String {
         .to_string()
 }
 
+fn repo_slug_from_url(repo_url: &str) -> String {
+    let clean = repo_url
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .split('?')
+        .next()
+        .unwrap_or(repo_url)
+        .split('#')
+        .next()
+        .unwrap_or(repo_url);
+    if let Some(after_host) = clean.split("github.com/").nth(1) {
+        let parts = after_host
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        if parts.len() >= 2 {
+            return sanitize_artifact_name(&format!("{}-{}", parts[0], parts[1]));
+        }
+    }
+    sanitize_artifact_name(clean.rsplit('/').next().unwrap_or("repo"))
+}
+
+fn immunefi_slug_from_url(url: &str) -> Option<&str> {
+    let after = url.split("/bug-bounty/").nth(1)?;
+    after
+        .split(['/', '#', '?'])
+        .find(|segment| !segment.is_empty())
+}
+
 fn has_build_artifacts(build_root: &Path) -> bool {
     build_root.join("out").exists()
         || build_root.join("artifacts").exists()
@@ -844,10 +1019,13 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     let build_stamp = workspace_path.join(".chainshield_build_ok");
 
     let default_build_root = workspace_path.join(repo_name);
-    let cached_build_root = infer_build_root(cli, &cloned_repo_root, &default_build_root);
+    let cached_build_roots = single_repo_build_roots(cli, &cloned_repo_root, &default_build_root);
 
     // Check if build artifacts exist (foundry uses 'out', hardhat uses 'artifacts')
-    let has_build_artifacts = has_build_artifacts(&cached_build_root);
+    let has_build_artifacts = !cached_build_roots.is_empty()
+        && cached_build_roots
+            .iter()
+            .all(|root| has_build_artifacts(root));
     let custom_build = matches!(cli.builder, BuilderType::Custom);
 
     // Determine if we should reuse the existing workspace
@@ -936,42 +1114,32 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
 
     configure_git_url_rewrites(&cloned_repo_root)?;
 
-    let build_root = infer_build_root(cli, &cloned_repo_root, &default_build_root);
-    if !build_root.exists() {
+    let build_roots = single_repo_build_roots(cli, &cloned_repo_root, &default_build_root);
+    if build_roots.is_empty() && !matches!(cli.builder, BuilderType::Custom) {
         anyhow::bail!(
-            "Build root '{}' does not exist after cloning '{}'. Check the configured subfolder.",
-            build_root.display(),
+            "No build system detected for '{}'. Specify `builder: Custom` with `build_cmd`, or provide the correct repo/tree path.",
             cli.get_repo()
         );
     }
+    for build_root in &build_roots {
+        if !build_root.exists() {
+            anyhow::bail!(
+                "Build root '{}' does not exist after cloning '{}'. Check the configured subfolder.",
+                build_root.display(),
+                cli.get_repo()
+            );
+        }
+    }
 
-    ensure_build_runtime_dependencies(cli, &build_root)?;
-    let build_command = cli.generate_build_command();
-    let pnpm_home = workspace_path.join(".pnpm");
-    let path = std::env::var_os("PATH")
-        .and_then(|existing_path| {
-            std::env::join_paths(
-                std::iter::once(pnpm_home.clone()).chain(std::env::split_paths(&existing_path)),
-            )
-            .ok()
-        })
-        .unwrap_or_else(|| pnpm_home.clone().into_os_string());
+    for build_root in &build_roots {
+        ensure_build_runtime_dependencies(cli, build_root)?;
+        run_build_command(cli, &workspace_path, build_root)?;
+    }
 
-    let build_output = Command::new("sh")
-        .args(["-lc", &build_command])
-        .current_dir(&build_root)
-        .env("PNPM_HOME", &pnpm_home)
-        .env("PATH", path)
-        .output()
-        .with_context(|| format!("Failed to run build command from {}", build_root.display()))?;
-
-    if !build_output.status.success() {
+    if build_roots.is_empty() {
         anyhow::bail!(
-            "Repository build failed from '{}'.\n\nCommand:\n{}\n\nstdout:\n{}\nstderr:\n{}",
-            build_root.display(),
-            build_command,
-            String::from_utf8_lossy(&build_output.stdout),
-            String::from_utf8_lossy(&build_output.stderr)
+            "No build roots were selected for '{}'. Specify `builder: Custom` with `build_cmd`, or provide a repo/tree path with a supported build config.",
+            cli.get_repo()
         );
     }
 
@@ -987,6 +1155,259 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     )?;
 
     Ok(workspace_path)
+}
+
+fn single_repo_build_roots(
+    cli: &Cli,
+    cloned_repo_root: &Path,
+    default_build_root: &Path,
+) -> Vec<PathBuf> {
+    if cli.subfolder.is_some() || !matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
+        return vec![default_build_root.to_path_buf()];
+    }
+
+    if cli.repo_tree_paths.len() <= 1 {
+        return vec![infer_build_root(cli, cloned_repo_root, default_build_root)];
+    }
+
+    let mut roots = Vec::new();
+    for tree_path in &cli.repo_tree_paths {
+        if let Some(path) = normalize_immunefi_tree_path(tree_path) {
+            let candidate = cloned_repo_root.join(path);
+            if candidate.exists() && contains_build_config(&candidate) {
+                roots.push(candidate);
+            }
+        }
+    }
+    roots.sort();
+    roots.dedup();
+
+    if matches!(cli.builder, BuilderType::Custom) {
+        if roots.is_empty() {
+            roots.push(default_build_root.to_path_buf());
+        }
+        return roots;
+    }
+
+    if !roots.is_empty() {
+        return roots;
+    }
+    if contains_build_config(cloned_repo_root) {
+        return vec![cloned_repo_root.to_path_buf()];
+    }
+    Vec::new()
+}
+
+fn clone_and_build_polyrepo_workspace(
+    cli: &Cli,
+    project_id: &str,
+    commits: &[String],
+) -> Result<PathBuf> {
+    let workspace_path = audit_config().workspace_root_path().join(project_id);
+    let build_stamp = workspace_path.join(".chainshield_build_ok");
+    let expected_stamp = polyrepo_workspace_stamp(&cli.resolved_repos, commits);
+
+    let should_reuse = workspace_path.exists()
+        && build_stamp.exists()
+        && fs::read_to_string(&build_stamp)
+            .map(|stamp| stamp == expected_stamp)
+            .unwrap_or(false)
+        && !cli.force_rebuild
+        && cli.resolved_repos.iter().all(|repo| {
+            workspace_path
+                .join(repo_slug_from_url(&repo.repo_url))
+                .exists()
+        })
+        && polyrepo_has_reusable_build_outputs(cli, &workspace_path);
+
+    if should_reuse {
+        log::info!(
+            "✅ Reusing existing Immunefi polyrepo workspace: {}",
+            workspace_path.display()
+        );
+        return Ok(workspace_path);
+    }
+
+    if workspace_path.exists() {
+        log::warn!(
+            "🔄 Rebuilding Immunefi polyrepo workspace at {}",
+            workspace_path.display()
+        );
+        fs::remove_dir_all(&workspace_path).with_context(|| {
+            format!(
+                "Failed to remove existing local workspace {}",
+                workspace_path.display()
+            )
+        })?;
+    } else {
+        log::info!(
+            "📦 Creating Immunefi polyrepo workspace at {}",
+            workspace_path.display()
+        );
+    }
+    fs::create_dir_all(&workspace_path)?;
+
+    for repo in &cli.resolved_repos {
+        let repo_root = repo_slug_from_url(&repo.repo_url);
+        let target = workspace_path.join(&repo_root);
+        let repo_url = add_github_auth(&repo.repo_url);
+        log::info!("git cloning polyrepo member {}...", repo.repo_url);
+        if let Some(commit) = repo
+            .branch
+            .as_deref()
+            .filter(|branch| is_full_git_sha(branch))
+        {
+            clone_pinned_commit(&workspace_path, &repo_root, &repo_url, commit)?;
+        } else {
+            let mut clone_command = Command::new("git");
+            clone_command.arg("clone").arg("--depth=1");
+            if let Some(branch) = &repo.branch {
+                clone_command.arg("--branch").arg(branch);
+            }
+            let clone_output = clone_command
+                .arg(&repo_url)
+                .arg(&repo_root)
+                .current_dir(&workspace_path)
+                .output()
+                .context("Failed to run git clone for Immunefi polyrepo member")?;
+
+            if !clone_output.status.success() {
+                anyhow::bail!(
+                    "git clone failed for {}\nstdout:\n{}\nstderr:\n{}",
+                    repo.repo_url,
+                    String::from_utf8_lossy(&clone_output.stdout),
+                    String::from_utf8_lossy(&clone_output.stderr)
+                );
+            }
+        }
+
+        configure_git_url_rewrites(&target)?;
+
+        let build_roots = polyrepo_build_roots(cli, repo, &target);
+        if build_roots.is_empty() && !matches!(cli.builder, BuilderType::Custom) {
+            anyhow::bail!(
+                "No build system detected for Immunefi polyrepo member `{}`. Specify `builder: Custom` with `build_cmd`, or provide the correct repo/tree path.",
+                repo.repo_url
+            );
+        }
+        for build_root in build_roots {
+            ensure_build_runtime_dependencies(cli, &build_root)?;
+            run_build_command(cli, &workspace_path, &build_root)?;
+        }
+    }
+
+    fs::write(&build_stamp, expected_stamp)?;
+    Ok(workspace_path)
+}
+
+fn polyrepo_workspace_stamp(repos: &[ResolvedRepoConfig], commits: &[String]) -> String {
+    let mut lines = repos
+        .iter()
+        .zip(commits.iter())
+        .map(|(repo, commit)| {
+            let mut tree_paths = repo.tree_paths.clone();
+            tree_paths.sort();
+            format!(
+                "repo={} branch={} tree_paths={} commit={}",
+                repo.repo_url,
+                repo.branch.as_deref().unwrap_or(""),
+                tree_paths.join(","),
+                commit
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.sort();
+    format!("{}\n", lines.join("\n"))
+}
+
+fn polyrepo_workspace_fingerprint(repos: &[ResolvedRepoConfig], commits: &[String]) -> String {
+    stable_short_hash(&polyrepo_workspace_stamp(repos, commits))
+}
+
+fn polyrepo_has_reusable_build_outputs(cli: &Cli, workspace_path: &Path) -> bool {
+    if matches!(cli.builder, BuilderType::Custom) {
+        return true;
+    }
+    cli.resolved_repos.iter().all(|repo| {
+        let repo_root = workspace_path.join(repo_slug_from_url(&repo.repo_url));
+        let build_roots = polyrepo_build_roots(cli, repo, &repo_root);
+        !build_roots.is_empty() && build_roots.iter().all(|root| has_build_artifacts(root))
+    })
+}
+
+fn stable_short_hash(input: &str) -> String {
+    // FNV-1a 64-bit: deterministic across platforms and plenty for cache keys.
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")[..12].to_string()
+}
+
+fn polyrepo_build_roots(cli: &Cli, repo: &ResolvedRepoConfig, repo_root: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for tree_path in &repo.tree_paths {
+        if let Some(path) = normalize_immunefi_tree_path(tree_path) {
+            let candidate = repo_root.join(path);
+            if candidate.exists() && contains_build_config(&candidate) {
+                roots.push(candidate);
+            }
+        }
+    }
+    if roots.is_empty() {
+        roots.push(repo_root.to_path_buf());
+    }
+    roots.sort();
+    roots.dedup();
+
+    if matches!(cli.builder, BuilderType::Custom) {
+        return roots;
+    }
+
+    let configured_roots = roots
+        .into_iter()
+        .filter(|root| contains_build_config(root))
+        .collect::<Vec<_>>();
+    if !configured_roots.is_empty() {
+        return configured_roots;
+    }
+    if contains_build_config(repo_root) {
+        return vec![repo_root.to_path_buf()];
+    }
+    Vec::new()
+}
+
+fn run_build_command(cli: &Cli, workspace_path: &Path, build_root: &Path) -> Result<()> {
+    let build_command = cli.generate_build_command();
+    let pnpm_home = workspace_path.join(".pnpm");
+    let path = std::env::var_os("PATH")
+        .and_then(|existing_path| {
+            std::env::join_paths(
+                std::iter::once(pnpm_home.clone()).chain(std::env::split_paths(&existing_path)),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| pnpm_home.clone().into_os_string());
+
+    let build_output = Command::new("sh")
+        .args(["-lc", &build_command])
+        .current_dir(build_root)
+        .env("PNPM_HOME", &pnpm_home)
+        .env("PATH", path)
+        .output()
+        .with_context(|| format!("Failed to run build command from {}", build_root.display()))?;
+
+    if !build_output.status.success() {
+        anyhow::bail!(
+            "Repository build failed from '{}'.\n\nCommand:\n{}\n\nstdout:\n{}\nstderr:\n{}",
+            build_root.display(),
+            build_command,
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+    }
+    Ok(())
 }
 
 fn get_commit_hash(repo_url: &str, branch: Option<&str>) -> Result<String> {
@@ -1188,7 +1609,12 @@ impl RepoPaths {
     }
     /// root folder of protocol that contains foundery.toml etc
     pub fn get_protocol_root(&self) -> PathBuf {
-        self.root.join(&self.repo_name)
+        let candidate = self.root.join(&self.repo_name);
+        if candidate.exists() {
+            candidate
+        } else {
+            self.root.clone()
+        }
     }
 
     /// Determine which directories Slither should be executed against.
@@ -1248,7 +1674,7 @@ impl RepoPaths {
             return Ok(None);
         }
 
-        let protocol_folder = self.root.join(&self.repo_name);
+        let protocol_folder = self.get_protocol_root();
 
         let filename = if file.starts_with(&self.root) {
             file.strip_prefix(&protocol_folder)?
@@ -1293,7 +1719,7 @@ impl RepoPaths {
             return Ok(Vec::new());
         };
 
-        let search_root = self.root.join(&self.repo_name);
+        let search_root = self.get_protocol_root();
         extract_list_of_files(monorepos, &search_root)
     }
 
@@ -1302,7 +1728,7 @@ impl RepoPaths {
             return Ok(Vec::new());
         };
 
-        let search_root = self.root.join(&self.repo_name);
+        let search_root = self.get_protocol_root();
         extract_list_of_files(scoped_files, &search_root)
     }
 
@@ -1448,6 +1874,37 @@ immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
     }
 
     #[test]
+    fn manual_immunefi_repo_inherits_resolved_tree_branch_and_paths() {
+        let mut cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/org/repo"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+"#,
+        )
+        .unwrap();
+        let codebase = ResolvedGitCodebase {
+            repo_url: "https://github.com/org/repo".to_string(),
+            branch: Some("release/v2".to_string()),
+            tree_paths: vec!["packages/a".to_string(), "packages/b".to_string()],
+            raw_tree_refs: vec![
+                "release/v2/packages/a".to_string(),
+                "release/v2/packages/b".to_string(),
+            ],
+        };
+
+        apply_immunefi_resolved_repo(&mut cli, &codebase, "Example").unwrap();
+        apply_immunefi_codebase_location_hints(&mut cli, &codebase);
+
+        assert_eq!(cli.repo.as_deref(), Some("https://github.com/org/repo"));
+        assert_eq!(cli.repo_branch.as_deref(), Some("release/v2"));
+        assert_eq!(
+            cli.repo_tree_paths,
+            vec!["packages/a".to_string(), "packages/b".to_string()]
+        );
+    }
+
+    #[test]
     fn immunefi_build_root_uses_tree_path_only_when_root_has_no_config() {
         let tmp = tempfile::tempdir().unwrap();
         let repo_root = tmp.path().join("repo");
@@ -1468,6 +1925,63 @@ repo_tree_paths:
         let build_root = infer_build_root(&cli, &repo_root, &repo_root);
 
         assert_eq!(build_root, package_root);
+    }
+
+    #[test]
+    fn polyrepo_build_roots_do_not_append_unconfigured_repo_root_after_tree_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path().join("repo");
+        let package_root = repo_root.join("packages/protocol");
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(package_root.join("foundry.toml"), "[profile.default]\n").unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/org/repo"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+"#,
+        )
+        .unwrap();
+        let repo = ResolvedRepoConfig {
+            repo_url: "https://github.com/org/repo".to_string(),
+            branch: Some("main".to_string()),
+            tree_paths: vec!["packages/protocol".to_string()],
+        };
+
+        let roots = polyrepo_build_roots(&cli, &repo, &repo_root);
+
+        assert_eq!(roots, vec![package_root]);
+    }
+
+    #[test]
+    fn single_repo_build_roots_include_multiple_immunefi_tree_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path().join("repo");
+        let package_a = repo_root.join("packages/a");
+        let package_b = repo_root.join("packages/b");
+        fs::create_dir_all(&package_a).unwrap();
+        fs::create_dir_all(&package_b).unwrap();
+        fs::write(package_a.join("foundry.toml"), "[profile.default]\n").unwrap();
+        fs::write(
+            package_b.join("hardhat.config.js"),
+            "module.exports = {};\n",
+        )
+        .unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/org/repo"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+repo_tree_paths:
+  - "packages/a"
+  - "packages/b"
+"#,
+        )
+        .unwrap();
+
+        let roots = single_repo_build_roots(&cli, &repo_root, &repo_root);
+
+        assert_eq!(roots, vec![package_a, package_b]);
     }
 
     #[test]
@@ -1507,5 +2021,173 @@ repo_tree_paths:
         let roots = infer_monorepo_roots_from_scope_txt(&scope, tmp.path()).unwrap();
 
         assert_eq!(roots, vec!["cl", "ve33"]);
+    }
+
+    #[test]
+    fn polyrepo_repo_paths_use_workspace_root_when_slug_folder_is_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let member_contract = tmp.path().join("ens-contracts/contracts/ENSRegistry.sol");
+        fs::create_dir_all(member_contract.parent().unwrap()).unwrap();
+        fs::write(&member_contract, "contract ENSRegistry {}\n").unwrap();
+        let monorepos = tmp.path().join("monorepos.txt");
+        fs::write(&monorepos, "./ens-contracts\n").unwrap();
+        let scoped_files = tmp.path().join("scope.txt");
+        fs::write(&scoped_files, "./ens-contracts/contracts/ENSRegistry.sol\n").unwrap();
+
+        let repo = RepoPaths {
+            github_url: "https://github.com/ensdomains/ens-contracts".to_string(),
+            project_id: "ens-abc123".to_string(),
+            root: tmp.path().to_path_buf(),
+            sol_files: vec![member_contract.clone()],
+            test_files: vec![],
+            script_files: vec![],
+            config_files: vec![],
+            lib_config_files: vec![],
+            source_code_folders: vec![tmp.path().join("ens-contracts/contracts")],
+            docs: vec![],
+            repo_name: "ens".to_string(),
+            audit_scope: None,
+            excluded_folders: None,
+            scoped_files: Some(scoped_files),
+            monorepo_folders: Some(monorepos),
+            commit_hash: "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            audit_type: AuditType::ImmunefiBugBounty,
+        };
+
+        assert_eq!(repo.get_protocol_root(), tmp.path());
+        assert_eq!(
+            repo.extract_scoped_files().unwrap(),
+            vec![member_contract.clone()]
+        );
+        assert_eq!(
+            repo.extract_monorepo_folders().unwrap(),
+            vec![tmp.path().join("ens-contracts")]
+        );
+    }
+
+    #[test]
+    fn polyrepo_workspace_fingerprint_changes_when_non_first_repo_changes() {
+        let repos = vec![
+            ResolvedRepoConfig {
+                repo_url: "https://github.com/example/first".to_string(),
+                branch: Some("main".to_string()),
+                tree_paths: vec![],
+            },
+            ResolvedRepoConfig {
+                repo_url: "https://github.com/example/second".to_string(),
+                branch: Some("main".to_string()),
+                tree_paths: vec!["packages/contracts".to_string()],
+            },
+        ];
+        let original = vec![
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+        ];
+        let changed_second = vec![
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            "cccccccccccccccccccccccccccccccccccccccc".to_string(),
+        ];
+
+        assert_ne!(
+            polyrepo_workspace_fingerprint(&repos, &original),
+            polyrepo_workspace_fingerprint(&repos, &changed_second)
+        );
+        assert_ne!(
+            polyrepo_workspace_stamp(&repos, &original),
+            polyrepo_workspace_stamp(&repos, &changed_second)
+        );
+    }
+
+    #[test]
+    fn polyrepo_unique_repo_hash_changes_when_non_first_repo_changes() {
+        let repos = vec![
+            ResolvedRepoConfig {
+                repo_url: "https://github.com/example/first".to_string(),
+                branch: Some("main".to_string()),
+                tree_paths: vec![],
+            },
+            ResolvedRepoConfig {
+                repo_url: "https://github.com/example/second".to_string(),
+                branch: Some("main".to_string()),
+                tree_paths: vec!["packages/contracts".to_string()],
+            },
+        ];
+        let original = vec![
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+        ];
+        let changed_second = vec![
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            "cccccccccccccccccccccccccccccccccccccccc".to_string(),
+        ];
+        let repo_with_commits = |commits: &[String]| RepoPaths {
+            github_url: "https://github.com/example/first, https://github.com/example/second"
+                .to_string(),
+            project_id: "example-polyrepo".to_string(),
+            root: PathBuf::from("/tmp"),
+            sol_files: vec![],
+            test_files: vec![],
+            script_files: vec![],
+            config_files: vec![],
+            lib_config_files: vec![],
+            source_code_folders: vec![],
+            docs: vec![],
+            repo_name: "example".to_string(),
+            audit_scope: None,
+            excluded_folders: None,
+            scoped_files: None,
+            monorepo_folders: None,
+            commit_hash: format!(
+                "{}-{}",
+                polyrepo_workspace_fingerprint(&repos, commits),
+                commits.join("-")
+            ),
+            audit_type: AuditType::ImmunefiBugBounty,
+        };
+
+        assert_ne!(
+            repo_with_commits(&original).unique_repo_hash(),
+            repo_with_commits(&changed_second).unique_repo_hash()
+        );
+    }
+
+    #[test]
+    fn polyrepo_reuse_requires_build_artifacts_for_auto_builds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path().join("org-repo");
+        let package_root = repo_root.join("packages/protocol");
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(package_root.join("foundry.toml"), "[profile.default]\n").unwrap();
+        let mut cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/org/repo"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+"#,
+        )
+        .unwrap();
+        cli.resolved_repos = vec![ResolvedRepoConfig {
+            repo_url: "https://github.com/org/repo".to_string(),
+            branch: Some("main".to_string()),
+            tree_paths: vec!["packages/protocol".to_string()],
+        }];
+
+        assert!(!polyrepo_has_reusable_build_outputs(&cli, tmp.path()));
+
+        fs::create_dir_all(package_root.join("out")).unwrap();
+
+        assert!(polyrepo_has_reusable_build_outputs(&cli, tmp.path()));
+    }
+
+    #[test]
+    fn polyrepo_repo_slugs_are_owner_qualified() {
+        assert_eq!(
+            repo_slug_from_url("https://github.com/alpha/contracts"),
+            "alpha-contracts"
+        );
+        assert_eq!(
+            repo_slug_from_url("https://github.com/beta/contracts.git"),
+            "beta-contracts"
+        );
     }
 }

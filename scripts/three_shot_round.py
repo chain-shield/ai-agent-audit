@@ -5,6 +5,7 @@ Three-shot validation splits the full-report pass into:
 1. scope / known-issue screening
 2. unsupported-token screening, or bounty exploitability screening for bounty profiles
 3. full validation on the surviving findings, or severity/eligibility classification for bounty profiles
+3a. optional Immunefi feasibility-limitations gate on reportable candidates
 4. optional canonicalization cleanup on the surviving reportable candidates
 4a. optional second V12 overlap sweep on post-canonicalization candidates for competition runs
 5. optional PoC generation and verification on submission candidates
@@ -54,6 +55,8 @@ DEDUP_WORKER_MODEL = "gpt-5.4"
 DEDUP_WORKER_REASONING = "high"
 V12_SWEEP_WORKER_MODEL = "gpt-5.4"
 V12_SWEEP_WORKER_REASONING = "high"
+FEASIBILITY_WORKER_MODEL = "gpt-5.4"
+FEASIBILITY_WORKER_REASONING = "high"
 POC_WORKER_MODEL = "gpt-5.5"
 POC_WORKER_REASONING = "xhigh"
 REPORT_WORKER_MODEL = "gpt-5.5"
@@ -182,6 +185,13 @@ def block_field(block: str, label: str) -> str:
     return "-"
 
 
+def optional_override(value: str | None) -> str:
+    normalized = (value or "").strip()
+    if normalized.lower() in {"", "-", "—", "n/a", "na", "none", "null"}:
+        return ""
+    return normalized
+
+
 def scope_screen_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
     return THREE_SHOT_ROOT / "scope-screens" / prompt_version / f"{benchmark}-{run_id}.md"
 
@@ -192,6 +202,26 @@ def token_screen_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
 
 def stage3_run_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
     return THREE_SHOT_ROOT / "stage3-runs" / prompt_version / f"{benchmark}-{run_id}.md"
+
+
+def feasibility_screen_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
+    return THREE_SHOT_ROOT / "feasibility-screens" / prompt_version / f"{benchmark}-{run_id}.md"
+
+
+def feasibility_run_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
+    return THREE_SHOT_ROOT / "feasibility-runs" / prompt_version / f"{benchmark}-{run_id}.md"
+
+
+def current_validated_run_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
+    if feasibility_gate_enabled():
+        path = feasibility_run_path(prompt_version, benchmark, run_id)
+        if not path.exists():
+            raise SystemExit(
+                "R3a feasibility gate is enabled but has not been applied. "
+                "Run prepare-feasibility and apply-feasibility before scoring, dedup, or downstream rounds."
+            )
+        return path
+    return final_run_path(prompt_version, benchmark, run_id)
 
 
 def dedup_screen_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
@@ -321,6 +351,10 @@ def round2_input_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
 
 def round3_input_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
     return THREE_SHOT_ROOT / "inputs" / "r3" / prompt_version / f"{benchmark}-{run_id}.md"
+
+
+def round3a_input_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
+    return THREE_SHOT_ROOT / "inputs" / "r3a" / prompt_version / f"{benchmark}-{run_id}.md"
 
 
 def round4_input_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
@@ -462,6 +496,20 @@ def is_bounty_profile(config: dict[str, object] | None = None) -> bool:
 
 def is_immunefi_bounty_profile(config: dict[str, object] | None = None) -> bool:
     return validation_profile(config) == "immunefi-bounty"
+
+
+def round_enabled(config: dict[str, object], round_name: str, default: bool = True) -> bool:
+    value = nested_value(config, ["rounds", round_name])
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def feasibility_gate_enabled(config: dict[str, object] | None = None) -> bool:
+    source = config if config is not None else ACTIVE_CONFIG
+    return is_immunefi_bounty_profile(source) and round_enabled(source, "r3a_feasibility_gate", False)
 
 
 def reportable_severities(config: dict[str, object] | None = None) -> set[str]:
@@ -904,6 +952,28 @@ Output submission candidates: `{submission_candidates_path(prompt_version, bench
     return path
 
 
+def init_feasibility_screen(prompt_version: str, benchmark: str, run_id: str, reset: bool = False) -> Path:
+    path = feasibility_screen_path(prompt_version, benchmark, run_id)
+    if path.exists() and not reset:
+        return path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = f"""# {benchmark} Three-Shot Round 3a Immunefi Feasibility Screen
+
+Status: In progress
+Source assembled run: `{final_run_path(prompt_version, benchmark, run_id)}`
+Output feasibility-adjusted run: `{feasibility_run_path(prompt_version, benchmark, run_id)}`
+
+## Decisions
+
+| Finding | Finding Title | Decision | Confidence | Feasibility Category | Revised Severity | Required Report Note | Reason |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+{SCREEN_ANCHOR}
+"""
+    path.write_text(content)
+    return path
+
+
 def init_v12_sweep_screen(prompt_version: str, benchmark: str, run_id: str, reset: bool = False) -> Path:
     path = v12_sweep_screen_path(prompt_version, benchmark, run_id)
     if path.exists() and not reset:
@@ -1163,6 +1233,55 @@ def parse_dedup_screen(path: Path) -> dict[str, dict[str, str]]:
     return rows
 
 
+def parse_feasibility_screen(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        raise SystemExit(f"Missing required feasibility screen file: {path}")
+
+    rows: dict[str, dict[str, str]] = {}
+    header: list[str] | None = None
+    for line in path.read_text().splitlines():
+        if not line.startswith("| "):
+            continue
+        parts = [part.strip() for part in line.strip().strip("|").split("|")]
+        if parts[0] == "Finding":
+            header = [re.sub(r"[^a-z0-9]+", "_", part.lower()).strip("_") for part in parts]
+            continue
+        if parts[0] == "---":
+            continue
+        fid = parts[0].split(" / ", 1)[0].strip()
+        if not re.fullmatch(r"[CHML]-\d+", fid):
+            continue
+        expected_columns = len(header) if header else 8
+        if len(parts) < expected_columns:
+            raise SystemExit(
+                f"Incomplete R3a feasibility row for {fid}: expected {expected_columns} columns, got {len(parts)}."
+            )
+        if header and len(parts) >= len(header):
+            mapped = dict(zip(header, parts, strict=False))
+            rows[fid] = {
+                "finding_id": fid,
+                "title": mapped.get("finding_title", ""),
+                "decision": mapped.get("decision", ""),
+                "confidence": mapped.get("confidence", ""),
+                "feasibility_category": mapped.get("feasibility_category", ""),
+                "revised_severity": mapped.get("revised_severity", ""),
+                "required_report_note": mapped.get("required_report_note", ""),
+                "reason": mapped.get("reason", ""),
+            }
+            continue
+        rows[fid] = {
+            "finding_id": fid,
+            "title": parts[1],
+            "decision": parts[2],
+            "confidence": parts[3],
+            "feasibility_category": parts[4],
+            "revised_severity": parts[5],
+            "required_report_note": parts[6],
+            "reason": "|".join(parts[7:]).strip(),
+        }
+    return rows
+
+
 def parse_v12_sweep_screen(path: Path) -> dict[str, dict[str, str]]:
     if not path.exists():
         raise SystemExit(f"Missing required V12 sweep screen file: {path}")
@@ -1301,8 +1420,28 @@ def kept_after_token(prompt_version: str, benchmark: str, run_id: str) -> list[F
     return kept
 
 
-def dedup_candidates(prompt_version: str, benchmark: str, run_id: str) -> list[tuple[Finding, str]]:
+def reportable_stage3_candidates(prompt_version: str, benchmark: str, run_id: str) -> list[tuple[Finding, str]]:
     run_path = final_run_path(prompt_version, benchmark, run_id)
+    if not run_path.exists():
+        raise SystemExit(f"Missing assembled three-shot run file: {run_path}")
+
+    blocks = raw_finding_blocks(run_path)
+    severities = reportable_severities()
+    candidates: list[tuple[Finding, str]] = []
+    for finding in all_findings(benchmark):
+        block = blocks.get(finding.fid)
+        if not block:
+            continue
+        if block_field(block, "Decision") != "Valid":
+            continue
+        if block_field(block, "Severity Assessment") not in severities:
+            continue
+        candidates.append((finding, block))
+    return candidates
+
+
+def dedup_candidates(prompt_version: str, benchmark: str, run_id: str) -> list[tuple[Finding, str]]:
+    run_path = current_validated_run_path(prompt_version, benchmark, run_id)
     if not run_path.exists():
         raise SystemExit(f"Missing assembled three-shot run file: {run_path}")
 
@@ -1352,7 +1491,7 @@ def write_round4_input(
         [
             f"# {benchmark} Round 4 Canonicalization Input",
             "",
-            f"Source assembled run: `{final_run_path(prompt_version, benchmark, run_id)}`",
+            f"Source validated run: `{current_validated_run_path(prompt_version, benchmark, run_id)}`",
             f"Candidate count: `{len(candidates)}`",
             "",
             "This file contains only findings currently marked `Valid` with reportable severity for the configured validation profile.",
@@ -1378,6 +1517,105 @@ def require_dedup_rows(prompt_version: str, benchmark: str, run_id: str) -> dict
             "Dedup screen is incomplete. Missing findings: " + ", ".join(missing[:10])
         )
     return rows
+
+
+def write_round3a_input(path: Path, prompt_version: str, benchmark: str, run_id: str) -> Path:
+    candidates = reportable_stage3_candidates(prompt_version, benchmark, run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sections: list[str] = []
+    for finding, block in candidates:
+        sections.extend(
+            [
+                f"## {finding.fid} / `{finding.report_id}`",
+                f"- Finding title: {finding.title}",
+                f"- Report lines: {finding.start_line}-{finding.end_line}",
+                "",
+                "### Original Report Block",
+                "```md",
+                finding.block.rstrip(),
+                "```",
+                "",
+                "### R3 Validated Block",
+                block.strip(),
+                "",
+            ]
+        )
+    content = "\n".join(
+        [
+            f"# {benchmark} Round 3a Immunefi Feasibility Input",
+            "",
+            f"Source assembled run: `{final_run_path(prompt_version, benchmark, run_id)}`",
+            f"Candidate count: `{len(candidates)}`",
+            "",
+            "This file contains only R3 candidates currently marked `Valid` with reportable Immunefi severity.",
+            "R3a must apply Immunefi feasibility-limitation standards without redoing R3 bug/severity analysis.",
+            "",
+            "## Candidates",
+            "",
+            "\n".join(sections) if sections else "_No reportable candidates for feasibility review._",
+            "",
+        ]
+    )
+    path.write_text(content)
+    return path
+
+
+def require_feasibility_rows(prompt_version: str, benchmark: str, run_id: str) -> dict[str, dict[str, str]]:
+    rows = parse_feasibility_screen(feasibility_screen_path(prompt_version, benchmark, run_id))
+    expected = {finding.fid for finding, _ in reportable_stage3_candidates(prompt_version, benchmark, run_id)}
+    if expected and not rows:
+        raise SystemExit("Feasibility screen has no decisions yet. Complete round 3a before applying it.")
+    missing = sorted(expected - set(rows))
+    if missing:
+        raise SystemExit(
+            "Feasibility screen is incomplete. Missing findings: " + ", ".join(missing[:10])
+        )
+    return rows
+
+
+def set_block_field(block: str, label: str, value: str) -> str:
+    prefix = f"- {label}: "
+    lines = block.rstrip().splitlines()
+    for idx, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[idx] = prefix + value
+            return "\n".join(lines) + "\n"
+    lines.append(prefix + value)
+    return "\n".join(lines) + "\n"
+
+
+def apply_feasibility_to_block(block: str, row: dict[str, str]) -> str:
+    decision = row["decision"].strip().lower()
+    category = row.get("feasibility_category", "") or "-"
+    note = row.get("required_report_note", "") or "-"
+    reason = row.get("reason", "") or "-"
+    confidence = row.get("confidence", "") or block_field(block, "Confidence") or "Medium"
+    revised_severity = optional_override(row.get("revised_severity"))
+
+    updated = block
+    if decision == "keep":
+        pass
+    elif decision in {"reclassify as medium griefing", "downgrade to medium griefing"}:
+        updated = set_block_field(updated, "Decision", "Valid")
+        updated = set_block_field(updated, "Severity Assessment", "Medium")
+        updated = set_block_field(updated, "Root Cause Family", "`immunefi-griefing-feasibility`")
+    elif decision == "needs review":
+        updated = set_block_field(updated, "Decision", "Needs Review")
+        updated = set_block_field(updated, "Severity Assessment", revised_severity or "Needs Review")
+    elif decision == "exclude":
+        updated = set_block_field(updated, "Decision", "Invalid")
+        updated = set_block_field(updated, "Severity Assessment", revised_severity or "Low / Invalid")
+        updated = set_block_field(updated, "Root Cause Family", "`immunefi-feasibility-exclusion`")
+    else:
+        raise SystemExit(f"Invalid R3a feasibility decision: {row['decision']}")
+
+    if revised_severity and decision == "keep":
+        updated = set_block_field(updated, "Severity Assessment", revised_severity)
+    updated = set_block_field(updated, "Confidence", confidence)
+    updated = set_block_field(updated, "Feasibility Assessment", category)
+    updated = set_block_field(updated, "Feasibility Report Note", note)
+    updated = set_block_field(updated, "Feasibility Reason", reason)
+    return updated.strip()
 
 
 def write_round4a_input(path: Path, prompt_version: str, benchmark: str, run_id: str) -> Path:
@@ -1782,6 +2020,27 @@ def render_stage3_prompt(prompt_version: str, benchmark: str, run_id: str, confi
     )
 
 
+def render_feasibility_prompt(prompt_version: str, benchmark: str, run_id: str, config: dict[str, object]) -> str:
+    input_path = write_round3a_input(
+        round3a_input_path(prompt_version, benchmark, run_id),
+        prompt_version,
+        benchmark,
+        run_id,
+    )
+    return render_stage_prompt(
+        "r3a.md",
+        {
+            **render_common_replacements(prompt_version, benchmark),
+            **worker_replacements(config, "r3a", FEASIBILITY_WORKER_MODEL, FEASIBILITY_WORKER_REASONING),
+            "INPUT_PATH": input_path,
+            "STAGE_PATH": feasibility_screen_path(prompt_version, benchmark, run_id),
+            "FINAL_RUN_PATH": final_run_path(prompt_version, benchmark, run_id),
+            "FEASIBILITY_RUN_PATH": feasibility_run_path(prompt_version, benchmark, run_id),
+        },
+        config,
+    )
+
+
 def render_dedup_prompt(prompt_version: str, benchmark: str, run_id: str, config: dict[str, object]) -> str:
     input_path = write_round4_input(
         round4_input_path(prompt_version, benchmark, run_id),
@@ -2088,8 +2347,73 @@ def assemble_run(prompt_version: str, benchmark: str, run_id: str) -> dict[str, 
     }
 
 
-def apply_dedup(prompt_version: str, benchmark: str, run_id: str) -> dict[str, object]:
+def apply_feasibility(prompt_version: str, benchmark: str, run_id: str) -> dict[str, object]:
     run_path = final_run_path(prompt_version, benchmark, run_id)
+    if not run_path.exists():
+        raise SystemExit(f"Missing assembled three-shot run file: {run_path}")
+
+    rows = require_feasibility_rows(prompt_version, benchmark, run_id)
+    original_text = run_path.read_text()
+    blocks = raw_finding_blocks(run_path)
+    adjusted_blocks: list[str] = []
+    keep = reclassified = needs_review = excluded = 0
+
+    for fid, block in blocks.items():
+        row = rows.get(fid)
+        if row:
+            decision = row["decision"].strip().lower()
+            if decision == "keep":
+                keep += 1
+            elif decision in {"reclassify as medium griefing", "downgrade to medium griefing"}:
+                reclassified += 1
+            elif decision == "needs review":
+                needs_review += 1
+            elif decision == "exclude":
+                excluded += 1
+            adjusted_blocks.append(apply_feasibility_to_block(block, row))
+        else:
+            adjusted_blocks.append(block.strip())
+
+    prefix = original_text.split("## Per-Finding Validation", 1)[0].rstrip()
+    out_path = feasibility_run_path(prompt_version, benchmark, run_id)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    content = "\n".join(
+        [
+            prefix,
+            f"Stage 3a Immunefi feasibility screen: `{feasibility_screen_path(prompt_version, benchmark, run_id)}`",
+            "",
+            "## R3a Feasibility Summary",
+            "",
+            f"- Reviewed reportable candidates: `{len(rows)}`",
+            f"- Kept as classified: `{keep}`",
+            f"- Reclassified as Medium griefing: `{reclassified}`",
+            f"- Marked Needs Review: `{needs_review}`",
+            f"- Excluded by feasibility gate: `{excluded}`",
+            "",
+            "## Per-Finding Validation",
+            "",
+            "\n\n".join(adjusted_blocks),
+            "",
+        ]
+    )
+    out_path.write_text(content)
+    return {
+        "benchmark": benchmark,
+        "prompt_version": prompt_version,
+        "run_id": run_id,
+        "source_run_path": str(run_path),
+        "feasibility_screen_path": str(feasibility_screen_path(prompt_version, benchmark, run_id)),
+        "feasibility_run_path": str(out_path),
+        "reviewed_candidates": len(rows),
+        "kept_as_classified": keep,
+        "reclassified_as_medium_griefing": reclassified,
+        "needs_review": needs_review,
+        "excluded": excluded,
+    }
+
+
+def apply_dedup(prompt_version: str, benchmark: str, run_id: str) -> dict[str, object]:
+    run_path = current_validated_run_path(prompt_version, benchmark, run_id)
     if not run_path.exists():
         raise SystemExit(f"Missing assembled three-shot run file: {run_path}")
 
@@ -2221,7 +2545,7 @@ def apply_v12_sweep(prompt_version: str, benchmark: str, run_id: str) -> dict[st
 
 
 def score_three_shot(prompt_version: str, benchmark: str, run_id: str) -> dict[str, object]:
-    run_path = final_run_path(prompt_version, benchmark, run_id)
+    run_path = current_validated_run_path(prompt_version, benchmark, run_id)
     if not run_path.exists():
         raise SystemExit(f"Missing assembled three-shot run file: {run_path}")
 
@@ -2484,6 +2808,41 @@ def cmd_prepare_final(args: argparse.Namespace) -> None:
         "worker_prompt_source": str(
             prompt_template_path("r3.md", config)
         ),
+        "requires_fresh_worker_context": True,
+        "worker_prompt": prompt_text if args.include_prompt else None,
+    }
+    if args.write_prompt:
+        attach_worker_prompt_path(payload, prompt_text, Path(args.write_prompt))
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def cmd_prepare_feasibility(args: argparse.Namespace) -> None:
+    config = resolve_run_args(args)
+    if not feasibility_gate_enabled(config):
+        payload = {
+            "benchmark": args.benchmark,
+            "prompt_version": args.prompt_version,
+            "run_id": args.run_id,
+            "worker_type": "none",
+            "reason": (
+                "R3a feasibility gate is disabled. It only runs for validation_profile: "
+                f"immunefi-bounty with rounds.r3a_feasibility_gate: true; current profile is {validation_profile(config)}."
+            ),
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    candidates = reportable_stage3_candidates(args.prompt_version, args.benchmark, args.run_id)
+    path = init_feasibility_screen(args.prompt_version, args.benchmark, args.run_id, reset=args.reset)
+    prompt_text = render_feasibility_prompt(args.prompt_version, args.benchmark, args.run_id, config)
+    payload = {
+        "benchmark": args.benchmark,
+        "prompt_version": args.prompt_version,
+        "run_id": args.run_id,
+        "stage_path": str(path),
+        "input_findings": len(candidates),
+        "worker_type": "three-shot-r3a-immunefi-feasibility-gate",
+        **worker_payload(config, "r3a", FEASIBILITY_WORKER_MODEL, FEASIBILITY_WORKER_REASONING),
+        "worker_prompt_source": str(prompt_template_path("r3a.md", config)),
         "requires_fresh_worker_context": True,
         "worker_prompt": prompt_text if args.include_prompt else None,
     }
@@ -3034,6 +3393,23 @@ def cmd_apply_dedup(args: argparse.Namespace) -> None:
     print(json.dumps(apply_dedup(args.prompt_version, args.benchmark, args.run_id), indent=2, sort_keys=True))
 
 
+def cmd_apply_feasibility(args: argparse.Namespace) -> None:
+    config = resolve_run_args(args)
+    if not feasibility_gate_enabled(config):
+        print(json.dumps({
+            "benchmark": args.benchmark,
+            "prompt_version": args.prompt_version,
+            "run_id": args.run_id,
+            "skipped": True,
+            "reason": (
+                "R3a feasibility gate is disabled. It only runs for validation_profile: "
+                f"immunefi-bounty with rounds.r3a_feasibility_gate: true; current profile is {validation_profile(config)}."
+            ),
+        }, indent=2, sort_keys=True))
+        return
+    print(json.dumps(apply_feasibility(args.prompt_version, args.benchmark, args.run_id), indent=2, sort_keys=True))
+
+
 def cmd_apply_v12_sweep(args: argparse.Namespace) -> None:
     config = resolve_run_args(args)
     if is_bounty_profile(config):
@@ -3060,7 +3436,7 @@ def cmd_assemble_poc_review(args: argparse.Namespace) -> None:
 
 def cmd_score_prompt(args: argparse.Namespace) -> None:
     config = resolve_run_args(args)
-    run_path = final_run_path(args.prompt_version, args.benchmark, args.run_id)
+    run_path = current_validated_run_path(args.prompt_version, args.benchmark, args.run_id)
     if not run_path.exists():
         raise SystemExit(f"Missing assembled three-shot run file: {run_path}")
 
@@ -3130,6 +3506,13 @@ def main() -> None:
     prepare_final.add_argument("--write-prompt")
     prepare_final.set_defaults(func=cmd_prepare_final)
 
+    prepare_feasibility = subparsers.add_parser("prepare-feasibility", help="Initialize optional round 3a Immunefi feasibility gate and emit the worker prompt.")
+    add_run_args(prepare_feasibility)
+    prepare_feasibility.add_argument("--include-prompt", action="store_true")
+    prepare_feasibility.add_argument("--write-prompt")
+    prepare_feasibility.add_argument("--reset", action="store_true", help="Reset the round 3a feasibility screen before emitting the prompt.")
+    prepare_feasibility.set_defaults(func=cmd_prepare_feasibility)
+
     prepare_dedup = subparsers.add_parser("prepare-dedup", help="Initialize optional round 4 canonicalization cleanup and emit the worker prompt.")
     add_run_args(prepare_dedup)
     prepare_dedup.add_argument("--include-prompt", action="store_true")
@@ -3187,6 +3570,10 @@ def main() -> None:
     assemble = subparsers.add_parser("assemble", help="Assemble the final three-shot run from stages 1-3.")
     add_run_args(assemble)
     assemble.set_defaults(func=cmd_assemble)
+
+    apply_feasibility_cmd = subparsers.add_parser("apply-feasibility", help="Apply round 3a Immunefi feasibility decisions to create a feasibility-adjusted run.")
+    add_run_args(apply_feasibility_cmd)
+    apply_feasibility_cmd.set_defaults(func=cmd_apply_feasibility)
 
     apply_dedup_cmd = subparsers.add_parser("apply-dedup", help="Apply round 4 canonicalization decisions to create submission candidates.")
     add_run_args(apply_dedup_cmd)

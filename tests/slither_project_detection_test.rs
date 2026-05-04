@@ -68,6 +68,30 @@ fn hardhat_repo_pref_over_foundry_yarn() {
 }
 
 #[test]
+fn foundry_artifacts_take_precedence_in_mixed_repo() {
+    let tmp = std::env::temp_dir().join("slither_ffi_detect_mixed_foundry_int");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    let repo = make_repo_layout(
+        &tmp,
+        "ssv-network-like",
+        &[
+            "package.json",
+            "package-lock.json",
+            "hardhat.config.ts",
+            "foundry.toml",
+        ],
+        &["out"],
+    );
+    let args = build_slither_args(&repo, Some("call-graph"), None, true, true);
+    let joined = args.join(" ");
+    assert!(joined.contains("--foundry-ignore-compile"));
+    assert!(joined.contains("--foundry-out-directory out"));
+    assert!(!joined.contains("--compile-force-framework hardhat"));
+    assert!(!joined.contains("--hardhat-ignore-compile"));
+}
+
+#[test]
 fn foundry_yarn_without_hardhat_config() {
     let tmp = std::env::temp_dir().join("slither_ffi_detect_foundryyarn_int");
     let _ = fs::remove_dir_all(&tmp);
