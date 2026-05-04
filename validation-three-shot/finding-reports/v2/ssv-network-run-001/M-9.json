@@ -1,0 +1,7 @@
+{
+  "benchmark": "ssv-network",
+  "finding_id": "M-9",
+  "status": "Report Created",
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ssv-network-run-001/M-9-Dust-deposits-can-frontrun-liquidations-by-invalid.md",
+  "notes": "Submission-ready Medium report created for M-9. The report maps the issue to the generated Immunefi Medium griefing and theft-of-gas rows and includes the full verified local fork Hardhat PoC source."
+}

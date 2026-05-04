@@ -1,0 +1,8 @@
+{
+  "benchmark": "ssv-network",
+  "finding_id": "M-9",
+  "status": "Ready",
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ssv-network-run-001/M-9-Dust-deposits-can-frontrun-liquidations-by-invalid.md",
+  "review_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/ssv-network-run-001/M-9-Dust-deposits-can-frontrun-liquidations-by-invalid.md",
+  "notes": "Report left unchanged and is submission-ready. Medium severity matches the round 3 Immunefi classification and exact SSV Network Medium rows for Griefing (e.g. no profit motive for an attacker, but damage to the users or the protocol) and Theft of gas. The issue is in-scope, unprivileged, currently exploitable in SSVNetwork/SSVClusters, and the report PoC matches the verified test. PoC command passed: set -a; source \"/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/.env\"; set +a; RUN_FORK=true FORK_USE_DEPLOYED_STATE=true FORK_CSSV_TOKEN=0xe018D31F120A637828F46aFD6c64EC099d960546 npx hardhat test test/forked/v2.0.0/M-9-DustDepositLiquidationGriefingPoC.test.ts"
+}

@@ -1,0 +1,15 @@
+{
+  "benchmark": "ssv-network",
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/inputs/r5/v2/ssv-network-run-001/C-5.md",
+  "results": [
+    {
+      "finding_id": "C-5",
+      "title": "Premature ETH cluster liquidation due to inconsistent fee rounding in ClusterLib.isLiquidatableWithEB",
+      "status": "PoC Created",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/ssv-network-9bb7b2/ssv-network/test/forked/v2.0.0/C-5-premature-liquidation-rounding.poc.test.ts",
+      "test_command": "set -a; . \"/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/.env\"; set +a; NO_GAS_ENFORCE=true npx hardhat test test/forked/v2.0.0/C-5-premature-liquidation-rounding.poc.test.ts",
+      "test_result": "passed",
+      "notes": "Mainnet fork attaches to in-scope SSVNetwork and Views. It proves liquidation succeeds with balance below the combined threshold by 1 wei while still above the separately rounded threshold."
+    }
+  ]
+}
