@@ -1,12 +1,10 @@
 use ai_agent_audit::llm_review::phases::{
-    rounds::all_rounds::{AllRoundLegitAnalysis, Impact, Likelihood, VerifyAllRound},
+    rounds::all_rounds::{AllRoundLegitAnalysis, VerifyAllRound},
     verify_rounds::{FindingAnalysis, FindingStatus},
 };
 
-#[test]
-fn test_all_round_valid_finding() {
-    // Finding that passes all checks
-    let analysis = AllRoundLegitAnalysis {
+fn valid_analysis() -> AllRoundLegitAnalysis {
+    AllRoundLegitAnalysis {
         finding_id: "H-1".to_string(),
         finding_title: "Reentrancy vulnerability".to_string(),
         does_bug_exist: true,
@@ -14,39 +12,26 @@ fn test_all_round_valid_finding() {
         by_design: false,
         in_scope: true,
         exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
+        requires_user_mistake_without_protocol_fault: false,
+        requires_privileged_or_compromised_actor: false,
         future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::High,
-        likelihood: Likelihood::Common,
         justification: "Valid reentrancy vulnerability".to_string(),
-    };
+    }
+}
 
-    let status = analysis.get_finding_status_array_from_analysis();
+#[test]
+fn test_all_round_valid_finding() {
+    let status = valid_analysis().get_finding_status_array_from_analysis();
 
-    // All checks pass, should return None (will be labeled as Valid)
     assert_eq!(status, None);
 }
 
 #[test]
 fn test_all_round_bug_does_not_exist() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "H-1".to_string(),
-        finding_title: "Fake vulnerability".to_string(),
-        does_bug_exist: false, // Bug doesn't exist
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::High,
-        likelihood: Likelihood::Common,
-        justification: "Bug does not exist".to_string(),
-    };
+    let mut analysis = valid_analysis();
+    analysis.finding_title = "Fake vulnerability".to_string();
+    analysis.does_bug_exist = false;
+    analysis.justification = "Bug does not exist".to_string();
 
     let status = analysis.get_finding_status_array_from_analysis();
 
@@ -55,22 +40,10 @@ fn test_all_round_bug_does_not_exist() {
 
 #[test]
 fn test_all_round_safeguard_in_place() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "H-1".to_string(),
-        finding_title: "Reentrancy with guard".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: true, // Has safeguard
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::High,
-        likelihood: Likelihood::Common,
-        justification: "Has nonReentrant modifier".to_string(),
-    };
+    let mut analysis = valid_analysis();
+    analysis.finding_title = "Reentrancy with guard".to_string();
+    analysis.safeguard_against_it = true;
+    analysis.justification = "Has nonReentrant modifier".to_string();
 
     let status = analysis.get_finding_status_array_from_analysis();
 
@@ -79,22 +52,11 @@ fn test_all_round_safeguard_in_place() {
 
 #[test]
 fn test_all_round_out_of_scope() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "M-1".to_string(),
-        finding_title: "Centralization risk".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: false, // Out of scope
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::Medium,
-        likelihood: Likelihood::Common,
-        justification: "Centralization risks are out of scope".to_string(),
-    };
+    let mut analysis = valid_analysis();
+    analysis.finding_id = "M-1".to_string();
+    analysis.finding_title = "Centralization risk".to_string();
+    analysis.in_scope = false;
+    analysis.justification = "Centralization risks are out of scope".to_string();
 
     let status = analysis.get_finding_status_array_from_analysis();
 
@@ -103,22 +65,11 @@ fn test_all_round_out_of_scope() {
 
 #[test]
 fn test_all_round_by_design() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "M-2".to_string(),
-        finding_title: "Intentional behavior".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: true, // By design
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::Medium,
-        likelihood: Likelihood::Common,
-        justification: "Documented as intentional".to_string(),
-    };
+    let mut analysis = valid_analysis();
+    analysis.finding_id = "M-2".to_string();
+    analysis.finding_title = "Intentional behavior".to_string();
+    analysis.by_design = true;
+    analysis.justification = "Documented as intentional".to_string();
 
     let status = analysis.get_finding_status_array_from_analysis();
 
@@ -127,22 +78,11 @@ fn test_all_round_by_design() {
 
 #[test]
 fn test_all_round_not_exploitable() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "M-7".to_string(),
-        finding_title: "Theoretical issue".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: false, // Not exploitable
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::Medium, // Changed to Medium to avoid low impact flag
-        likelihood: Likelihood::Occasional, // Changed to Occasional to avoid rare likelihood flag
-        justification: "Cannot create PoC".to_string(),
-    };
+    let mut analysis = valid_analysis();
+    analysis.finding_id = "M-7".to_string();
+    analysis.finding_title = "Theoretical issue".to_string();
+    analysis.exploitable = false;
+    analysis.justification = "Cannot create PoC".to_string();
 
     let status = analysis.get_finding_status_array_from_analysis();
 
@@ -150,23 +90,12 @@ fn test_all_round_not_exploitable() {
 }
 
 #[test]
-fn test_all_round_user_error() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "M-3".to_string(),
-        finding_title: "User mistake".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: true, // User error
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::Medium,
-        likelihood: Likelihood::Occasional,
-        justification: "Requires user to approve malicious contract".to_string(),
-    };
+fn test_all_round_user_mistake_without_protocol_fault() {
+    let mut analysis = valid_analysis();
+    analysis.finding_id = "M-3".to_string();
+    analysis.finding_title = "User mistake".to_string();
+    analysis.requires_user_mistake_without_protocol_fault = true;
+    analysis.justification = "Requires user to approve malicious contract".to_string();
 
     let status = analysis.get_finding_status_array_from_analysis();
 
@@ -174,23 +103,12 @@ fn test_all_round_user_error() {
 }
 
 #[test]
-fn test_all_round_governance_risk() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "M-4".to_string(),
-        finding_title: "Admin misconfiguration".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: true, // Governance risk
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::Medium,
-        likelihood: Likelihood::Occasional,
-        justification: "Admin can prevent by choosing correct parameters".to_string(),
-    };
+fn test_all_round_privileged_or_compromised_actor() {
+    let mut analysis = valid_analysis();
+    analysis.finding_id = "M-4".to_string();
+    analysis.finding_title = "Admin misconfiguration".to_string();
+    analysis.requires_privileged_or_compromised_actor = true;
+    analysis.justification = "Requires admin to choose bad parameters".to_string();
 
     let status = analysis.get_finding_status_array_from_analysis();
 
@@ -199,22 +117,11 @@ fn test_all_round_governance_risk() {
 
 #[test]
 fn test_all_round_future_speculation() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "M-5".to_string(),
-        finding_title: "Future integration risk".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: true, // Future speculation
-        non_standard_token: false,
-        impact: Impact::Medium, // Changed to Medium to avoid low impact flag
-        likelihood: Likelihood::Occasional, // Changed to Occasional to avoid rare likelihood flag
-        justification: "Only affects future integrations".to_string(),
-    };
+    let mut analysis = valid_analysis();
+    analysis.finding_id = "M-5".to_string();
+    analysis.finding_title = "Future integration risk".to_string();
+    analysis.future_speculation = true;
+    analysis.justification = "Only affects future integrations".to_string();
 
     let status = analysis.get_finding_status_array_from_analysis();
 
@@ -222,105 +129,19 @@ fn test_all_round_future_speculation() {
 }
 
 #[test]
-fn test_all_round_non_standard_token() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "M-6".to_string(),
-        finding_title: "Fee-on-transfer token issue".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: true,           // Non-standard token
-        impact: Impact::Medium,             // Changed to Medium to avoid low impact flag
-        likelihood: Likelihood::Occasional, // Changed to Occasional to avoid rare likelihood flag
-        justification: "Only affects fee-on-transfer tokens".to_string(),
-    };
-
-    let status = analysis.get_finding_status_array_from_analysis();
-
-    assert_eq!(status, Some(vec![FindingStatus::InvalidERC20EdgeCase]));
-}
-
-#[test]
-fn test_all_round_low_impact() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "L-4".to_string(),
-        finding_title: "Dust amount issue".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::Low, // Low impact
-        likelihood: Likelihood::Common,
-        justification: "Only affects dust amounts".to_string(),
-    };
-
-    let status = analysis.get_finding_status_array_from_analysis();
-
-    assert_eq!(status, Some(vec![FindingStatus::LowSeverityDueToLowImpact]));
-}
-
-#[test]
-fn test_all_round_rare_likelihood() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "L-5".to_string(),
-        finding_title: "Rare condition".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::High,
-        likelihood: Likelihood::Rare, // Rare likelihood
-        justification: "Requires extreme market conditions".to_string(),
-    };
-
-    let status = analysis.get_finding_status_array_from_analysis();
-
-    assert_eq!(
-        status,
-        Some(vec![FindingStatus::LowSeverityDueToRareLikelihood])
-    );
-}
-
-#[test]
 fn test_all_round_multiple_issues() {
-    // Finding with multiple downgrade reasons
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "M-5".to_string(),
-        finding_title: "Multiple issues".to_string(),
-        does_bug_exist: false, // Bug doesn't exist
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: false, // Out of scope
-        exploitable: true,
-        user_error_or_mistake: true, // User error
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::Medium,
-        likelihood: Likelihood::Common,
-        justification: "Multiple reasons for downgrade".to_string(),
-    };
+    let mut analysis = valid_analysis();
+    analysis.finding_id = "M-5".to_string();
+    analysis.finding_title = "Multiple issues".to_string();
+    analysis.does_bug_exist = false;
+    analysis.in_scope = false;
+    analysis.requires_user_mistake_without_protocol_fault = true;
+    analysis.justification = "Multiple reasons for invalidation".to_string();
 
-    let status = analysis.get_finding_status_array_from_analysis();
+    let statuses = analysis
+        .get_finding_status_array_from_analysis()
+        .expect("expected invalidation statuses");
 
-    // Should have all three downgrade reasons
-    assert!(status.is_some());
-    let statuses = status.unwrap();
     assert_eq!(statuses.len(), 3);
     assert!(statuses.contains(&FindingStatus::InvalidBugDoesNotExist));
     assert!(statuses.contains(&FindingStatus::InvalidOutOfScope));
@@ -331,7 +152,6 @@ fn test_all_round_multiple_issues() {
 fn test_all_round_generate_verify_json() {
     let json = AllRoundLegitAnalysis::generate_verify_json();
 
-    // Verify JSON structure contains all required fields
     assert!(json.contains("\"findings\""));
     assert!(json.contains("\"finding_id\""));
     assert!(json.contains("\"finding_title\""));
@@ -340,121 +160,66 @@ fn test_all_round_generate_verify_json() {
     assert!(json.contains("\"in_scope\""));
     assert!(json.contains("\"by_design\""));
     assert!(json.contains("\"exploitable\""));
-    assert!(json.contains("\"impact\""));
-    assert!(json.contains("\"likelihood\""));
-    assert!(json.contains("\"user_error_or_mistake\""));
-    assert!(json.contains("\"governance_risk\""));
+    assert!(json.contains("\"requires_user_mistake_without_protocol_fault\""));
+    assert!(json.contains("\"requires_privileged_or_compromised_actor\""));
     assert!(json.contains("\"future_speculation\""));
-    assert!(json.contains("\"non_standard_token\""));
     assert!(json.contains("\"justification\""));
 
-    // Verify enum values are present
-    assert!(json.contains("High"));
-    assert!(json.contains("Medium"));
-    assert!(json.contains("Low"));
-    assert!(json.contains("Common"));
-    assert!(json.contains("Occasional"));
-    assert!(json.contains("Rare"));
+    assert!(!json.contains("\"impact\""));
+    assert!(!json.contains("\"likelihood\""));
+    assert!(!json.contains("\"user_error_or_mistake\""));
+    assert!(!json.contains("\"governance_risk\""));
+    assert!(!json.contains("\"non_standard_token\""));
 }
 
 #[test]
 fn test_all_round_generate_verify_prompt() {
     let prompt = AllRoundLegitAnalysis::generate_verify_prompt();
 
-    // Verify prompt contains all 11 checks
-    assert!(prompt.contains("VERIFY SECURITY FINDING EXISTS"));
-    assert!(prompt.contains("EXISTING SAFEGUARDS CHECK"));
-    assert!(prompt.contains("SCOPE CHECK"));
-    assert!(prompt.contains("BY DESIGN"));
-    assert!(prompt.contains("EXPLOITABILITY"));
-    assert!(prompt.contains("IMPACT CLASSIFICATION CHECK"));
-    assert!(prompt.contains("LIKELIHOOD ASSESSMENT CHECK"));
-    assert!(prompt.contains("USER ERROR CHECK"));
-    assert!(prompt.contains("GOVERNANCE/CENTRALIZATION RISK"));
-    assert!(prompt.contains("SPECULATION CHECK"));
-    assert!(prompt.contains("NON-STANDARD ERC20 TOKEN CHECK"));
+    assert!(prompt.contains("not a severity judge"));
+    assert!(prompt.contains("When uncertain, keep the finding alive"));
+    assert!(prompt.contains("ROOT CAUSE EXISTS"));
+    assert!(prompt.contains("COMPLETE SAFEGUARD EXISTS"));
+    assert!(prompt.contains("MECHANICAL ANALYZED-CODE SCOPE"));
+    assert!(prompt.contains("EXPLICITLY BY DESIGN"));
+    assert!(prompt.contains("CURRENTLY EXPLOITABLE"));
+    assert!(prompt.contains("REQUIRES PRIVILEGED OR COMPROMISED ACTOR"));
+    assert!(prompt.contains("REQUIRES USER MISTAKE WITHOUT PROTOCOL FAULT"));
+    assert!(prompt.contains("FUTURE SPECULATION"));
 
-    // Verify step-by-step verification process
-    assert!(prompt.contains("Step 1: Trace the Code Path"));
-    assert!(prompt.contains("Step 2: Verify Invariant Actually Exists"));
-    assert!(prompt.contains("Step 3: Reproduce the Issue"));
-
-    // Verify output requirements
-    assert!(prompt.contains("OUTPUT REQUIREMENTS"));
-    assert!(prompt.contains("finding id"));
-    assert!(prompt.contains("finding_title"));
     assert!(prompt.contains("does bug exist"));
     assert!(prompt.contains("safeguard against it"));
     assert!(prompt.contains("in scope"));
     assert!(prompt.contains("by design"));
     assert!(prompt.contains("exploitable"));
-    assert!(prompt.contains("impact"));
-    assert!(prompt.contains("likelihood"));
-    assert!(prompt.contains("user error or mistake"));
-    assert!(prompt.contains("governance risk"));
+    assert!(prompt.contains("requires user mistake without protocol fault"));
+    assert!(prompt.contains("requires privileged or compromised actor"));
     assert!(prompt.contains("future speculation"));
-    assert!(prompt.contains("non standard token"));
     assert!(prompt.contains("justification"));
+
+    assert!(!prompt.contains("IMPACT CLASSIFICATION CHECK"));
+    assert!(!prompt.contains("LIKELIHOOD ASSESSMENT CHECK"));
+    assert!(!prompt.contains("NON-STANDARD ERC20 TOKEN CHECK"));
+    assert!(!prompt.contains("non standard token"));
 }
 
 #[test]
 fn test_all_round_print_analysis_results() {
-    let analysis = AllRoundLegitAnalysis {
-        finding_id: "H-1".to_string(),
-        finding_title: "Test Finding".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::High,
-        likelihood: Likelihood::Common,
-        justification: "Test justification".to_string(),
-    };
+    let mut analysis = valid_analysis();
+    analysis.finding_title = "Test Finding".to_string();
+    analysis.justification = "Test justification".to_string();
 
-    // This should not panic
     analysis.print_analysis_results();
 }
 
 #[test]
 fn test_verify_all_round_struct() {
-    let analysis1 = AllRoundLegitAnalysis {
-        finding_id: "H-1".to_string(),
-        finding_title: "Finding 1".to_string(),
-        does_bug_exist: true,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::High,
-        likelihood: Likelihood::Common,
-        justification: "Test 1".to_string(),
-    };
-
-    let analysis2 = AllRoundLegitAnalysis {
-        finding_id: "M-1".to_string(),
-        finding_title: "Finding 2".to_string(),
-        does_bug_exist: false,
-        safeguard_against_it: false,
-        by_design: false,
-        in_scope: true,
-        exploitable: true,
-        user_error_or_mistake: false,
-        governance_risk: false,
-        future_speculation: false,
-        non_standard_token: false,
-        impact: Impact::Medium,
-        likelihood: Likelihood::Occasional,
-        justification: "Test 2".to_string(),
-    };
+    let analysis1 = valid_analysis();
+    let mut analysis2 = valid_analysis();
+    analysis2.finding_id = "M-1".to_string();
+    analysis2.finding_title = "Finding 2".to_string();
+    analysis2.does_bug_exist = false;
+    analysis2.justification = "Test 2".to_string();
 
     let verify_round = VerifyAllRound {
         findings: vec![analysis1, analysis2],

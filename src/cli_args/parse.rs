@@ -297,6 +297,13 @@ impl PocConfig {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedRepoConfig {
+    pub repo_url: String,
+    pub branch: Option<String>,
+    pub tree_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone, ValueEnum, Deserialize, strum_macros::EnumString)]
 #[clap(rename_all = "kebab-case")]
 pub enum BuilderType {
@@ -332,6 +339,11 @@ pub struct Cli {
     #[arg(skip)]
     #[serde(default)]
     pub repo_tree_paths: Vec<String>,
+
+    /// Internal repo set derived from Immunefi metadata for polyrepo bounties.
+    #[arg(skip)]
+    #[serde(skip)]
+    pub resolved_repos: Vec<ResolvedRepoConfig>,
 
     /// Optional subfolder pointing to project root (if not root folder of git clone)
     #[arg(long)]

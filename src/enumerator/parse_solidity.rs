@@ -147,7 +147,7 @@ pub async fn parse_all_import_dependencies(
                 if let Some(resolved_path) = resolve_import_path(import_path, repo)
                     && !should_exclude_this_library(&resolved_path)
                 {
-                    let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
+                    let full_path = repo.get_protocol_root().join(&resolved_path);
                     // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
                     // and canonicalization resolves symlinks, causing path mismatches.
                     if full_path.exists() {
@@ -191,7 +191,7 @@ pub async fn parse_all_import_dependencies(
                                     PathBuf::from(import_path)
                                 }
                             } else {
-                                repo.root.join(&repo.repo_name).join(import_path)
+                                repo.get_protocol_root().join(import_path)
                             };
 
                         // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
@@ -214,7 +214,7 @@ pub async fn parse_all_import_dependencies(
             if let Some(resolved_path) = resolve_import_path(import_path, repo)
                 && !should_exclude_this_library(&resolved_path)
             {
-                let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
+                let full_path = repo.get_protocol_root().join(&resolved_path);
                 // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
                 // and canonicalization resolves symlinks, causing path mismatches.
                 if full_path.exists() {
@@ -230,7 +230,7 @@ pub async fn parse_all_import_dependencies(
                     PathBuf::from(import_path)
                 }
             } else {
-                repo.root.join(&repo.repo_name).join(import_path)
+                repo.get_protocol_root().join(import_path)
             };
 
             // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,

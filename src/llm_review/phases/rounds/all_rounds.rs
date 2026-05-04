@@ -1,4 +1,3 @@
-use crate::llm_review::agent::agent_enums::{all_enum_variants, generate_enum_list};
 use crate::llm_review::phases::rounds::utils::generate_pre_round_verify_json_requirement;
 use crate::llm_review::phases::verify_rounds::{FindingAnalysis, FindingStatus};
 use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
@@ -6,54 +5,9 @@ use log::info;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use strum_macros::EnumIter;
-
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    JsonSchema,
-    EnumIter,
-    Serialize,
-    Deserialize,
-    strum_macros::EnumString,
-    strum_macros::Display,
-)]
-pub enum Impact {
-    High,
-    #[default]
-    Medium,
-    Low,
-}
-
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    JsonSchema,
-    EnumIter,
-    Serialize,
-    Deserialize,
-    strum_macros::EnumString,
-    strum_macros::Display,
-)]
-pub enum Likelihood {
-    Common,
-    #[default]
-    Occasional,
-    Rare,
-}
 
 /// Verification result for a potential vulnerability
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AllRoundLegitAnalysis {
     pub finding_id: String,
     pub finding_title: String,
@@ -68,15 +22,11 @@ pub struct AllRoundLegitAnalysis {
     #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
     pub exploitable: bool,
     #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub user_error_or_mistake: bool,
+    pub requires_user_mistake_without_protocol_fault: bool,
     #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub governance_risk: bool,
+    pub requires_privileged_or_compromised_actor: bool,
     #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
     pub future_speculation: bool,
-    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub non_standard_token: bool,
-    pub impact: Impact,
-    pub likelihood: Likelihood,
     pub justification: String,
 }
 
@@ -113,23 +63,14 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
             finding_status_vec.push(FindingStatus::InvalidOutOfScope);
         }
 
-        if self.user_error_or_mistake {
+        if self.requires_user_mistake_without_protocol_fault {
             finding_status_vec.push(FindingStatus::InvalidUserErrorOrMistake);
         }
-        if self.governance_risk {
+        if self.requires_privileged_or_compromised_actor {
             finding_status_vec.push(FindingStatus::InvalidGovernanceRisk);
         }
         if self.future_speculation {
             finding_status_vec.push(FindingStatus::InvalidFutureSpeculation);
-        }
-        if self.non_standard_token {
-            finding_status_vec.push(FindingStatus::InvalidERC20EdgeCase);
-        }
-        if self.impact == Impact::Low {
-            finding_status_vec.push(FindingStatus::LowSeverityDueToLowImpact);
-        }
-        if self.likelihood == Likelihood::Rare {
-            finding_status_vec.push(FindingStatus::LowSeverityDueToRareLikelihood);
         }
 
         if finding_status_vec.is_empty() {
@@ -148,12 +89,15 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
         info!("is by design: {}\n", self.by_design);
         info!("is in scope: {}\n", self.in_scope);
         info!("is exploitable: {}\n", self.exploitable);
-        info!("Impact: {}\n", self.impact);
-        info!("Likelihood: {}\n", self.likelihood);
-        info!("is user error or mistake: {}\n", self.user_error_or_mistake);
-        info!("is governance_risk: {}\n", self.governance_risk);
+        info!(
+            "requires user mistake without protocol fault: {}\n",
+            self.requires_user_mistake_without_protocol_fault
+        );
+        info!(
+            "requires privileged or compromised actor: {}\n",
+            self.requires_privileged_or_compromised_actor
+        );
         info!("is future speculation: {}\n", self.future_speculation);
-        info!("is non standard token: {}\n", self.non_standard_token);
         info!("Justification: {}\n", self.justification);
         info!("\n");
     }
@@ -161,37 +105,35 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
     fn generate_verify_prompt() -> String {
         let verify_json = AllRoundLegitAnalysis::generate_verify_json();
         let pre_verify_json = generate_pre_round_verify_json_requirement(&verify_json);
-        let likelihood_list = generate_enum_list(all_enum_variants::<Likelihood>().as_slice());
-        let impact_list = generate_enum_list(all_enum_variants::<Impact>().as_slice());
 
         format!(
             r#"
         {pre_verify_json}
 
-        Your task: to run the following 11 checks on EACH listed security finding: 
+        Your task: run the following universal invalidity checks on EACH listed security finding.
 
-        ## VERIFY SECURITY FINDING EXISTS
+        This verification round is not a severity judge. Do not downgrade or invalidate based on likelihood,
+        contest severity rules, bounty payout criteria, platform-specific out-of-scope rules, known issues,
+        prior audits, token support policy, or whether a PoC has already been written.
 
-        **Step 1: Trace the Code Path**
+        When uncertain, keep the finding alive. Only mark a finding invalid when the invalidating reason is
+        directly proven from the code, docs, or mechanical source scope.
+
+        ## ROOT CAUSE EXISTS
+
         - Locate exact function/contract, verify vulnerable code path exists (not hallucinated)
         - Trace execution flow step-by-step, check if code matches finding's description
+        - Preconditions must not be impossible
+        - Do not reject merely because an invariant is undocumented. Implicit accounting, security, and economic invariants can be valid.
 
-        **Bug does not exist if:** Function/contract doesn't exist, code path impossible, execution flow doesn't match
+        **Bug does not exist only if:** Function/contract does not exist, the claimed code path is impossible,
+        execution flow does not match, or preconditions are impossible.
 
-        **Step 2: Verify Invariant Actually Exists**
-        - Check if claimed invariant is documented (NatSpec, comments, docs)
-        - Verify invariant is enforced elsewhere, confirm it's a real protocol requirement
+        ## COMPLETE SAFEGUARD EXISTS
 
-        **Bug does not exist if:** Invariant not documented, not enforced elsewhere, assumed but not required
+        Does code already have a safeguard that fully blocks the exact exploit path?
 
-        **Step 3: Reproduce the Issue**
-        - Can you trace exact steps to trigger the bug? 
-
-        **Bug does not exist if:** Cannot trace execution path, preconditions impossible
-
-        ## EXISTING SAFEGUARDS CHECK: Does code already have safeguards that mitigate/eliminate this security finding?**
-
-        **Common safeguards**
+        Common safeguards to check:
         -  Reentrancy → has `nonReentrant`, CEI pattern, or guard
         -  Integer overflow → Solidity 0.8+ with built-in checks
         -  Access control → has `onlyOwner`, `onlyRole`, role checks
@@ -200,49 +142,47 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
         -  DoS → has pagination, gas limits, circuit breakers
         -  Precision loss → has proper scaling, rounding checks
 
-       **How to Check:** Search codebase for modifiers/guards, verify vulnerable function uses them, test if bypassable
+        Partial mitigation or uncertain guard does not invalidate. Mark `safeguard_against_it = true`
+        only when the safeguard fully prevents the exact issue.
 
-        ## SCOPE CHECK: Is Security Finding in Scope?
+        ## MECHANICAL ANALYZED-CODE SCOPE
 
-        **The SCOPE FOR SECURITY AUDIT section below has a number of publicly known issues and findings that are OUT OF SCOPE. Please carefully review.**
+        Is the finding in analyzed production source code?
 
-        ## "BY DESIGN" CHECK
+        Exclude tests, mocks, scripts, examples, generated artifacts, vendored dependencies, or files outside
+        the analyzed code folders unless the audit scope explicitly includes them.
 
-        **Is this Security Finding really just documented as intentional behavior of protocol?**
+        Do not apply bounty-specific OOS rules, known-issue rules, prior-audit rules, payout rules, or platform
+        eligibility rules in this round.
 
-        Carefully check NatSpec, comments, docs, function naming.
+        ## EXPLICITLY BY DESIGN
 
-        ## EXPLOITABILITY: Is this Security Finding exploitable?
+        Is the exact risky behavior clearly documented and accepted as intentional protocol behavior?
 
-        - Is it possible to produce a Minimal reproducible PoC showing state change, non-dust effect, realistic actors, validating the Security Finding?
+        Generic docs, function names, or intended feature behavior are not enough. Mark `by_design = true`
+        only when the exact risk is intentionally accepted.
 
-        ## IMPACT CLASSIFICATION CHECK: What is objective impact of Security Finding?
+        ## CURRENTLY EXPLOITABLE
 
-        **High:** Theft/permanent loss of assets, unauthorized drains, economic attacks (non-dust)
-        **Medium:** DoS of critical actions, accounting drift, mispricing, privilege escalation
-        **Low:** Dust amounts, stylistic issues, event inconsistencies, view-function errors
+        Does the root cause have a realistic execution path in today's code?
 
-        ## LIKELIHOOD ASSESSMENT CHECK: What is likelihood of Security Finding being exploited?
+        No PoC is required at this stage. Do not reject for difficult setup, low frequency, or uncertain severity.
 
-        **Common:** No preconditions, works anytime/anywhere, no special resources
-        **Occasional:** Specific but realistic conditions, some chains, moderate setup
-        **Rare:** Multiple unlikely conditions, extreme market states, significant resources
+        ## REQUIRES PRIVILEGED OR COMPROMISED ACTOR
 
-        ## USER ERROR CHECK: Does Security Finding require User error or Mistake?
+        Invalid only if exploitation requires admin/team/keeper/trusted-role abuse, leaked keys,
+        compromised credentials, or operational misconfiguration.
 
-        - User chooses bad recipient, provides bad parameters, approves malicious contract, signs malicious data, etc.
+        Do not invalidate non-privileged governance manipulation or attacks performed through public functions.
 
-        ## GOVERNANCE/CENTRALIZATION RISK
+        ## REQUIRES USER MISTAKE WITHOUT PROTOCOL FAULT
 
-        **Question: Can governance/team prevent this by acting responsibly?**
+        Invalid only if there is no protocol flaw and the issue solely depends on victim misuse,
+        social engineering, malicious approval/signature, or arbitrary bad parameters.
 
-        **Security Finding is Governance Risk if:**
-        - Admin sets wrong parameters, chooses malicious oracle, misconfigures
-        - Team deploys on wrong chain, doesn't verify addresses
-        - Team chooses malicious integration, configures incorrectly
-        - Security Finding can we remedied by Admin/privileged Users making different choices/decisions (without code changes or redeploying, of course)
+        Normal attacker interaction with public protocol functions is not user error.
 
-        ## SPECULATION CHECK: Is Security Finding dependin on future state of the code?
+        ## FUTURE SPECULATION
 
         **Question: Does root cause exist NOW and is exploitable with TODAY's code?**
 
@@ -250,15 +190,11 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
         -  "Finding depends on if protocol integrates/adds/upgrades in future..."
         -  "Could/might/potentially happen if..." (hypothetical)
 
-        ## NON-STANDARD ERC20 TOKEN CHECK: Does Security Finding depending on contract interaction with Non-standard token?
-
-        - Fee-on-transfer/rebasing/decimals edge cases (unless explicitly supported or USDT)
-
         ## OUTPUT REQUIREMENTS
 
-        Please continue until you have carefully evaulated ALL findings on EACH of the 11 checks.
+        Please continue until you have carefully evaluated ALL findings on EACH universal check.
 
-        Based on your assessment please provided the following for EACH finding:
+        Based on your assessment please provide the following for EACH finding:
 
         *finding id*: insert finding id (from 'id' field)
         *finding_title*: insert finding 'title'
@@ -267,12 +203,9 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
         *in scope*: true | false
         *by design*: true | false
         *exploitable*: true | false
-        *impact*: {impact_list}
-        *likelihood*: {likelihood_list}
-        *user error or mistake*: true | false
-        *governance risk*: true | false
+        *requires user mistake without protocol fault*: true | false
+        *requires privileged or compromised actor*: true | false
         *future speculation*: true | false
-        *non standard token*: true | false
         *justification:*: Please provide justification for your choices (under 400 words)
 
 "#
@@ -280,8 +213,6 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
     }
 
     fn generate_verify_json() -> String {
-        let likelihood_list = generate_enum_list(all_enum_variants::<Likelihood>().as_slice());
-        let impact_list = generate_enum_list(all_enum_variants::<Impact>().as_slice());
         format!(
             r#"
     {{
@@ -294,17 +225,84 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
                 "in_scope": true | false,
                 "by_design": true | false,
                 "exploitable": true | false,
-                "impact": "{impact_list}",
-                "likelihood": "{likelihood_list}",
-                "user_error_or_mistake": true | false,
-                "governance_risk": true | false,
+                "requires_user_mistake_without_protocol_fault": true | false,
+                "requires_privileged_or_compromised_actor": true | false,
                 "future_speculation": true | false,
-                "non_standard_token": true | false,
                 "justification": "Please provide justification for your choices (under 400 words)."
             }}
         ]
     }}
 "#
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_analysis() -> AllRoundLegitAnalysis {
+        AllRoundLegitAnalysis {
+            finding_id: "H-1".to_string(),
+            finding_title: "Valid finding".to_string(),
+            does_bug_exist: true,
+            safeguard_against_it: false,
+            by_design: false,
+            in_scope: true,
+            exploitable: true,
+            requires_user_mistake_without_protocol_fault: false,
+            requires_privileged_or_compromised_actor: false,
+            future_speculation: false,
+            justification: "looks plausible".to_string(),
+        }
+    }
+
+    #[test]
+    fn all_round_valid_analysis_returns_no_statuses() {
+        assert!(
+            valid_analysis()
+                .get_finding_status_array_from_analysis()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn all_round_missing_bug_maps_to_bug_does_not_exist() {
+        let mut analysis = valid_analysis();
+        analysis.does_bug_exist = false;
+
+        assert_eq!(
+            analysis.get_finding_status_array_from_analysis().unwrap(),
+            vec![FindingStatus::InvalidBugDoesNotExist]
+        );
+    }
+
+    #[test]
+    fn all_round_privileged_actor_and_user_mistake_map_to_narrow_statuses() {
+        let mut analysis = valid_analysis();
+        analysis.requires_privileged_or_compromised_actor = true;
+        analysis.requires_user_mistake_without_protocol_fault = true;
+
+        assert_eq!(
+            analysis.get_finding_status_array_from_analysis().unwrap(),
+            vec![
+                FindingStatus::InvalidUserErrorOrMistake,
+                FindingStatus::InvalidGovernanceRisk
+            ]
+        );
+    }
+
+    #[test]
+    fn all_round_prompt_is_not_a_severity_or_token_policy_filter() {
+        let prompt = AllRoundLegitAnalysis::generate_verify_prompt();
+        let prompt_lower = prompt.to_ascii_lowercase();
+
+        assert!(prompt.contains("not a severity judge"));
+        assert!(prompt.contains("When uncertain, keep the finding alive"));
+        assert!(!prompt_lower.contains("likelihood assessment"));
+        assert!(!prompt_lower.contains("non-standard erc20 token check"));
+        assert!(!prompt.contains("LowSeverityDueToLowImpact"));
+        assert!(!prompt.contains("LowSeverityDueToRareLikelihood"));
+        assert!(!prompt.contains("InvalidERC20EdgeCase"));
     }
 }

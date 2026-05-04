@@ -74,7 +74,7 @@ Editable round prompts:
 
 - `validation-three-shot/prompts/code4rena/r1.md` through `r8.md`
 - `validation-three-shot/prompts/code4rena-bounty/r1.md` through `r8.md`
-- `validation-three-shot/prompts/immunefi-bounty/r1.md` through `r8.md`
+- `validation-three-shot/prompts/immunefi-bounty/r1.md` through `r8.md`, plus optional `r3a.md`
 - `validation-three-shot/prompts/default/r1.md` through `r8.md`
 - `validation-three-shot/prompts/validation-v2.md`
 - `validation-three-shot/prompts/<profile>/score.md`
@@ -111,6 +111,8 @@ python3 scripts/three_shot_round.py prepare-scope --write-prompt /tmp/three-shot
 python3 scripts/three_shot_round.py prepare-token --write-prompt /tmp/three-shot-r2.md
 python3 scripts/three_shot_round.py prepare-final --write-prompt /tmp/three-shot-r3.md
 python3 scripts/three_shot_round.py assemble
+python3 scripts/three_shot_round.py prepare-feasibility --write-prompt /tmp/three-shot-r3a.md
+python3 scripts/three_shot_round.py apply-feasibility
 python3 scripts/three_shot_round.py prepare-dedup --write-prompt /tmp/three-shot-r4.md
 python3 scripts/three_shot_round.py apply-dedup
 python3 scripts/three_shot_round.py prepare-v12-sweep --write-prompt /tmp/three-shot-r4a.md
@@ -123,6 +125,8 @@ python3 scripts/three_shot_round.py prepare-report --write-prompt /tmp/three-sho
 python3 scripts/three_shot_round.py prepare-report-review --write-prompt /tmp/three-shot-r8.md
 python3 scripts/three_shot_round.py score-prompt --write-prompt /tmp/three-shot-score.md
 ```
+
+`prepare-feasibility` / `apply-feasibility` are only active for `validation_profile: immunefi-bounty` when `rounds.r3a_feasibility_gate: true`; other profiles skip this stage.
 
 Production R5/R6 runs use the full post-R4/R4a submission candidate file as the queue:
 

@@ -161,7 +161,7 @@ fn audit_root_from_report(audit_report_path: &Path) -> PathBuf {
 }
 
 fn source_root(repo: &RepoPaths) -> PathBuf {
-    let candidate = repo.root.join(&repo.repo_name);
+    let candidate = repo.get_protocol_root();
     if candidate.exists() {
         return candidate;
     }

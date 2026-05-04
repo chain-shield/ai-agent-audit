@@ -127,15 +127,16 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         }
         .await;
 
-        if let Err(e) = result {
+        if let Err(e) = &result {
             log::error!("Error processing call graph data: {:#}", e);
         }
 
-        Ok::<_, AuditError>(())
+        result
     });
 
     // Wait for call graph processing to complete
     info!("waiting for meta data analysis to complete...");
-    let _func_result = handle.await?;
+    let func_result = handle.await?;
+    func_result?;
     Ok(db_path)
 }

@@ -54,6 +54,9 @@ workers:
   r3:
     model: gpt-5.5
     reasoning_effort: xhigh
+  r3a:
+    model: gpt-5.4
+    reasoning_effort: high
   r4:
     model: gpt-5.4
     reasoning_effort: high
@@ -91,6 +94,7 @@ rounds:
   r1_scope_screen: true
   r2_unsupported_token_screen: true
   r3_final_validation: true
+  r3a_feasibility_gate: false
   r4_canonicalization: true
   r4a_v12_sweep: true
   r5_poc_generation: true
