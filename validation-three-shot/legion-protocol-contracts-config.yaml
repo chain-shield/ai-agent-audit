@@ -12,7 +12,7 @@ paths:
   audit_report: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/legion-protocol-contracts/report/audit-report.md"
 
 context_docs:
-  - "audit-docs/legion-protocol-contracts-docs.md"
-  - "audit-docs/legion-protocol-contracts-scope.md"
+  - "audit-docs/legion-protocol-contracts/legacy-flat/legion-protocol-contracts-docs.md"
+  - "audit-docs/legion-protocol-contracts/legacy-flat/legion-protocol-contracts-scope.md"
   - "{{SOURCE_ROOT}}/README.md"
   - "{{THREE_SHOT_ROOT}}/code4rena-bounty-criteria.md"

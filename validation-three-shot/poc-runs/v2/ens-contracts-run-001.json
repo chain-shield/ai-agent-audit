@@ -1,0 +1,24 @@
+{
+  "benchmark": "ens-contracts",
+  "results": [
+    {
+      "finding_id": "C-1",
+      "notes": "Local source-tree simulation because the runtime artifact lists no deployed address or RPC target. Demonstrates hidden approval during expiry, operator revocation, renewal, transfer, and reclaim.",
+      "poc_test_path": "test/ExpiredApprovalRenewalTheftPoC.test.ts",
+      "status": "PoC Created",
+      "test_command": "bun run test test/ExpiredApprovalRenewalTheftPoC.test.ts",
+      "test_result": "passed",
+      "title": "Expired ENS names can receive hidden ERC721 approvals that become active again after renewal"
+    },
+    {
+      "finding_id": "C-3",
+      "notes": "Local Hardhat/Vitest simulation because runtime lists no extracted deployed address or network. Uses real ETHRegistrarController and OwnedResolver.",
+      "poc_test_path": "test/ExpiredNameNoResolverReRegistrationPoC.test.ts",
+      "status": "PoC Created",
+      "test_command": "bun run test test/ExpiredNameNoResolverReRegistrationPoC.test.ts",
+      "test_result": "passed",
+      "title": "Expired .eth name re-registration without resolver leaves prior owner's resolver controlling resolution"
+    }
+  ],
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/submission-candidates/v2/ens-contracts-run-001.md"
+}

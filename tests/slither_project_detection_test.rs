@@ -62,8 +62,8 @@ fn hardhat_repo_pref_over_foundry_yarn() {
     assert!(!joined.contains("docker"));
     assert!(!joined.contains("eth-security-toolbox"));
     assert!(joined.contains("--compile-force-framework hardhat"));
-    assert!(joined.contains("--hardhat-ignore-compile"));
-    assert!(joined.contains("--hardhat-artifacts-directory artifacts"));
+    assert!(!joined.contains("--hardhat-ignore-compile"));
+    assert!(!joined.contains("--hardhat-artifacts-directory"));
     assert!(!joined.contains("--foundry-ignore-compile"));
 }
 
@@ -119,9 +119,63 @@ fn hardhat_monorepo_artifacts_dir() {
         &["package.json", "yarn.lock", "hardhat.config.ts"],
         &["packages/hardhat/artifacts"],
     );
-    let args = build_slither_args(&repo, Some("slithir-ssa"), None, false, false);
+    let args = build_slither_args(&repo, Some("slithir-ssa"), None, false, true);
     let joined = args.join(" ");
     assert!(joined.contains("--compile-force-framework hardhat"));
     assert!(joined.contains("--hardhat-ignore-compile"));
     assert!(joined.contains("--hardhat-artifacts-directory packages/hardhat/artifacts"));
+}
+
+#[test]
+fn hardhat_build_contracts_artifacts_dir() {
+    let tmp = std::env::temp_dir().join("slither_ffi_hardhat_build_contracts_int");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    let repo = make_repo_layout(
+        &tmp,
+        "graph-subgraph-service-like",
+        &["package.json", "hardhat.config.ts"],
+        &["build/contracts/build-info"],
+    );
+    let args = build_slither_args(&repo, Some("call-graph"), None, true, true);
+    let joined = args.join(" ");
+    assert!(joined.contains("--compile-force-framework hardhat"));
+    assert!(joined.contains("--hardhat-ignore-compile"));
+    assert!(joined.contains("--hardhat-artifacts-directory build/contracts"));
+}
+
+#[test]
+fn hardhat_build_artifacts_dir() {
+    let tmp = std::env::temp_dir().join("slither_ffi_hardhat_build_artifacts_int");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    let repo = make_repo_layout(
+        &tmp,
+        "graph-token-distribution-like",
+        &["package.json", "hardhat.config.ts"],
+        &["build/artifacts/build-info"],
+    );
+    let args = build_slither_args(&repo, Some("call-graph"), None, true, true);
+    let joined = args.join(" ");
+    assert!(joined.contains("--compile-force-framework hardhat"));
+    assert!(joined.contains("--hardhat-ignore-compile"));
+    assert!(joined.contains("--hardhat-artifacts-directory build/artifacts"));
+}
+
+#[test]
+fn hardhat_build_artifacts_dir_without_nested_contracts() {
+    let tmp = std::env::temp_dir().join("slither_ffi_hardhat_build_int");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    let repo = make_repo_layout(
+        &tmp,
+        "graph-horizon-like",
+        &["package.json", "hardhat.config.ts"],
+        &["build/build-info"],
+    );
+    let args = build_slither_args(&repo, Some("call-graph"), None, true, true);
+    let joined = args.join(" ");
+    assert!(joined.contains("--compile-force-framework hardhat"));
+    assert!(joined.contains("--hardhat-ignore-compile"));
+    assert!(joined.contains("--hardhat-artifacts-directory build"));
 }

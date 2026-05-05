@@ -330,6 +330,11 @@ pub struct Cli {
     #[serde(default)]
     pub immunefi_bounty: Option<String>,
 
+    /// Code4rena bug bounty URL used to derive repo, docs, and scope.
+    #[arg(long)]
+    #[serde(default)]
+    pub code4rena_bounty: Option<String>,
+
     /// Optional git branch/ref derived from external bounty metadata.
     #[arg(skip)]
     #[serde(default)]
@@ -452,6 +457,9 @@ impl Cli {
             if config_cli.immunefi_bounty.is_none() && config_values.immunefi_bounty.is_some() {
                 config_cli.immunefi_bounty = config_values.immunefi_bounty;
             }
+            if config_cli.code4rena_bounty.is_none() && config_values.code4rena_bounty.is_some() {
+                config_cli.code4rena_bounty = config_values.code4rena_bounty;
+            }
             if config_values.repo_branch.is_some() {
                 config_cli.repo_branch = config_values.repo_branch;
             }
@@ -505,9 +513,21 @@ impl Cli {
             anyhow::bail!("immunefi_bounty must be provided when audit_type is ImmunefiBugBounty");
         }
 
-        // Validate that repo is provided either via CLI/YAML or derivable from Immunefi.
+        if matches!(config_cli.audit_type, AuditType::Code4renaBounty)
+            && config_cli.repo.is_none()
+            && config_cli.code4rena_bounty.is_none()
+        {
+            anyhow::bail!(
+                "code4rena_bounty or repo must be provided when audit_type is Code4renaBounty"
+            );
+        }
+
+        // Validate that repo is provided either via CLI/YAML or derivable from a supported bounty.
         if config_cli.repo.is_none()
-            && !matches!(config_cli.audit_type, AuditType::ImmunefiBugBounty)
+            && !matches!(
+                config_cli.audit_type,
+                AuditType::ImmunefiBugBounty | AuditType::Code4renaBounty
+            )
         {
             anyhow::bail!(
                 "Repository URL must be provided either via CLI argument or in config file"
@@ -527,6 +547,10 @@ impl Cli {
     pub fn generate_build_command(&self) -> String {
         let copy_env = "[ -f .env.example ] && cp .env.example .env || true";
         let base_forge = "forge build --build-info --skip test --skip script";
+        let npm_install = "[ -d node_modules ] || if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi";
+        let yarn_install = "[ -d node_modules ] || (yarn install --frozen-lockfile --ignore-scripts || yarn install --immutable --mode=skip-builds)";
+        let pnpm_install = "[ -d node_modules ] || pnpm install --frozen-lockfile --ignore-scripts";
+        let bun_install = "[ -d node_modules ] || bun install --frozen-lockfile --ignore-scripts";
 
         let forge_build_cmd = if self.via_ir {
             format!("{base_forge} --via-ir")
@@ -536,10 +560,10 @@ impl Cli {
 
         match self.builder {
             BuilderType::Hardhat => {
-                format!("{copy_env}; npx --no-install hardhat compile")
+                format!("{copy_env}; {npm_install}; npx --no-install hardhat compile")
             }
             BuilderType::HardhatYarn => {
-                format!("{copy_env}; yarn hardhat compile")
+                format!("{copy_env}; {yarn_install}; yarn hardhat compile")
             }
             BuilderType::Custom => self
                 .build_cmd
@@ -549,10 +573,12 @@ impl Cli {
                 // Auto-detect in the local workspace based on project files.
                 format!(
                     "if [ -f foundry.toml ]; then {forge_build_cmd}; \
-             elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ]; then \
+             elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ] || [ -f hardhat.config.cjs ]; then \
              {copy_env}; \
-             if [ -f yarn.lock ]; then yarn hardhat compile; \
-             elif [ -f pnpm-lock.yaml ]; then pnpm hardhat compile; \
+             if [ -f bun.lock ] || [ -f bun.lockb ]; then {bun_install}; bun run hardhat compile; \
+             elif [ -f yarn.lock ]; then {yarn_install}; yarn hardhat compile; \
+             elif [ -f pnpm-lock.yaml ]; then {pnpm_install}; pnpm hardhat compile; \
+             elif [ -f package.json ]; then {npm_install}; npx --no-install hardhat compile; \
              else npx --no-install hardhat compile; fi; \
              else echo 'No build system detected'; exit 1; fi"
                 )
@@ -606,7 +632,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_build_commands_do_not_install_packages() {
+    fn generated_build_commands_install_js_deps_without_lifecycle_scripts() {
         let cli: Cli = serde_yaml::from_str(
             r#"
 repo: "https://github.com/example/protocol.git"
@@ -615,19 +641,14 @@ builder: "Auto"
         )
         .unwrap();
         let command = cli.generate_build_command();
-        for forbidden in [
-            "forge install",
-            "npm install",
-            "yarn install",
-            "pnpm install",
-        ] {
-            assert!(
-                !command.contains(forbidden),
-                "generated command unexpectedly contains `{forbidden}`: {command}"
-            );
-        }
+        assert!(!command.contains("forge install"));
         assert!(command.contains("forge build"));
-        assert!(command.contains("npx --no-install hardhat compile"));
+        assert!(command.contains("bun install --frozen-lockfile --ignore-scripts"));
+        assert!(command.contains("yarn install --frozen-lockfile --ignore-scripts"));
+        assert!(command.contains("pnpm install --frozen-lockfile --ignore-scripts"));
+        assert!(command.contains("npm ci --ignore-scripts"));
+        assert!(command.contains("npm install --ignore-scripts"));
+        assert!(command.contains("bun run hardhat compile"));
 
         let cli: Cli = serde_yaml::from_str(
             r#"
@@ -637,7 +658,7 @@ builder: "HardhatYarn"
         )
         .unwrap();
         let command = cli.generate_build_command();
-        assert!(!command.contains("yarn install"));
+        assert!(command.contains("yarn install --frozen-lockfile --ignore-scripts"));
         assert!(command.contains("yarn hardhat compile"));
     }
 
@@ -672,6 +693,24 @@ immunefi_bounty: "https://immunefi.com/bug-bounty/ssvnetwork/information/"
         assert_eq!(
             cli.immunefi_bounty.as_deref(),
             Some("https://immunefi.com/bug-bounty/ssvnetwork/information/")
+        );
+    }
+
+    #[test]
+    fn code4rena_bounty_config_can_derive_repo_later() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+audit_type: "Code4renaBounty"
+code4rena_bounty: "https://code4rena.com/bounties/moonwell"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(cli.audit_type, AuditType::Code4renaBounty);
+        assert!(cli.repo.is_none());
+        assert_eq!(
+            cli.code4rena_bounty.as_deref(),
+            Some("https://code4rena.com/bounties/moonwell")
         );
     }
 

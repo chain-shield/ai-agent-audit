@@ -1,0 +1,16 @@
+{
+  "benchmark": "ens-contracts",
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/inputs/r5/v2/ens-contracts-run-001/C-3.md",
+  "source_poc_run": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/poc-runs/v2/ens-contracts-run-001/C-3.md",
+  "results": [
+    {
+      "finding_id": "C-3",
+      "title": "Expired .eth name re-registration without resolver leaves prior owner's resolver controlling resolution",
+      "status": "Verified PoC",
+      "final_poc_test_path": "test/ExpiredNameNoResolverReRegistrationPoC.test.ts",
+      "test_command": "bun run test test/ExpiredNameNoResolverReRegistrationPoC.test.ts",
+      "verification_result": "passed and proves vulnerability",
+      "notes": "Local simulation accepted because runtime extracts no deployed address or network. Real registrar and registry path shows ownership changes while stale attacker resolver and addr record persist."
+    }
+  ]
+}

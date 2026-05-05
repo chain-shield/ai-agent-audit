@@ -11,7 +11,7 @@ paths:
   audit_report: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/4-puppy-raffle-audit/report/audit-report.md"
 
 context_docs:
-  - "audit-docs/4-puppy-raffle-audit-docs.md"
-  - "audit-docs/4-puppy-raffle-audit-scope.md"
+  - "audit-docs/4-puppy-raffle-audit/4-puppy-raffle-audit-docs.md"
+  - "audit-docs/4-puppy-raffle-audit/4-puppy-raffle-audit-scope.md"
   - "{{SOURCE_ROOT}}/README.md"
   - "{{THREE_SHOT_ROOT}}/v12-checklist.md"
