@@ -1,3 +1,24 @@
+//! Immunefi bounty ingestion and normalization.
+//!
+//! Immunefi exposes all bounty context through rendered web pages rather than a
+//! stable public API. This module fetches the Information, Scope, and Resources
+//! tabs, extracts the embedded Next.js data, and preserves enough structure for
+//! the audit-preparation pipeline to generate docs, severity rubrics, scope
+//! files, clone targets, and PoC runtime hints.
+//!
+//! NatSpec-style contract for this module:
+//! - `@notice` Convert an Immunefi bug-bounty URL into structured
+//!   smart-contract bounty metadata.
+//! - `@dev` The application audits smart contracts only. Web/App assets and
+//!   rewards are retained only when needed for traceability, and most public
+//!   accessors filter them out before downstream use.
+//! - `@custom:invariant` Smart-contract scope must be derived from explicit
+//!   Smart Contract assets, impacts, rewards, and codebase links whenever those
+//!   are available; generic Resources links must not over-scope the audit.
+//! - `@custom:invariant` GitHub tree/blob refs are preserved as raw refs until
+//!   `git_clone` can resolve them against real remote branches and tags. This is
+//!   required for slash-named branches such as `release/v2`.
+
 use anyhow::{Context, Result, anyhow};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -6,112 +27,200 @@ use std::collections::BTreeSet;
 const IMMUNEFI_HTTP_TIMEOUT_SECS: u64 = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Full parsed Immunefi bounty model used by context and clone preparation.
+///
+/// The fields mirror the core bounty page concepts: program metadata,
+/// codebases/documentation/audits, assets, impacts, rewards, and exclusion
+/// rules. Methods on this struct provide smart-contract-only views for the
+/// audit pipeline.
 pub struct ImmunefiBountyData {
+    /// User-provided URL before canonicalization.
     pub input_url: String,
+    /// Canonical Information, Scope, and Resources tab URLs.
     pub urls: ImmunefiBountyUrls,
+    /// Project name as displayed by Immunefi.
     pub project: String,
+    /// Stable bounty slug from `/bug-bounty/<slug>/...`.
     pub slug: String,
+    /// Program overview/body text.
     pub description: Option<String>,
+    /// Official project website URL when present.
     pub website_url: Option<String>,
+    /// Top-level GitHub URL from the page header, if present.
     pub github_url: Option<String>,
+    /// Maximum bounty amount in USD-denominated integer units when parsed.
     pub max_bounty: Option<u64>,
+    /// Program launch date text.
     pub launch_date: Option<String>,
+    /// Last updated date text.
     pub updated_date: Option<String>,
+    /// Immunefi PoC requirement label from the page.
     pub proof_of_concept_type: Option<String>,
+    /// Primacy of Impact / Primacy of Rules summary text when detected.
     pub primacy: Option<String>,
+    /// Immunefi-wide severity system version referenced by the page.
     pub severity_system: Option<ImmunefiSeveritySystem>,
+    /// Reward token symbol, if the page exposes it.
     pub rewards_token: Option<String>,
+    /// Network on which rewards are paid, if exposed.
     pub rewards_token_network: Option<String>,
+    /// Candidate codebase links from Resources and smart-contract assets.
     pub codebases: Vec<ImmunefiResourceLink>,
+    /// Documentation links relevant to the program.
     pub documentations: Vec<ImmunefiResourceLink>,
+    /// Public audit links disclosed by the program.
     pub audits: Vec<ImmunefiAuditLink>,
+    /// Assets in scope across Immunefi categories.
     pub assets: Vec<ImmunefiAsset>,
+    /// Impacts in scope across Immunefi categories.
     pub impacts: Vec<ImmunefiImpact>,
+    /// Reward rows across Immunefi categories.
     pub rewards: Vec<ImmunefiReward>,
+    /// Immunefi default smart-contract out-of-scope text.
     pub default_out_of_scope_smart_contract: Option<String>,
+    /// Immunefi default general out-of-scope text.
     pub default_out_of_scope_general: Option<String>,
+    /// Prohibited activity text from the program.
     pub prohibited_activities: Option<String>,
+    /// Program-specific out-of-scope text.
     pub custom_out_of_scope: Option<String>,
+    /// Known issues or accepted risks disclosed by the program.
     pub known_issues: Vec<String>,
+    /// Raw tab captures retained for tests/debugging; not serialized to artifacts.
     #[serde(skip)]
     pub tabs: Vec<ImmunefiTabCapture>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Canonical Immunefi tab URLs for a bounty.
 pub struct ImmunefiBountyUrls {
+    /// Base `/bug-bounty/<slug>` URL.
     pub base: String,
+    /// Information tab URL.
     pub information: String,
+    /// Scope tab URL.
     pub scope: String,
+    /// Resources tab URL.
     pub resources: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Link extracted from Immunefi Resources or codebase/documentation lists.
 pub struct ImmunefiResourceLink {
+    /// Absolute URL.
     pub url: String,
+    /// Display title from the Immunefi payload.
     pub title: Option<String>,
+    /// Description or row label associated with the link.
     pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Public audit link disclosed by an Immunefi program.
 pub struct ImmunefiAuditLink {
+    /// Audit report URL or repository path.
     pub url: String,
+    /// Auditor name when present.
     pub auditor: Option<String>,
+    /// Completion/date text when present.
     pub date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One Immunefi asset row.
 pub struct ImmunefiAsset {
+    /// Asset URL, which may be an explorer address, deployment page, repo, or app URL.
     pub url: String,
+    /// Immunefi asset category, e.g. `smart_contract`.
     pub asset_type: Option<String>,
+    /// Asset description/name from the Scope table.
     pub description: Option<String>,
+    /// Whether this is Immunefi's Primacy of Impact placeholder.
     pub is_primacy_of_impact: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One Immunefi impact row.
 pub struct ImmunefiImpact {
+    /// Critical/High/Medium/Low label from the program.
     pub severity: String,
+    /// Immunefi asset category to which this impact applies.
     pub asset_type: Option<String>,
+    /// Impact description used as the program-specific severity criterion.
     pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One Immunefi reward row.
 pub struct ImmunefiReward {
+    /// Critical/High/Medium/Low label.
     pub severity: String,
+    /// Immunefi asset category to which the reward applies.
     pub asset_type: Option<String>,
+    /// Reward model label, such as fixed or range.
     pub reward_model: Option<String>,
+    /// Fixed reward amount when applicable.
     pub fixed_reward: Option<u64>,
+    /// Minimum reward for range models.
     pub min_reward: Option<u64>,
+    /// Maximum reward for range models.
     pub max_reward: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Immunefi-wide severity system reference.
 pub struct ImmunefiSeveritySystem {
+    /// Version label, e.g. `v2.3`.
     pub version: String,
+    /// Documentation URL for the severity system.
     pub url: String,
 }
 
 #[derive(Debug, Clone)]
+/// Raw fetched tab payload used by the parser.
 pub struct ImmunefiTabCapture {
+    /// Which Immunefi tab was fetched.
     pub kind: ImmunefiTabKind,
+    /// Fetched URL.
     pub url: String,
+    /// Raw HTML payload.
     pub html: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Immunefi tab identifiers.
 pub enum ImmunefiTabKind {
+    /// `/information/`
     Information,
+    /// `/scope/`
     Scope,
+    /// `/resources/`
     Resources,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// GitHub codebase candidate after URL parsing but before clone/build.
+///
+/// `raw_tree_refs` stores unresolved branch-plus-path strings, because GitHub
+/// URLs cannot be split safely without consulting remote refs. For example,
+/// `blob/release/v2/src/Foo.sol` might mean branch `release/v2` and path
+/// `src/Foo.sol`, not branch `release` and path `v2/src/Foo.sol`.
 pub struct ResolvedGitCodebase {
+    /// Normalized clone URL without `/tree` or `/blob` suffixes.
     pub repo_url: String,
+    /// Resolved branch/tag/ref when known without remote lookup.
     pub branch: Option<String>,
+    /// Resolved tree paths inside the repo, if known.
     pub tree_paths: Vec<String>,
+    /// Unresolved branch/tag/path segments requiring remote ref resolution.
     pub raw_tree_refs: Vec<String>,
 }
 
+/// Fetches all Immunefi tabs and parses them into bounty metadata.
+///
+/// `@notice` This is the primary entry point for Immunefi bounty preparation.
+/// `@dev` Fetching all tabs is required because scope, codebase, and severity
+/// information are distributed across Information, Scope, and Resources.
 pub async fn fetch_immunefi_bounty(input_url: &str) -> Result<ImmunefiBountyData> {
     let urls = normalize_immunefi_bounty_urls(input_url)?;
     let client = reqwest::Client::builder()
@@ -133,6 +242,9 @@ async fn fetch_tab(
     kind: ImmunefiTabKind,
     url: &str,
 ) -> Result<ImmunefiTabCapture> {
+    // The fetcher intentionally does no parsing. Tests can provide captured tab
+    // HTML to `parse_immunefi_bounty_data`, while live runs share the same
+    // deterministic parser.
     let response = client.get(url).send().await?;
     if !response.status().is_success() {
         anyhow::bail!(
@@ -148,6 +260,10 @@ async fn fetch_tab(
     })
 }
 
+/// Normalizes any Immunefi tab URL to the full canonical tab set.
+///
+/// `@dev` A user may provide `/information/`, `/scope/`, `/resources/`, or a
+/// base bounty URL. The preparation pipeline always consumes all three tabs.
 pub fn normalize_immunefi_bounty_urls(input_url: &str) -> Result<ImmunefiBountyUrls> {
     let input = input_url.trim().trim_end_matches('/');
     let captures = Regex::new(r#"(?i)^(https?://[^/]+)/bug-bounty/([^/#?]+)(?:/[^#?]*)?"#)
@@ -175,11 +291,19 @@ pub fn normalize_immunefi_bounty_urls(input_url: &str) -> Result<ImmunefiBountyU
     })
 }
 
+/// Parses fetched Immunefi tab HTML into structured bounty data.
+///
+/// `@notice` This is the deterministic parser used by live fetches and tests.
+/// `@dev` Immunefi's Next.js payload is escaped and may duplicate fields across
+/// tabs, so the parser first merges all tab HTML into one normalized corpus.
 pub fn parse_immunefi_bounty_data(
     input_url: &str,
     urls: ImmunefiBountyUrls,
     tabs: Vec<ImmunefiTabCapture>,
 ) -> ImmunefiBountyData {
+    // Merge tabs before extraction. Immunefi can move fields between tabs while
+    // preserving the same underlying payload names, and the audit prep should
+    // remain stable across those frontend changes.
     let raw = tabs
         .iter()
         .map(|tab| tab.html.as_str())
@@ -275,6 +399,11 @@ pub fn parse_immunefi_bounty_data(
 }
 
 impl ImmunefiBountyData {
+    /// Returns the Smart Contract asset rows for this bounty.
+    ///
+    /// `@dev` Primacy-of-Impact placeholder rows can be included for rule and
+    /// rubric generation, but concrete scope-file generation usually excludes
+    /// them because they are not deployable contracts.
     pub fn smart_contract_assets(&self, include_primacy: bool) -> Vec<&ImmunefiAsset> {
         self.assets
             .iter()
@@ -283,6 +412,7 @@ impl ImmunefiBountyData {
             .collect()
     }
 
+    /// Returns Smart Contract impact rows as program-specific severity criteria.
     pub fn smart_contract_impacts(&self) -> Vec<ImmunefiImpact> {
         self.impacts
             .iter()
@@ -291,6 +421,7 @@ impl ImmunefiBountyData {
             .collect()
     }
 
+    /// Returns Smart Contract reward rows for dynamic rubric generation.
     pub fn smart_contract_rewards(&self) -> Vec<ImmunefiReward> {
         self.rewards
             .iter()
@@ -299,6 +430,11 @@ impl ImmunefiBountyData {
             .collect()
     }
 
+    /// Resolves cloneable GitHub codebases for the Smart Contract audit.
+    ///
+    /// `@notice` This is the strict repo-derivation API used by `git_clone`.
+    /// `@dev` It intentionally refuses generic GitHub org listings and web-app
+    /// repos when they cannot be tied to Smart Contract assets.
     pub fn resolved_git_codebases(&self) -> Result<Vec<ResolvedGitCodebase>> {
         let candidates = self.git_codebase_candidates();
         if candidates.is_empty() {
@@ -324,6 +460,10 @@ impl ImmunefiBountyData {
         merge_git_codebase_candidates(&self.project, candidates)
     }
 
+    /// Returns the only resolved codebase, failing when a bounty is polyrepo.
+    ///
+    /// `@dev` Newer setup paths use `resolved_git_codebases`; this helper is
+    /// kept for single-repo callers that need an explicit guard.
     pub fn resolved_git_codebase(&self) -> Result<ResolvedGitCodebase> {
         let codebases = self.resolved_git_codebases()?;
         if codebases.len() > 1 {
@@ -343,6 +483,11 @@ impl ImmunefiBountyData {
             .context("internal error: empty Immunefi codebase resolution")
     }
 
+    /// Collects GitHub repo candidates from Smart Contract assets and resources.
+    ///
+    /// `@dev` On mixed-category bounties, Resources links are accepted only
+    /// when their title/description looks Smart Contract specific. This prevents
+    /// ENS-style Web & App repos from being cloned for a smart-contract audit.
     pub fn git_codebase_candidates(&self) -> Vec<ResolvedGitCodebase> {
         let mut smart_asset_candidates = Vec::new();
 
@@ -367,6 +512,18 @@ impl ImmunefiBountyData {
                 resource_candidates.extend(github_codebase_urls_from_text(title));
             }
         }
+        for link in &self.documentations {
+            if !documentation_link_is_smart_contract_codebase(link) {
+                continue;
+            }
+            resource_candidates.extend(github_codebase_urls_from_text(&link.url));
+            if let Some(description) = &link.description {
+                resource_candidates.extend(github_codebase_urls_from_text(description));
+            }
+            if let Some(title) = &link.title {
+                resource_candidates.extend(github_codebase_urls_from_text(title));
+            }
+        }
 
         let mut candidates = smart_asset_candidates;
         candidates.extend(resource_candidates);
@@ -381,6 +538,10 @@ impl ImmunefiBountyData {
         })
     }
 
+    /// Renders tab-specific context markdown for the audit context generator.
+    ///
+    /// `@notice` This output feeds LLM workers and should be concise, scoped,
+    /// and explicit about excluded Web & App categories.
     pub fn context_markdown_for_tab(&self, kind: ImmunefiTabKind, visible_text: &str) -> String {
         let mut out = String::new();
         out.push_str(&format!("# Immunefi Bounty - {}\n\n", self.project));
@@ -597,6 +758,8 @@ fn append_audits(out: &mut String, audits: &[ImmunefiAuditLink]) {
 }
 
 fn is_smart_contract_asset_type(asset_type: Option<&str>) -> bool {
+    // Older Immunefi payloads sometimes omit `assetType`; treat missing values
+    // as smart-contract-compatible so legacy pages are not accidentally emptied.
     asset_type
         .map(|asset_type| {
             asset_type
@@ -607,6 +770,9 @@ fn is_smart_contract_asset_type(asset_type: Option<&str>) -> bool {
 }
 
 fn resource_link_is_smart_contract_specific(link: &ImmunefiResourceLink) -> bool {
+    // In mixed programs, Resources may include web repos beside contract repos.
+    // Require a contract/build-system hint before accepting those generic
+    // resource links for smart-contract cloning.
     let haystack = [
         link.url.as_str(),
         link.title.as_deref().unwrap_or_default(),
@@ -629,7 +795,38 @@ fn resource_link_is_smart_contract_specific(link: &ImmunefiResourceLink) -> bool
     .any(|marker| haystack.contains(marker))
 }
 
-fn github_codebase_urls_from_text(text: &str) -> Vec<ResolvedGitCodebase> {
+fn documentation_link_is_smart_contract_codebase(link: &ImmunefiResourceLink) -> bool {
+    // Some programs put source-code deployment pages in documentation tables.
+    // Accept those only when they look like codebase references, and avoid audit
+    // report links because they are context, not clone targets.
+    let haystack = [
+        link.url.as_str(),
+        link.title.as_deref().unwrap_or_default(),
+        link.description.as_deref().unwrap_or_default(),
+    ]
+    .join(" ")
+    .to_ascii_lowercase();
+    let audit_only = haystack.contains("audit");
+    let codebase_hint = [
+        "smart contract",
+        "smart-contract",
+        "smart_contract",
+        "contracts",
+        "solidity",
+        "source",
+        "codebase",
+        "repository",
+        "readme",
+    ]
+    .iter()
+    .any(|marker| haystack.contains(marker));
+
+    codebase_hint && !audit_only
+}
+
+pub fn github_codebase_urls_from_text(text: &str) -> Vec<ResolvedGitCodebase> {
+    // Extract URLs from free-form text first, then allow the whole input to be a
+    // URL. This handles both markdown prose and direct YAML/config values.
     let mut candidates = Vec::new();
     let github_re = Regex::new(r#"https?://github\.com/[^\s)\]"'<>,]+"#).unwrap();
     for m in github_re.find_iter(text) {
@@ -646,10 +843,13 @@ fn github_codebase_urls_from_text(text: &str) -> Vec<ResolvedGitCodebase> {
     candidates
 }
 
-fn merge_git_codebase_candidates(
+pub fn merge_git_codebase_candidates(
     project: &str,
     candidates: Vec<ResolvedGitCodebase>,
 ) -> Result<Vec<ResolvedGitCodebase>> {
+    // Multiple page links can point to different folders in the same repo. Fold
+    // those into one repo candidate while preserving all tree/raw refs. Distinct
+    // repos remain distinct so the polyrepo path can clone them independently.
     let mut by_repo = std::collections::BTreeMap::<String, Vec<ResolvedGitCodebase>>::new();
     for candidate in candidates {
         by_repo
@@ -702,6 +902,9 @@ fn merge_git_codebase_candidates(
 }
 
 pub fn parse_github_codebase_url(url: &str) -> Option<ResolvedGitCodebase> {
+    // Do not guess slash-named branches here. Store raw tree/blob refs and let
+    // `git_clone::resolve_github_tree_refs` split them after it sees the real
+    // branch/tag list from `git ls-remote`.
     let clean = url
         .trim()
         .trim_matches(['"', '\'', '`', '[', ']', '(', ')'])
@@ -744,6 +947,9 @@ pub fn parse_github_codebase_url(url: &str) -> Option<ResolvedGitCodebase> {
                 }
             }
             "wiki" | "releases" => {}
+            "blob" | "raw" if parts.len() >= 4 => {
+                raw_tree_refs.push(parts[3..].join("/"));
+            }
             "blob" | "raw" => {}
             _ => {}
         }
@@ -757,6 +963,8 @@ pub fn parse_github_codebase_url(url: &str) -> Option<ResolvedGitCodebase> {
 }
 
 pub fn is_github_org_or_user_listing_url(url: &str) -> bool {
+    // Org/user repository listings are not clone targets. They tell us a human
+    // may need to choose a repo unless scoped assets point at a concrete repo.
     let clean = url
         .trim()
         .trim_end_matches('/')
@@ -777,6 +985,8 @@ pub fn is_github_org_or_user_listing_url(url: &str) -> bool {
 }
 
 pub fn normalize_repo_url_for_compare(url: &str) -> String {
+    // Repository identity ignores trailing slashes, `.git`, and case. Tree/blob
+    // suffixes are stripped by `parse_github_codebase_url` before comparison.
     url.trim()
         .trim_end_matches('/')
         .trim_end_matches(".git")
@@ -784,6 +994,8 @@ pub fn normalize_repo_url_for_compare(url: &str) -> String {
 }
 
 pub fn same_github_repo(left: &str, right: &str) -> bool {
+    // Compare by canonical clone URL when possible so a configured repo can
+    // match bounty URLs that include `/tree/...` or `/blob/...` suffixes.
     match (
         parse_github_codebase_url(left),
         parse_github_codebase_url(right),
@@ -1101,6 +1313,17 @@ mod tests {
     }
 
     #[test]
+    fn github_codebase_parser_keeps_full_blob_ref_for_slash_named_branch() {
+        let parsed =
+            parse_github_codebase_url("https://github.com/org/repo/blob/release/v2/src/Foo.sol")
+                .unwrap();
+
+        assert_eq!(parsed.repo_url, "https://github.com/org/repo");
+        assert_eq!(parsed.branch, None);
+        assert_eq!(parsed.raw_tree_refs, vec!["release/v2/src/Foo.sol"]);
+    }
+
+    #[test]
     fn github_codebase_parser_rejects_org_repository_listing() {
         assert!(
             parse_github_codebase_url(
@@ -1207,6 +1430,36 @@ mod tests {
             repos[0].repo_url,
             "https://github.com/example/protocol-contracts"
         );
+    }
+
+    #[test]
+    fn immunefi_codebase_resolution_uses_smart_contract_documentation_repo() {
+        let urls =
+            normalize_immunefi_bounty_urls("https://immunefi.com/bug-bounty/example/information/")
+                .unwrap();
+        let html = r#"
+<script>self.__next_f.push([1,"{\"project\":\"The Graph\",\"programCodebases\":[{\"id\":1,\"url\":\"https://github.com/graphprotocol\",\"title\":\"The Graph Codebase\",\"description\":\"Github Codebase\"}],\"programDocumentations\":[{\"id\":2,\"url\":\"https://github.com/graphprotocol/contracts/tree/main/packages/contracts/audits\",\"title\":\"Past Security Audits\",\"description\":\"A list of all security audits performed since 2020.\"},{\"id\":3,\"url\":\"https://github.com/graphprotocol/contracts/tree/main/packages\",\"title\":\"Smart Contracts\",\"description\":\"Each Smart Contract in scope has its own documentation (README.md)\"}],\"assets\":[{\"id\":\"web\",\"url\":\"https://app.example\",\"type\":\"websites_and_applications\",\"description\":\"Web app\",\"isPrimacyOfImpact\":false},{\"id\":\"sc\",\"url\":\"https://etherscan.io/address/0x0000000000000000000000000000000000000001\",\"type\":\"smart_contract\",\"description\":\"Vault\",\"isPrimacyOfImpact\":false}],\"programImpacts\":[{\"id\":1,\"severity\":\"critical\",\"assetType\":\"smart_contract\",\"description\":\"Direct theft of funds\"}]}"]);</script>
+"#;
+
+        let data = parse_immunefi_bounty_data(
+            "https://immunefi.com/bug-bounty/example/information/",
+            urls,
+            vec![ImmunefiTabCapture {
+                kind: ImmunefiTabKind::Resources,
+                url: "https://immunefi.com/bug-bounty/example/resources/".to_string(),
+                html: html.to_string(),
+            }],
+        );
+
+        let repos = data.resolved_git_codebases().unwrap();
+
+        assert_eq!(repos.len(), 1);
+        assert_eq!(
+            repos[0].repo_url,
+            "https://github.com/graphprotocol/contracts"
+        );
+        assert_eq!(repos[0].branch.as_deref(), Some("main"));
+        assert_eq!(repos[0].tree_paths, vec!["packages".to_string()]);
     }
 
     #[test]

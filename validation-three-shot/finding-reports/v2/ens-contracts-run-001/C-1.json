@@ -1,0 +1,7 @@
+{
+  "benchmark": "ens-contracts",
+  "finding_id": "C-1",
+  "status": "Report Created",
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ens-contracts-run-001/C-1-Expired-ENS-names-can-receive-hidden-ERC721-approv.md",
+  "notes": "Submission-ready Critical report created for the ENS direct NFT theft impact row. Verified PoC command `bun run test test/ExpiredApprovalRenewalTheftPoC.test.ts` was re-run locally and passed."
+}

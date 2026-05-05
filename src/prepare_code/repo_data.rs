@@ -1,8 +1,17 @@
-/// Repository data storage for complete project metadata.
-///
-/// This module provides a SQLite-based database for storing and querying
-/// complete repository information including paths, file lists, documentation,
-/// and generated context data from RepoPaths and metadata analysis.
+//! Repository metadata persistence.
+//!
+//! The audit pipeline produces a rich `RepoPaths` object after clone/build and
+//! context generation. This module snapshots that object into SQLite so later
+//! phases and debugging tools can query the exact repository identity, source
+//! folders, file lists, docs, scope, excluded folders, and generated metadata
+//! context used for a run.
+//!
+//! NatSpec-style contract for this module:
+//! - `@notice` Persist prepared repository metadata for reproducibility.
+//! - `@dev` Path vectors are serialized as JSON strings because SQLite stores a
+//!   compact single-row snapshot per `project_id`.
+//! - `@custom:invariant` `project_id` is the primary key and must include enough
+//!   commit/fingerprint entropy to distinguish different prepared workspaces.
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -13,7 +22,10 @@ use crate::{
     prepare_code::git_clone::RepoPaths,
 };
 
-/// Represents complete repository data with all metadata
+/// Serialized repository snapshot stored in SQLite.
+///
+/// The fields intentionally mirror `RepoPaths` plus generated metadata context.
+/// This makes the DB row a reproducible breadcrumb for later analysis phases.
 #[derive(Debug, Clone)]
 pub struct RepoData {
     /// Unique project identifier
@@ -46,6 +58,10 @@ pub struct RepoData {
     pub context: String,
 }
 
+/// Saves a prepared repository snapshot and generated metadata context.
+///
+/// `@notice` Call this after repository preparation so later phases can recover
+/// the same file/path context without re-enumerating the workspace.
 pub async fn save_repo_data_to_db(repo: &RepoPaths) -> anyhow::Result<()> {
     let db_path = app_db_path(REPO_DATA_DB);
     let repodata_db = RepoDataDb::create(&db_path)?;
@@ -55,7 +71,10 @@ pub async fn save_repo_data_to_db(repo: &RepoPaths) -> anyhow::Result<()> {
 
     Ok(())
 }
-/// SQLite-based database for repository data storage
+/// SQLite-backed repository metadata store.
+///
+/// `@dev` The wrapper keeps SQL details local to `prepare_code`; callers pass
+/// domain objects (`RepoPaths`) rather than SQL-ready rows.
 pub struct RepoDataDb(Connection);
 
 impl RepoDataDb {
@@ -63,6 +82,8 @@ impl RepoDataDb {
     ///
     /// Initializes SQLite database with table for complete repository metadata.
     pub fn create(path: &Path) -> Result<Self> {
+        // Create parent directories lazily so a fresh checkout can run without a
+        // pre-created application database folder.
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -96,7 +117,9 @@ impl RepoDataDb {
     /// Stores all RepoPaths information plus generated metadata context
     /// for later retrieval and analysis.
     pub fn insert_repo_data(&self, repo: &RepoPaths, context: &str) -> Result<()> {
-        // Serialize path vectors to JSON strings
+        // Serialize path vectors to JSON strings. This keeps schema churn low as
+        // `RepoPaths` evolves and lets readers deserialize only the fields they
+        // need.
         let sol_files = serde_json::to_string(&repo.sol_files)?;
         let test_files = serde_json::to_string(&repo.test_files)?;
         let script_files = serde_json::to_string(&repo.script_files)?;
@@ -174,6 +197,9 @@ impl RepoDataDb {
     }
 
     /// Checks if repository data exists for the given project ID.
+    ///
+    /// `@dev` Used as a cheap cache/progress check without deserializing the
+    /// full repository snapshot.
     pub fn exists(&self, project_id: &str) -> Result<bool> {
         let mut stmt = self
             .0
@@ -182,7 +208,9 @@ impl RepoDataDb {
         Ok(exists)
     }
 
-    /// Lists all stored repository projects with basic information.
+    /// Lists all stored repository projects with basic identifying information.
+    ///
+    /// The tuple is `(project_id, repo_name, commit_hash)`.
     pub fn list_projects(&self) -> Result<Vec<(String, String, String)>> {
         let mut stmt = self.0.prepare(
             "SELECT project_id, repo_name, commit_hash FROM repo_data ORDER BY created_at DESC",
@@ -209,6 +237,9 @@ impl RepoData {
     ///
     /// Deserializes file path lists and recreates the original RepoPaths structure
     /// for use in analysis workflows.
+    /// `@dev` Some transient fields that are not stored directly, such as
+    /// `github_url` and bounty-specific audit type, are reconstructed with
+    /// conservative defaults. Prefer the live `RepoPaths` object inside a run.
     pub fn to_repo_paths(&self) -> Result<RepoPaths> {
         let sol_files: Vec<PathBuf> = serde_json::from_str(&self.sol_files)?;
         let test_files: Vec<PathBuf> = serde_json::from_str(&self.test_files)?;

@@ -21,12 +21,36 @@ use std::path::{Path, PathBuf};
 
 fn severity_rubric_for_repo(repo: &RepoPaths) -> Result<String> {
     match repo.audit_type {
-        AuditType::Code4renaBounty => Ok(CODE4RENA_BOUNTY_SEVERITY_RUBRIC.to_string()),
+        AuditType::Code4renaBounty => load_code4rena_bounty_severity_rubric(repo),
         AuditType::ImmunefiBugBounty => load_immunefi_severity_rubric(repo),
         AuditType::Sherlock => Ok(SHERLOCK_SEVERITY_RUBRIC.to_string()),
         AuditType::Cantina => Ok(CANTINA_SEVERITY_RUBRIC.to_string()),
         _ => Ok(CODE4RENA_SEVERITY_RUBRIC.to_string()),
     }
+}
+
+fn load_code4rena_bounty_severity_rubric(repo: &RepoPaths) -> Result<String> {
+    let Some(path) = code4rena_bounty_severity_rubric_path(repo) else {
+        return Ok(CODE4RENA_BOUNTY_SEVERITY_RUBRIC.to_string());
+    };
+    std::fs::read_to_string(&path).map_err(|source| AuditError::FileSystem {
+        path: path.display().to_string(),
+        message: "failed to read generated Code4rena bounty severity rubric".to_string(),
+        source: Some(Box::new(source)),
+    })
+}
+
+fn code4rena_bounty_severity_rubric_path(repo: &RepoPaths) -> Option<PathBuf> {
+    repo.docs
+        .iter()
+        .find(|path| is_code4rena_bounty_severity_rubric(path))
+        .cloned()
+}
+
+fn is_code4rena_bounty_severity_rubric(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with("-code4rena-severity-rubric.md"))
 }
 
 fn load_immunefi_severity_rubric(repo: &RepoPaths) -> Result<String> {

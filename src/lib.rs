@@ -35,6 +35,8 @@ pub mod build_brain {
 pub mod prepare_code {
     /// Generated audit scope/docs context
     pub mod audit_context;
+    /// Code4rena bounty metadata extraction
+    pub mod code4rena_bounty;
     /// Git cloning and native repository building
     pub mod git_clone;
     /// Immunefi bounty metadata extraction

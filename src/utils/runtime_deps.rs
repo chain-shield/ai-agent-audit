@@ -18,6 +18,7 @@ pub enum RuntimeDependency {
     Npx,
     Yarn,
     Pnpm,
+    Bun,
     Shell,
 }
 
@@ -32,6 +33,7 @@ impl RuntimeDependency {
             Self::Npx => "npx",
             Self::Yarn => "yarn",
             Self::Pnpm => "pnpm",
+            Self::Bun => "bun",
             Self::Shell => "sh",
         }
     }
@@ -53,6 +55,9 @@ impl RuntimeDependency {
             }
             Self::Pnpm => {
                 "Install pnpm (`corepack enable` is recommended, or `npm install -g pnpm`) and make sure `pnpm` is available on PATH."
+            }
+            Self::Bun => {
+                "Install Bun from https://bun.sh/ and make sure `bun` is available on PATH."
             }
             Self::Shell => {
                 "Install a POSIX-compatible shell and make sure `sh` is available on PATH."

@@ -1,3 +1,30 @@
+//! Audit-context artifact generation.
+//!
+//! This module turns repository files plus bounty/platform metadata into the
+//! three core artifacts the audit engine consumes:
+//! - `<protocol>-scope.txt`: exact Solidity entrypoints to audit.
+//! - `<protocol>-scope.md`: human/LLM-readable scope, exclusions, and known
+//!   issue context.
+//! - `<protocol>-docs.md`: protocol documentation distilled from trusted
+//!   sources.
+//!
+//! NatSpec-style contract for this module:
+//! - `@notice` Generate deterministic, security-review-ready context artifacts
+//!   before static analysis and LLM discovery begin.
+//! - `@dev` Scope precision is more important than convenience for bounty
+//!   audits. Code4rena/Immunefi explorer-linked assets must map to local source
+//!   files or the app should fail closed instead of silently auditing too much or
+//!   too little.
+//! - `@custom:invariant` `scope.txt` paths are always relative to the effective
+//!   protocol root. In polyrepo workspaces that means paths include the cloned
+//!   member folder, such as `./org-repo/contracts/Vault.sol`.
+//! - `@custom:invariant` Generated docs should preserve scope, severity rules,
+//!   known issues, previous audits, trusted roles, and PoC/runtime constraints
+//!   while filtering platform navigation and marketing noise.
+//! - `@custom:safety` External links are fetched under strict budgets; generated
+//!   context must prefer structured bounty data and local files over broad web
+//!   crawling.
+
 use anyhow::{Context, Result, anyhow};
 use log::{debug, info, warn};
 use regex::Regex;
@@ -18,7 +45,11 @@ use crate::{
         agent_enums::AIAgent,
         agent_factory::{AgentConfig, AgentFactory},
     },
-    prepare_code::immunefi::{ImmunefiBountyData, ImmunefiTabKind, fetch_immunefi_bounty},
+    llm_review::prompt_support::severity_rubics::CODE4RENA_BOUNTY_SEVERITY_RUBRIC,
+    prepare_code::code4rena_bounty::{Code4renaBountyData, fetch_code4rena_bounty},
+    prepare_code::immunefi::{
+        ImmunefiBountyData, ImmunefiTabKind, fetch_immunefi_bounty, same_github_repo,
+    },
 };
 
 const MAX_PROMPT_SOURCE_TOKENS_PER_ITEM: usize = 2_500;
@@ -30,121 +61,206 @@ const MAX_REMOTE_PRIOR_AUDIT_FETCHES: usize = 2;
 const MAX_EXTERNAL_CONTRACT_METADATA_FETCHES: usize = 100;
 const ENTRY_CONTEXT_REASON: &str = "Configured context file";
 const IMMUNEFI_BOUNTY_ENTRY_REASON: &str = "Configured Immunefi bounty tab";
+const CODE4RENA_BOUNTY_ENTRY_REASON: &str = "Configured Code4rena bounty page";
 const CODE4RENA_BOUNTY_GUIDE_URL: &str = "https://docs.code4rena.com/bounties";
 const CODE4RENA_BOUNTY_CRITERIA_URL: &str = "https://docs.code4rena.com/bounties/bounty-criteria";
 
 #[derive(Debug, Clone)]
+/// Paths and metadata for generated audit-context artifacts.
 pub struct GeneratedAuditContext {
+    /// Stable filename prefix derived from the repo/protocol identity.
     pub artifact_prefix: String,
+    /// Directory containing all generated context artifacts.
     pub output_dir: PathBuf,
+    /// Generated list of scoped Solidity files.
     pub scope_txt: PathBuf,
+    /// Generated markdown scope/rules document.
     pub scope_md: PathBuf,
+    /// Generated markdown protocol docs document.
     pub docs_md: PathBuf,
+    /// JSON report of source files/links considered during generation.
     pub sources_json: PathBuf,
+    /// Additional docs injected for bounty modes, such as rubric/runtime files.
     pub extra_docs: Vec<PathBuf>,
+    /// Whether artifacts were regenerated in this run.
     pub regenerated: bool,
+    /// Structured source and link decision report.
     pub source_report: ContextSourceReport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Audit trail for context-source selection and link handling.
 pub struct ContextSourceReport {
+    /// Artifact prefix used for this generation run.
     pub artifact_prefix: String,
+    /// Commit hash/fingerprint associated with the prepared repo workspace.
     pub commit_hash: String,
+    /// UTC timestamp string for artifact generation.
     pub generated_at: String,
+    /// Local/remote sources considered for scope/docs.
     pub sources: Vec<ContextSource>,
+    /// Per-link fetch/skip decisions.
     pub link_decisions: Vec<LinkDecision>,
+    /// Non-fatal warnings emitted during generation.
     pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Public record of one source used or skipped by context generation.
 pub struct ContextSource {
+    /// Stable source id within the report.
     pub id: String,
+    /// Source category.
     pub kind: ContextSourceKind,
+    /// File path or URL.
     pub location: String,
+    /// Optional human-readable title.
     pub title: Option<String>,
+    /// Approximate token count after text extraction.
     pub token_count: usize,
+    /// How the source was used.
     pub decision: SourceDecision,
+    /// Concise reason for the decision.
     pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Source categories understood by context generation.
 pub enum ContextSourceKind {
+    /// Repository README.
     LocalReadme,
+    /// Other local markdown file.
     LocalMarkdown,
+    /// Local explicit scope file.
     LocalScopeTxt,
+    /// Local known-issues/security/audit markdown.
     LocalKnownIssues,
+    /// Remote GitHub markdown page.
     GithubMarkdown,
+    /// Remote GitHub raw text file.
     GithubRaw,
+    /// Remote markdown-like web page.
     WebMarkdown,
+    /// Remote HTML page converted to text.
     WebHtml,
+    /// Code4rena V12/prior report.
     V12Report,
+    /// Default Code4rena bounty guide.
     Code4renaBountyGuide,
+    /// Default Code4rena bounty criteria page.
     Code4renaBountyCriteria,
+    /// Program-specific Code4rena bounty page.
+    Code4renaBountyPage,
+    /// Immunefi Information tab.
     ImmunefiInformation,
+    /// Immunefi Scope tab.
     ImmunefiScope,
+    /// Immunefi Resources tab.
     ImmunefiResources,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// How a source contributed to generated artifacts.
 pub enum SourceDecision {
+    /// Used only for scope generation.
     UsedForScope,
+    /// Used only for docs generation.
     UsedForDocs,
+    /// Used for both scope and docs.
     UsedForBoth,
+    /// Intentionally skipped.
     Skipped,
+    /// Fetch/read failed.
     Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Audit trail for an extracted link.
 pub struct LinkDecision {
+    /// Source id/location where the link was found.
     pub from: String,
+    /// Link URL.
     pub url: String,
+    /// Link category.
     pub classification: LinkClassification,
+    /// Fetch/skip outcome.
     pub action: LinkAction,
+    /// Explanation of the outcome.
     pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Link categories used to decide fetch priority and prompt relevance.
 pub enum LinkClassification {
+    /// Scope, deployment, explorer, or contract-list material.
     Scope,
+    /// Protocol docs.
     Documentation,
+    /// Known issues / accepted risks.
     KnownIssues,
+    /// Prior audit report.
     PriorAudit,
+    /// Code4rena V12/prior findings report.
     V12,
+    /// Bounty criteria/rules material.
     BountyRules,
+    /// Source-code repository/blob/tree.
     SourceCode,
+    /// Social/profile link.
     Social,
+    /// Marketing or homepage link.
     Marketing,
+    /// Unclassified link.
     Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// What happened to an extracted link.
 pub enum LinkAction {
+    /// Remote content was fetched.
     Fetched,
+    /// Link was resolved to a local repo file.
     ResolvedLocal,
+    /// Link was skipped intentionally.
     Skipped,
+    /// Fetch/resolve failed.
     Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Generated `scope.txt` contents plus provenance.
 pub struct ScopeFileList {
+    /// Scoped Solidity entries.
     pub files: Vec<ScopeFileEntry>,
+    /// Strategy that produced the list.
     pub source: ScopeFileSource,
+    /// Non-fatal warnings from scope generation.
     pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One line in generated `scope.txt`.
 pub struct ScopeFileEntry {
+    /// Relative path, always formatted with a leading `./`.
     pub path: String,
+    /// Whether the path exists under the effective protocol root.
     pub exists: bool,
+    /// Optional provenance note.
     pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Provenance of a generated scope file list.
 pub enum ScopeFileSource {
+    /// Existing local `scope.txt` was copied.
     CopiedScopeTxt,
+    /// README/docs deterministic extraction.
     ExtractedFromReadme,
+    /// Structured bounty scope table/list extraction.
     ExtractedFromBountyScope,
+    /// Explorer/deployment-page contract metadata mapping.
     ExtractedFromExternalContractScope,
+    /// Conservative fallback to configured code folders.
     FallbackCodeFolders,
 }
 
@@ -283,6 +399,16 @@ struct CodexExternalScopeUnresolvedAsset {
     reason: String,
 }
 
+/// Generates all audit-context artifacts for a prepared repository workspace.
+///
+/// `@notice` This is the top-level context-generation entry point called after
+/// clone/build and before static analysis.
+/// `@dev` The function is deliberately orchestration-heavy: it decides whether
+/// cached artifacts can be reused, fetches bounty-specific metadata when
+/// required, collects source material, writes `scope.txt`, then asks the context
+/// agent to create `scope.md` and `docs.md`.
+/// `@custom:fail-closed` Bounty modes may abort when structured scope exists
+/// but cannot be mapped precisely to local Solidity files.
 pub async fn generate_audit_context(
     cli: &Cli,
     workspace_root: &Path,
@@ -305,6 +431,26 @@ pub async fn generate_audit_context(
     let docs_md = output_dir.join(format!("{artifact_prefix}-docs.md"));
     let sources_json = output_dir.join(format!("{artifact_prefix}-context-sources.json"));
     let mut extra_docs = Vec::new();
+    let code4rena_artifacts =
+        if matches!(cli.audit_type, AuditType::Code4renaBounty) && cli.code4rena_bounty.is_some() {
+            let source_json =
+                output_dir.join(format!("{artifact_prefix}-code4rena-bounty-source.json"));
+            let bounty_rules_md =
+                output_dir.join(format!("{artifact_prefix}-code4rena-bounty-rules.md"));
+            let severity_rubric_md =
+                output_dir.join(format!("{artifact_prefix}-code4rena-severity-rubric.md"));
+            let severity_rubric_json =
+                output_dir.join(format!("{artifact_prefix}-code4rena-severity-rubric.json"));
+            extra_docs.extend([bounty_rules_md.clone(), severity_rubric_md.clone()]);
+            Some((
+                source_json,
+                bounty_rules_md,
+                severity_rubric_md,
+                severity_rubric_json,
+            ))
+        } else {
+            None
+        };
     let immunefi_artifacts = if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
         let source_json = output_dir.join(format!("{artifact_prefix}-immunefi-source.json"));
         let bounty_rules_md =
@@ -363,6 +509,44 @@ pub async fn generate_audit_context(
             source_report: report,
         });
     }
+
+    let code4rena_bounty =
+        if let Some((source_json, bounty_rules_md, severity_rubric_md, severity_rubric_json)) =
+            &code4rena_artifacts
+        {
+            let bounty_url = cli
+                .code4rena_bounty
+                .as_deref()
+                .context("code4rena_bounty is required for Code4renaBounty context generation")?;
+            let bounty = fetch_code4rena_bounty(bounty_url).await.with_context(|| {
+                format!("Failed to fetch Code4rena bounty metadata from {bounty_url}")
+            })?;
+            fs::write(&source_json, serde_json::to_string_pretty(&bounty)?)
+                .with_context(|| format!("Failed to write {}", source_json.display()))?;
+            fs::write(
+                &bounty_rules_md,
+                render_code4rena_bounty_rules_markdown(&bounty),
+            )
+            .with_context(|| format!("Failed to write {}", bounty_rules_md.display()))?;
+            fs::write(
+                &severity_rubric_md,
+                render_code4rena_severity_rubric_markdown(&bounty),
+            )
+            .with_context(|| format!("Failed to write {}", severity_rubric_md.display()))?;
+            fs::write(
+                &severity_rubric_json,
+                render_code4rena_severity_rubric_json(&bounty)?,
+            )
+            .with_context(|| format!("Failed to write {}", severity_rubric_json.display()))?;
+            info!(
+                "Wrote Code4rena bounty rules and severity rubric: rules={}, rubric={}",
+                bounty_rules_md.display(),
+                severity_rubric_md.display()
+            );
+            Some(bounty)
+        } else {
+            None
+        };
 
     let immunefi_bounty = if let Some((
         source_json,
@@ -435,6 +619,7 @@ pub async fn generate_audit_context(
         protocol_root,
         repo_name,
         &cli.audit_type,
+        code4rena_bounty.as_ref(),
         immunefi_bounty.as_ref(),
     )
     .await?;
@@ -467,12 +652,13 @@ pub async fn generate_audit_context(
         protocol_root,
         &scope_txt,
         &sources,
+        code4rena_bounty.as_ref(),
         immunefi_bounty.as_ref(),
     )
     .await?;
     report.warnings.extend(scope_file_list.warnings.clone());
 
-    let agent = build_context_agent()?;
+    let agent = build_context_agent(cli)?;
     let scope_context_bundle = build_context_bundle(
         &artifact_prefix,
         repo_name,
@@ -549,7 +735,12 @@ pub async fn generate_audit_context(
 }
 
 pub fn should_generate_context(cli: &Cli) -> bool {
+    // Bounty modes always regenerate/consume dynamic context because the bounty
+    // page is the source of truth for rules, severity, scope, and runtime hints.
     if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
+        return true;
+    }
+    if matches!(cli.audit_type, AuditType::Code4renaBounty) && cli.code4rena_bounty.is_some() {
         return true;
     }
 
@@ -562,18 +753,29 @@ pub fn should_generate_context(cli: &Cli) -> bool {
     }
 }
 
-fn build_context_agent() -> Result<AIAgent> {
+const GENERIC_CONTEXT_PREAMBLE: &str = "You generate concise, security-review-ready audit context for Solidity protocol audits. Preserve scope, known issues, prior findings, invariants, trusted roles, and protocol mechanics. Do not invent facts. If source material is uncertain, say so briefly.";
+
+const CODE4RENA_COMPETITION_CONTEXT_PREAMBLE: &str = "You generate concise, security-review-ready audit context for Code4rena Solidity competitions. Preserve the README scope, sponsor-provided docs, known issues, prior findings, V12/prior report links, invariants, trusted roles, and protocol mechanics. V12 and prior-finding context is Code4rena competition-only. Do not invent facts. If source material is uncertain, say so briefly.";
+
+const CODE4RENA_BOUNTY_CONTEXT_PREAMBLE: &str = "You generate concise, security-review-ready audit context for Code4rena smart-contract bug bounties. Treat the configured Code4rena bounty page as the source of truth for smart contract scope, custom severity criteria, custom exclusions, known issues, previous audits, and repo links. Include default Code4rena bounty criteria, but let program-specific rules override or narrow the defaults. There is no V12 stage for Code4rena bounties. Do not invent facts. If source material is uncertain, say so briefly.";
+
+const IMMUNEFI_BOUNTY_CONTEXT_PREAMBLE: &str = "You generate concise, security-review-ready audit context for Immunefi smart-contract bug bounties. Use only Smart Contract category assets, impacts, rewards, repositories, and scope. Ignore Web & App assets, impacts, resources, and findings except to note that they were intentionally excluded. Preserve program impacts, rewards, out-of-scope rules, prohibited activities, PoC requirements, primacy rules, known issues, prior audits, trusted roles, invariants, and protocol mechanics. Do not invent facts. If source material is uncertain, say so briefly.";
+
+fn context_generation_preamble(cli: &Cli) -> &'static str {
+    match cli.audit_type {
+        AuditType::Code4rena => CODE4RENA_COMPETITION_CONTEXT_PREAMBLE,
+        AuditType::Code4renaBounty => CODE4RENA_BOUNTY_CONTEXT_PREAMBLE,
+        AuditType::ImmunefiBugBounty => IMMUNEFI_BOUNTY_CONTEXT_PREAMBLE,
+        _ => GENERIC_CONTEXT_PREAMBLE,
+    }
+}
+
+fn build_context_agent(cli: &Cli) -> Result<AIAgent> {
     AgentFactory::create_openai_agent(
         &AgentConfig::new(None)
             .with_model(OPENAI_MODEL)
             .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
-            .with_preamble(
-                "You generate concise, security-review-ready audit context for Solidity protocol audits. \
-                 Preserve scope, known issues, V12/prior findings, Code4rena/Immunefi bounty criteria, invariants, trusted roles, and protocol mechanics. \
-                 For ImmunefiBugBounty, this app audits smart contracts only: if Immunefi has category views such as Smart Contract and Web & App, use only Smart Contract assets, impacts, rewards, repositories, and scope. \
-                 Ignore Web & App assets, impacts, resources, and findings except to note that they were intentionally excluded. \
-                 Do not invent facts. If source material is uncertain, say so briefly.",
-            ),
+            .with_preamble(context_generation_preamble(cli)),
     )
     .map_err(anyhow::Error::from)
 }
@@ -584,13 +786,18 @@ async fn collect_context_sources(
     protocol_root: &Path,
     repo_name: &str,
     audit_type: &AuditType,
+    code4rena_bounty: Option<&Code4renaBountyData>,
     immunefi_bounty: Option<&ImmunefiBountyData>,
 ) -> Result<(Vec<SourceContent>, Vec<LinkDecision>)> {
+    // Source collection is intentionally two-phase. First we add high-trust
+    // local and structured bounty sources. Then we extract/fetch only relevant
+    // links under budget. This keeps generated context grounded and prevents
+    // workers from chasing navigation or marketing pages.
     let mut sources = Vec::new();
     let mut link_decisions = Vec::new();
     let mut seen_locations = HashSet::new();
     let code4rena_competition = matches!(audit_type, AuditType::Code4rena);
-    let code4rena_bounty = matches!(audit_type, AuditType::Code4renaBounty);
+    let code4rena_bounty_audit = matches!(audit_type, AuditType::Code4renaBounty);
     let immunefi_bug_bounty = matches!(audit_type, AuditType::ImmunefiBugBounty);
 
     if immunefi_bug_bounty {
@@ -626,6 +833,10 @@ async fn collect_context_sources(
                 warn!("Configured context file missing: {}", path.display());
             }
         }
+    }
+
+    if let Some(bounty) = code4rena_bounty {
+        push_code4rena_bounty_source(&mut sources, &mut seen_locations, bounty)?;
     }
 
     let known_issue_files = discover_known_issue_files(protocol_root);
@@ -695,7 +906,7 @@ async fn collect_context_sources(
             label: url.clone(),
         });
     }
-    if code4rena_bounty {
+    if code4rena_bounty_audit {
         links.push(ExtractedLink {
             from: "code4rena-bounty-defaults".to_string(),
             url: CODE4RENA_BOUNTY_GUIDE_URL.to_string(),
@@ -990,6 +1201,28 @@ fn push_immunefi_bounty_sources(
             reason: IMMUNEFI_BOUNTY_ENTRY_REASON.to_string(),
         });
     }
+    Ok(())
+}
+
+fn push_code4rena_bounty_source(
+    sources: &mut Vec<SourceContent>,
+    seen_locations: &mut HashSet<String>,
+    bounty: &Code4renaBountyData,
+) -> Result<()> {
+    if !seen_locations.insert(bounty.url.clone()) {
+        return Ok(());
+    }
+    let content = bounty.context_markdown();
+    log_source_content_loaded(&bounty.url, &content);
+    sources.push(SourceContent {
+        id: format!("source-{}", sources.len() + 1),
+        kind: ContextSourceKind::Code4renaBountyPage,
+        location: bounty.url.clone(),
+        title: Some("Code4rena Bounty Page".to_string()),
+        content,
+        decision: SourceDecision::UsedForBoth,
+        reason: CODE4RENA_BOUNTY_ENTRY_REASON.to_string(),
+    });
     Ok(())
 }
 
@@ -1444,6 +1677,142 @@ fn render_immunefi_bounty_rules_markdown(bounty: &ImmunefiBountyData) -> String 
     out
 }
 
+fn render_code4rena_bounty_rules_markdown(bounty: &Code4renaBountyData) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Code4rena Bounty Rules - {}\n\n",
+        bounty.project
+    ));
+    out.push_str(
+        "Use this file as mandatory context for `validation_profile: code4rena-bounty`.\n\n",
+    );
+    out.push_str("## Source URLs\n\n");
+    out.push_str(&format!("- Bounty page: {}\n", bounty.url));
+    out.push_str(&format!(
+        "- Default C4 bounty guide: {CODE4RENA_BOUNTY_GUIDE_URL}\n"
+    ));
+    out.push_str(&format!(
+        "- Default C4 bounty criteria: {CODE4RENA_BOUNTY_CRITERIA_URL}\n\n"
+    ));
+
+    out.push_str("## Program Requirements\n\n");
+    if let Some(max_bounty) = &bounty.max_bounty {
+        out.push_str(&format!("- Maximum bounty: {max_bounty}\n"));
+    }
+    out.push_str("- This app audits Smart Contract bounty scope only. Ignore website/app/social/media scope unless explicitly tied to deployed smart-contract impact.\n");
+    out.push_str("- Custom program-specific Code4rena bounty rules override or narrow the default Code4rena bounty criteria for this program.\n\n");
+
+    out.push_str("## Smart Contract Assets In Scope\n\n");
+    if bounty.scope_assets.is_empty() {
+        out.push_str("- No structured smart-contract scope assets were extracted. Read the bounty page directly and fail safe if scope cannot be resolved precisely.\n\n");
+    } else {
+        for asset in &bounty.scope_assets {
+            out.push_str(&format!("- {}: {}\n", asset.label, asset.url));
+        }
+        out.push('\n');
+    }
+
+    append_optional_section(
+        &mut out,
+        "Program-Specific Rules",
+        bounty.rules_section.as_deref(),
+    );
+    append_optional_section(
+        &mut out,
+        "Program-Specific Out Of Scope",
+        bounty.out_of_scope_section.as_deref(),
+    );
+    append_optional_section(
+        &mut out,
+        "Known Issues",
+        bounty.known_issues_section.as_deref(),
+    );
+    append_optional_section(
+        &mut out,
+        "Previous Audits",
+        bounty.previous_audits_section.as_deref(),
+    );
+
+    out.push_str("## Stage 1 Eligibility Rules\n\n");
+    out.push_str("- A finding must affect an in-scope smart contract asset or code path that is reachable from in-scope smart contract assets.\n");
+    out.push_str("- Exclude known issues, prior audit findings, documented accepted risks, closed duplicate reports, and program-specific OOS cases.\n");
+    out.push_str("- Exclude cases requiring privileged access, leaked credentials, social engineering, malicious or mistaken trusted roles, deployment mistakes, test/mock files, public disclosure, or third-party-only failures.\n");
+    out.push_str("- Exclude speculative future risks and findings that cannot be exploited by a non-privileged attacker under current deployed or in-scope code.\n");
+    out.push_str("- Do not perform final exploitability or severity scoring in stage 1; keep only when there is no decisive eligibility blocker.\n\n");
+
+    out.push_str("## Link Handling\n\n");
+    out.push_str("- Do not follow Code4rena navigation, marketing, login, social, newsletter, or platform-help links during validation.\n");
+    out.push_str("- Use only the bounty page, default C4 bounty criteria, in-scope explorer links, source-code links, documentation links, and prior-audit links when live verification is necessary.\n\n");
+
+    out
+}
+
+fn render_code4rena_severity_rubric_markdown(bounty: &Code4renaBountyData) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Code4rena Bounty Severity Rubric - {}\n\n",
+        bounty.project
+    ));
+    out.push_str("Use this file as mandatory severity context for `validation_profile: code4rena-bounty`.\n\n");
+    out.push_str("## Source URLs\n\n");
+    out.push_str(&format!("- Bounty page: {}\n", bounty.url));
+    out.push_str(&format!(
+        "- Default C4 bounty criteria: {CODE4RENA_BOUNTY_CRITERIA_URL}\n\n"
+    ));
+
+    out.push_str("## Program-Specific Severity Source Of Truth\n\n");
+    if !bounty.rewards.is_empty() {
+        out.push_str("### Rewards\n\n");
+        for reward in &bounty.rewards {
+            out.push_str(&format!("- {}: {}\n", reward.severity, reward.payout));
+        }
+        out.push('\n');
+    }
+    append_optional_section(
+        &mut out,
+        "Custom Severity And Rules From Bounty Page",
+        bounty.severity_section.as_deref(),
+    );
+
+    out.push_str("## Default Code4rena Bounty Severity Baseline\n\n");
+    out.push_str(CODE4RENA_BOUNTY_SEVERITY_RUBRIC);
+    out.push_str("\n\n");
+
+    out.push_str("## Code4rena Bounty Severity Decision Rules\n\n");
+    out.push_str("- Stage 3 must match the finding to the bounty page's custom severity criteria when present.\n");
+    out.push_str("- If the bounty page has no custom severity rule for the finding class, apply the default Code4rena bounty criteria.\n");
+    out.push_str("- Treat custom program exclusions, known issues, previous audit findings, and explicit payout restrictions as mandatory constraints.\n");
+    out.push_str("- Require current exploitability by a non-privileged attacker without leaked credentials or malicious trusted-role behavior.\n");
+    out.push_str("- Mark ambiguous, medium-only, best-practice-only, or weak-evidence findings as `Invalid` or `Needs Review`, not submission-ready.\n");
+    out.push_str("- PoC policy is recorded for later PoC stages only; stage 3 should not require an already-created PoC.\n\n");
+
+    out
+}
+
+fn render_code4rena_severity_rubric_json(bounty: &Code4renaBountyData) -> Result<String> {
+    #[derive(Serialize)]
+    struct Code4renaSeverityRubricJson<'a> {
+        project: &'a str,
+        bounty_url: &'a str,
+        default_criteria_url: &'static str,
+        rewards: &'a [crate::prepare_code::code4rena_bounty::Code4renaReward],
+        custom_severity_section: Option<&'a str>,
+        out_of_scope_section: Option<&'a str>,
+        known_issues_section: Option<&'a str>,
+    }
+
+    serde_json::to_string_pretty(&Code4renaSeverityRubricJson {
+        project: &bounty.project,
+        bounty_url: &bounty.url,
+        default_criteria_url: CODE4RENA_BOUNTY_CRITERIA_URL,
+        rewards: &bounty.rewards,
+        custom_severity_section: bounty.severity_section.as_deref(),
+        out_of_scope_section: bounty.out_of_scope_section.as_deref(),
+        known_issues_section: bounty.known_issues_section.as_deref(),
+    })
+    .map_err(anyhow::Error::from)
+}
+
 fn render_immunefi_severity_rubric_markdown(bounty: &ImmunefiBountyData) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -1698,12 +2067,15 @@ fn should_extract_links_from_source(source: &SourceContent) -> bool {
         source.kind,
         ContextSourceKind::LocalReadme
             | ContextSourceKind::LocalMarkdown
+            | ContextSourceKind::Code4renaBountyPage
             | ContextSourceKind::ImmunefiInformation
             | ContextSourceKind::ImmunefiScope
             | ContextSourceKind::ImmunefiResources
     );
     entry_kind
-        && (source.reason == ENTRY_CONTEXT_REASON || source.reason == IMMUNEFI_BOUNTY_ENTRY_REASON)
+        && (source.reason == ENTRY_CONTEXT_REASON
+            || source.reason == IMMUNEFI_BOUNTY_ENTRY_REASON
+            || source.reason == CODE4RENA_BOUNTY_ENTRY_REASON)
 }
 
 #[derive(Debug, Clone)]
@@ -2181,9 +2553,11 @@ fn github_raw_url(url: &str) -> Option<String> {
         return None;
     }
     let clean = url.split('#').next().unwrap_or(url);
-    let after_host = clean.split("github.com/").nth(1)?;
+    let Some(after_host) = clean.split("github.com/").nth(1) else {
+        return None;
+    };
     let parts = after_host.splitn(5, '/').collect::<Vec<_>>();
-    if parts.len() < 5 || parts[2] != "blob" {
+    if parts.len() < 5 || !matches!(parts[2], "blob" | "raw") {
         return None;
     }
     Some(format!(
@@ -2261,8 +2635,18 @@ async fn generate_scope_txt(
     protocol_root: &Path,
     output_path: &Path,
     sources: &[SourceContent],
+    code4rena_bounty: Option<&Code4renaBountyData>,
     immunefi_bounty: Option<&ImmunefiBountyData>,
 ) -> Result<ScopeFileList> {
+    // Scope-file generation has a strict preference order:
+    // 1. user/protocol supplied scope.txt,
+    // 2. deterministic extraction from trusted docs and structured bounty data,
+    // 3. external explorer/deployment metadata mapping,
+    // 4. fallback to configured code folders only when that is safe.
+    //
+    // For bounties, fallback is intentionally limited. If a page lists direct
+    // explorer assets or direct `.sol` blob links, failing to map them probably
+    // means the repo/subfolder is wrong.
     let source_scope = protocol_root.join("scope.txt");
     if source_scope.exists() {
         info!(
@@ -2315,12 +2699,22 @@ async fn generate_scope_txt(
     } else {
         Vec::new()
     };
+    if matches!(cli.audit_type, AuditType::Code4renaBounty)
+        && let Some(bounty) = code4rena_bounty
+    {
+        let github_scope = code4rena_github_scope_entries(bounty, protocol_root, cli);
+        if !github_scope.is_empty() {
+            source = ScopeFileSource::ExtractedFromBountyScope;
+            extracted.extend(github_scope);
+        }
+    }
     if external_contract_scope_audit {
         let external_scope = resolve_external_contract_scope(
             cli,
             protocol_root,
             output_path,
             sources,
+            code4rena_bounty,
             immunefi_bounty,
         )
         .await?;
@@ -2381,14 +2775,32 @@ async fn generate_scope_txt(
             .map(|asset| format!("{} ({})", asset.label, asset.address))
             .collect::<Vec<_>>()
             .join(", ");
-        anyhow::bail!(
-            "Could not map {} external explorer-linked bounty scope assets to local Solidity files: {}. See {} for the full resolution report. Refusing to fall back to all code folders because Code4rena bounty submissions cost money and scope must be precise.",
+        if matches!(cli.audit_type, AuditType::Code4renaBounty) {
+            anyhow::bail!(
+                "Could not map {} external explorer-linked bounty scope assets to local Solidity files: {}. See {} for the full resolution report. Refusing to fall back to all code folders because Code4rena bounty submissions cost money and scope must be precise.",
+                external_scope_unresolved.len(),
+                preview,
+                external_scope_resolution_report_path(output_path).display()
+            );
+        }
+        warnings.push(format!(
+            "Could not map {} Immunefi external explorer-linked bounty scope assets to local Solidity files: {}. These assets are omitted from generated scoped_files; see {} for the full resolution report.",
             external_scope_unresolved.len(),
             preview,
             external_scope_resolution_report_path(output_path).display()
-        );
+        ));
     }
     if extracted.is_empty() || existing_count == 0 {
+        if matches!(cli.audit_type, AuditType::Code4renaBounty)
+            && code4rena_bounty
+                .map(code4rena_structured_scope_requires_precise_mapping)
+                .unwrap_or(false)
+        {
+            anyhow::bail!(
+                "Could not map Code4rena bounty smart-contract scope assets to local Solidity files. Refusing to fall back to all Solidity files under configured code_folders {:?}. Provide the correct repo/subfolder or scoped_files explicitly.",
+                cli.code_folders
+            );
+        }
         if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
             anyhow::bail!(
                 "Could not map Immunefi Smart Contract scope to local Solidity files. Refusing to fall back to all Solidity files under configured code_folders {:?}. Provide the correct repo/subfolder or scoped_files explicitly.",
@@ -2461,6 +2873,7 @@ fn deterministic_scope_extract(
                 | ContextSourceKind::GithubRaw
                 | ContextSourceKind::WebMarkdown
                 | ContextSourceKind::WebHtml
+                | ContextSourceKind::Code4renaBountyPage
         ) {
             continue;
         }
@@ -2543,15 +2956,232 @@ fn deterministic_bounty_contract_name_scope_extract(
     }
 }
 
+fn code4rena_github_scope_entries(
+    bounty: &Code4renaBountyData,
+    protocol_root: &Path,
+    cli: &Cli,
+) -> Vec<ScopeFileEntry> {
+    // Code4rena scope can link directly to GitHub blob/raw URLs. In single-repo
+    // mode those paths are relative to the cloned repo root; in polyrepo mode
+    // they must be prefixed with the owner-qualified clone folder so `scope.txt`
+    // points at `workspace/<owner-repo>/...` rather than `workspace/...`.
+    let mut entries = Vec::new();
+    for asset in &bounty.scope_assets {
+        let repo_url = github_repo_url_from_scope_url(&asset.url);
+        let matched_repo = repo_url.as_deref().and_then(|repo_url| {
+            cli.resolved_repos
+                .iter()
+                .find(|repo| same_github_repo(repo_url, &repo.repo_url))
+        });
+        let branch_hint = matched_repo
+            .and_then(|repo| repo.branch.as_deref())
+            .or(cli.repo_branch.as_deref());
+        let repo_prefix = if cli.resolved_repos.len() > 1 {
+            matched_repo.map(|repo| repo_slug_from_github_url(&repo.repo_url))
+        } else {
+            None
+        };
+        if let Some(path) = github_blob_scope_path(
+            &asset.url,
+            branch_hint,
+            protocol_root,
+            repo_prefix.as_deref(),
+        ) {
+            entries.push(normalize_scope_path(
+                &path,
+                protocol_root,
+                Some(format!(
+                    "Mapped from Code4rena GitHub scope link `{}`",
+                    asset.label
+                )),
+            ));
+        }
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    entries.dedup_by(|a, b| a.path == b.path);
+    entries
+}
+
+fn github_blob_scope_path(
+    url: &str,
+    branch_hint: Option<&str>,
+    protocol_root: &Path,
+    repo_prefix: Option<&str>,
+) -> Option<String> {
+    // Prefer the candidate that exists locally. This lets slash-named branch
+    // hints produce an exact path while keeping a fallback candidate for error
+    // reporting if the local repo is wrong or not yet populated as expected.
+    let candidates = github_blob_scope_path_candidates(url, branch_hint);
+    let candidates = candidates
+        .into_iter()
+        .map(|path| prefix_scope_path(&path, repo_prefix))
+        .collect::<Vec<_>>();
+    candidates
+        .iter()
+        .find(|path| protocol_root.join(path.trim_start_matches("./")).is_file())
+        .cloned()
+        .or_else(|| candidates.into_iter().next())
+}
+
+fn github_blob_scope_path_candidates(url: &str, branch_hint: Option<&str>) -> Vec<String> {
+    // GitHub blob/raw paths are ambiguous when branches contain slashes. If the
+    // clone stage has resolved a branch hint, strip exactly that branch prefix.
+    // Otherwise generate ordered suffix candidates and let existence checks pick
+    // the right one.
+    let clean = url
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .split('#')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    let Some(after_host) = clean.split("github.com/").nth(1) else {
+        return Vec::new();
+    };
+    let parts = after_host.split('/').collect::<Vec<_>>();
+    if parts.len() < 5 || !matches!(parts[2], "blob" | "raw") {
+        return Vec::new();
+    }
+
+    if let Some(branch) = branch_hint {
+        let branch_parts = branch
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let path_start = 3 + branch_parts.len();
+        if parts.len() > path_start
+            && parts[3..path_start]
+                .iter()
+                .copied()
+                .eq(branch_parts.iter().copied())
+        {
+            let path = parts[path_start..].join("/");
+            if path.ends_with(".sol") {
+                return vec![format!("./{path}")];
+            }
+        }
+    }
+
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+    for path_start in 4..parts.len() {
+        let path = parts[path_start..].join("/");
+        if path.ends_with(".sol") {
+            let candidate = format!("./{path}");
+            if seen.insert(candidate.clone()) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates
+}
+
+fn prefix_scope_path(path: &str, repo_prefix: Option<&str>) -> String {
+    // Polyrepo clone folders are owner-qualified (`org-repo`) to avoid basename
+    // collisions. Prefix only once so pre-prefixed paths remain idempotent.
+    let Some(repo_prefix) = repo_prefix else {
+        return path.to_string();
+    };
+    let repo_prefix = repo_prefix.trim_matches('/');
+    if repo_prefix.is_empty() {
+        return path.to_string();
+    }
+    let raw_path = path.trim_start_matches("./");
+    if raw_path == repo_prefix || raw_path.starts_with(&format!("{repo_prefix}/")) {
+        format!("./{raw_path}")
+    } else {
+        format!("./{repo_prefix}/{raw_path}")
+    }
+}
+
+fn github_repo_url_from_scope_url(url: &str) -> Option<String> {
+    let clean = url
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .split('#')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
+    let after_host = clean.split("github.com/").nth(1)?;
+    let parts = after_host
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() < 2 || matches!(parts[0], "orgs" | "users") {
+        return None;
+    }
+    Some(format!("https://github.com/{}/{}", parts[0], parts[1]))
+}
+
+fn repo_slug_from_github_url(repo_url: &str) -> String {
+    let clean = repo_url
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .split('?')
+        .next()
+        .unwrap_or(repo_url)
+        .split('#')
+        .next()
+        .unwrap_or(repo_url);
+    if let Some(after_host) = clean.split("github.com/").nth(1) {
+        let parts = after_host
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        if parts.len() >= 2 {
+            return sanitize_scope_component(&format!("{}-{}", parts[0], parts[1]));
+        }
+    }
+    sanitize_scope_component(clean.rsplit('/').next().unwrap_or("repo"))
+}
+
+fn sanitize_scope_component(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
+}
+
+fn code4rena_structured_scope_requires_precise_mapping(bounty: &Code4renaBountyData) -> bool {
+    bounty.scope_assets.iter().any(|asset| {
+        let url = clean_external_contract_url(&asset.url);
+        is_explorer_contract_url(&url) || !github_blob_scope_path_candidates(&url, None).is_empty()
+    })
+}
+
 async fn resolve_external_contract_scope(
     cli: &Cli,
     protocol_root: &Path,
     output_path: &Path,
     sources: &[SourceContent],
+    code4rena_bounty: Option<&Code4renaBountyData>,
     immunefi_bounty: Option<&ImmunefiBountyData>,
 ) -> Result<ExternalContractScopeResolution> {
+    // External contract resolution bridges deployed bounty assets back to local
+    // source. It first tries deterministic metadata/name matching, then gives a
+    // bounded Codex worker one structured chance to resolve remaining assets.
+    // Any unresolved explorer-linked asset causes bounty scope generation to
+    // fail closed later in `generate_scope_txt`.
     let mut resolution = ExternalContractScopeResolution::default();
-    resolution.assets = external_contract_scope_assets_for_audit(cli, sources, immunefi_bounty);
+    resolution.assets =
+        external_contract_scope_assets_for_audit(cli, sources, code4rena_bounty, immunefi_bounty);
+    if matches!(cli.audit_type, AuditType::Code4renaBounty)
+        && let Some(bounty) = code4rena_bounty
+    {
+        let page_assets = fetch_code4rena_deployment_page_scope_assets(bounty).await;
+        merge_external_scope_assets(&mut resolution.assets, page_assets);
+    }
     if matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
         && let Some(bounty) = immunefi_bounty
     {
@@ -2625,8 +3255,21 @@ async fn resolve_external_contract_scope(
 fn external_contract_scope_assets_for_audit(
     cli: &Cli,
     sources: &[SourceContent],
+    code4rena_bounty: Option<&Code4renaBountyData>,
     immunefi_bounty: Option<&ImmunefiBountyData>,
 ) -> Vec<ExternalContractScopeAsset> {
+    if matches!(cli.audit_type, AuditType::Code4renaBounty)
+        && let Some(bounty) = code4rena_bounty
+    {
+        let assets = code4rena_external_contract_scope_assets(bounty);
+        if !assets.is_empty() {
+            return assets;
+        }
+        if bounty.has_structured_scope_assets() {
+            return Vec::new();
+        }
+    }
+
     if matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
         && let Some(bounty) = immunefi_bounty
     {
@@ -2640,6 +3283,46 @@ fn external_contract_scope_assets_for_audit(
     }
 
     external_contract_scope_assets_from_sources(sources)
+}
+
+fn code4rena_external_contract_scope_assets(
+    bounty: &Code4renaBountyData,
+) -> Vec<ExternalContractScopeAsset> {
+    let mut assets = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for asset in &bounty.scope_assets {
+        let url = clean_external_contract_url(&asset.url);
+        if !is_explorer_contract_url(&url) {
+            continue;
+        }
+        let Some(address) = contract_address_from_url(&url) else {
+            continue;
+        };
+        let explorer = explorer_host(&url).unwrap_or_else(|| "unknown-explorer".to_string());
+        let key = format!(
+            "{}|{}",
+            explorer.to_ascii_lowercase(),
+            address.to_ascii_lowercase()
+        );
+        if seen.insert(key) {
+            assets.push(ExternalContractScopeAsset {
+                label: asset.label.clone(),
+                url,
+                address,
+                explorer,
+                source_location: bounty.url.clone(),
+            });
+        }
+    }
+
+    assets.sort_by(|a, b| {
+        a.label
+            .cmp(&b.label)
+            .then_with(|| a.address.cmp(&b.address))
+            .then_with(|| a.url.cmp(&b.url))
+    });
+    assets
 }
 
 fn immunefi_external_contract_scope_assets(
@@ -2727,6 +3410,46 @@ async fn fetch_immunefi_deployment_page_scope_assets(
             }
             Err(err) => {
                 warn!("Could not fetch Immunefi deployment scope page {url}: {err:#}");
+            }
+        }
+    }
+    out
+}
+
+async fn fetch_code4rena_deployment_page_scope_assets(
+    bounty: &Code4renaBountyData,
+) -> Vec<ExternalContractScopeAsset> {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .user_agent("ai-agent-audit-code4rena-bounty-scope/0.1")
+        .build()
+    else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for asset in &bounty.scope_assets {
+        if is_explorer_contract_url(&asset.url) {
+            continue;
+        }
+        let url = clean_external_contract_url(&asset.url);
+        if !is_remote_link(&url) || !likely_deployment_scope_page(&url, Some(asset.label.as_str()))
+        {
+            continue;
+        }
+        match fetch_deployment_scope_page_text(&client, &url).await {
+            Ok(text) => {
+                let production_text = production_scope_text(&text);
+                let parsed = external_contract_assets_from_text(&production_text, &url);
+                if parsed.is_empty() {
+                    debug!(
+                        "No explorer contract links extracted from Code4rena deployment page {url}"
+                    );
+                }
+                out.extend(parsed);
+            }
+            Err(err) => {
+                warn!("Could not fetch Code4rena deployment scope page {url}: {err:#}");
             }
         }
     }
@@ -2937,6 +3660,7 @@ fn scope_text_source_kind(kind: &ContextSourceKind) -> bool {
             | ContextSourceKind::GithubRaw
             | ContextSourceKind::WebMarkdown
             | ContextSourceKind::WebHtml
+            | ContextSourceKind::Code4renaBountyPage
             | ContextSourceKind::ImmunefiInformation
             | ContextSourceKind::ImmunefiScope
             | ContextSourceKind::ImmunefiResources
@@ -3615,7 +4339,12 @@ fn push_name_candidate_variants(candidates: &mut Vec<String>, raw: &str) {
     push_plural_name_candidate(candidates, &cleaned);
 
     for delimiter in [" - ", ":"] {
-        if let Some((_, suffix)) = cleaned.rsplit_once(delimiter) {
+        if let Some((prefix, suffix)) = cleaned.rsplit_once(delimiter) {
+            let prefix = clean_name_candidate_for_matching(prefix);
+            if useful_external_name_candidate(&prefix) {
+                push_plural_name_candidate(candidates, &prefix);
+                candidates.push(prefix);
+            }
             let suffix = clean_name_candidate_for_matching(suffix);
             if useful_external_name_candidate(&suffix) {
                 push_plural_name_candidate(candidates, &suffix);
@@ -3897,6 +4626,7 @@ fn bounty_contract_names_from_scope_sections(sources: &[SourceContent]) -> Vec<S
                 | ContextSourceKind::GithubRaw
                 | ContextSourceKind::WebMarkdown
                 | ContextSourceKind::WebHtml
+                | ContextSourceKind::Code4renaBountyPage
         ) {
             continue;
         }
@@ -4244,8 +4974,10 @@ fn fallback_scope_from_code_folders(cli: &Cli, protocol_root: &Path) -> Vec<Scop
 }
 
 fn scope_fallback_code_folders(cli: &Cli) -> Vec<String> {
-    if matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
-        && cli.code_folders == vec!["src".to_string()]
+    if matches!(
+        cli.audit_type,
+        AuditType::ImmunefiBugBounty | AuditType::Code4renaBounty
+    ) && cli.code_folders == vec!["src".to_string()]
         && !cli.repo_tree_paths.is_empty()
     {
         let mut folders = cli
@@ -4951,6 +5683,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli_args::parse::ResolvedRepoConfig;
+    use crate::prepare_code::code4rena_bounty::{Code4renaBountyData, Code4renaScopeAsset};
     use crate::prepare_code::immunefi::{
         ImmunefiAsset, ImmunefiBountyData, ImmunefiBountyUrls, ImmunefiTabCapture, ImmunefiTabKind,
     };
@@ -5165,6 +5899,46 @@ scoped_files: "scope.txt"
         assert!(should_generate_context(&cli));
     }
 
+    #[test]
+    fn context_preamble_is_audit_type_specific() {
+        let code4rena_bounty: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+audit_type: "Code4renaBounty"
+"#,
+        )
+        .unwrap();
+        let immunefi_bounty: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+"#,
+        )
+        .unwrap();
+        let competition: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+audit_type: "Code4rena"
+"#,
+        )
+        .unwrap();
+
+        let c4_bounty = context_generation_preamble(&code4rena_bounty);
+        assert!(c4_bounty.contains("configured Code4rena bounty page"));
+        assert!(c4_bounty.contains("There is no V12 stage"));
+        assert!(!c4_bounty.contains("Immunefi"));
+
+        let immunefi = context_generation_preamble(&immunefi_bounty);
+        assert!(immunefi.contains("Immunefi smart-contract bug bounties"));
+        assert!(immunefi.contains("Ignore Web & App"));
+        assert!(!immunefi.contains("Code4rena"));
+
+        let c4_competition = context_generation_preamble(&competition);
+        assert!(c4_competition.contains("V12"));
+        assert!(c4_competition.contains("competition-only"));
+    }
+
     #[tokio::test]
     async fn immunefi_cached_context_reuses_artifacts_without_fetching() {
         let tmp = tempfile::tempdir().unwrap();
@@ -5322,7 +6096,7 @@ code_folders:
         }];
         let output_path = tmp.path().join("generated-scope.txt");
 
-        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &sources, None)
+        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &sources, None, None)
             .await
             .unwrap();
 
@@ -5359,7 +6133,7 @@ code_folders:
         }];
         let output_path = tmp.path().join("generated-scope.txt");
 
-        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &sources, None)
+        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &sources, None, None)
             .await
             .unwrap();
 
@@ -5368,6 +6142,176 @@ code_folders:
             fs::read_to_string(output_path).unwrap(),
             "./contracts/Token.sol\n./contracts/core/Vault.sol\n"
         );
+    }
+
+    #[tokio::test]
+    async fn code4rena_repo_level_scope_can_fall_back_to_code_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("contracts")).unwrap();
+        fs::write(tmp.path().join("contracts/Vault.sol"), "").unwrap();
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+audit_type: "Code4renaBounty"
+code_folders:
+  - "contracts"
+"#,
+        )
+        .unwrap();
+        let bounty = Code4renaBountyData {
+            input_url: "https://code4rena.com/bounties/example".to_string(),
+            url: "https://code4rena.com/bounties/example".to_string(),
+            slug: "example".to_string(),
+            project: "Example".to_string(),
+            summary: None,
+            max_bounty: None,
+            rewards: Vec::new(),
+            links: Vec::new(),
+            scope_assets: vec![Code4renaScopeAsset {
+                label: "Smart contract repo".to_string(),
+                url: "https://github.com/example/protocol".to_string(),
+                source_section: "Smart Contracts in Scope".to_string(),
+            }],
+            severity_section: None,
+            rules_section: None,
+            out_of_scope_section: None,
+            known_issues_section: None,
+            previous_audits_section: None,
+            full_text: String::new(),
+        };
+        let output_path = tmp.path().join("generated-scope.txt");
+
+        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &[], Some(&bounty), None)
+            .await
+            .unwrap();
+
+        assert!(matches!(list.source, ScopeFileSource::FallbackCodeFolders));
+        assert_eq!(
+            fs::read_to_string(output_path).unwrap(),
+            "./contracts/Vault.sol\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn code4rena_blob_scope_uses_full_branch_hint_for_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::write(tmp.path().join("src/Foo.sol"), "").unwrap();
+        let mut cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+audit_type: "Code4renaBounty"
+code_folders:
+  - "src"
+"#,
+        )
+        .unwrap();
+        cli.repo_branch = Some("release/v2".to_string());
+        let bounty = Code4renaBountyData {
+            input_url: "https://code4rena.com/bounties/example".to_string(),
+            url: "https://code4rena.com/bounties/example".to_string(),
+            slug: "example".to_string(),
+            project: "Example".to_string(),
+            summary: None,
+            max_bounty: None,
+            rewards: Vec::new(),
+            links: Vec::new(),
+            scope_assets: vec![Code4renaScopeAsset {
+                label: "Foo".to_string(),
+                url: "https://github.com/example/protocol/blob/release/v2/src/Foo.sol".to_string(),
+                source_section: "Smart Contracts in Scope".to_string(),
+            }],
+            severity_section: None,
+            rules_section: None,
+            out_of_scope_section: None,
+            known_issues_section: None,
+            previous_audits_section: None,
+            full_text: String::new(),
+        };
+        let output_path = tmp.path().join("generated-scope.txt");
+
+        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &[], Some(&bounty), None)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            list.source,
+            ScopeFileSource::ExtractedFromBountyScope
+        ));
+        assert_eq!(fs::read_to_string(output_path).unwrap(), "./src/Foo.sol\n");
+    }
+
+    #[tokio::test]
+    async fn code4rena_polyrepo_blob_scope_is_prefixed_with_member_repo_slug() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("alpha-repo-a/src")).unwrap();
+        fs::create_dir_all(tmp.path().join("beta-repo-b/contracts")).unwrap();
+        fs::write(tmp.path().join("alpha-repo-a/src/Foo.sol"), "").unwrap();
+        fs::write(tmp.path().join("beta-repo-b/contracts/Bar.sol"), "").unwrap();
+        let mut cli: Cli = serde_yaml::from_str(
+            r#"
+audit_type: "Code4renaBounty"
+code4rena_bounty: "https://code4rena.com/bounties/example"
+code_folders:
+  - "src"
+"#,
+        )
+        .unwrap();
+        cli.resolved_repos = vec![
+            ResolvedRepoConfig {
+                repo_url: "https://github.com/alpha/repo-a".to_string(),
+                branch: Some("main".to_string()),
+                tree_paths: Vec::new(),
+            },
+            ResolvedRepoConfig {
+                repo_url: "https://github.com/beta/repo-b".to_string(),
+                branch: Some("main".to_string()),
+                tree_paths: Vec::new(),
+            },
+        ];
+        let bounty = Code4renaBountyData {
+            input_url: "https://code4rena.com/bounties/example".to_string(),
+            url: "https://code4rena.com/bounties/example".to_string(),
+            slug: "example".to_string(),
+            project: "Example".to_string(),
+            summary: None,
+            max_bounty: None,
+            rewards: Vec::new(),
+            links: Vec::new(),
+            scope_assets: vec![
+                Code4renaScopeAsset {
+                    label: "Foo".to_string(),
+                    url: "https://github.com/alpha/repo-a/blob/main/src/Foo.sol".to_string(),
+                    source_section: "Smart Contracts in Scope".to_string(),
+                },
+                Code4renaScopeAsset {
+                    label: "Bar".to_string(),
+                    url: "https://github.com/beta/repo-b/blob/main/contracts/Bar.sol".to_string(),
+                    source_section: "Smart Contracts in Scope".to_string(),
+                },
+            ],
+            severity_section: None,
+            rules_section: None,
+            out_of_scope_section: None,
+            known_issues_section: None,
+            previous_audits_section: None,
+            full_text: String::new(),
+        };
+        let output_path = tmp.path().join("generated-scope.txt");
+
+        let list = generate_scope_txt(&cli, tmp.path(), &output_path, &[], Some(&bounty), None)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            list.source,
+            ScopeFileSource::ExtractedFromBountyScope
+        ));
+        assert_eq!(
+            fs::read_to_string(output_path).unwrap(),
+            "./alpha-repo-a/src/Foo.sol\n./beta-repo-b/contracts/Bar.sol\n"
+        );
+        assert!(list.files.iter().all(|entry| entry.exists));
     }
 
     #[test]
@@ -5715,6 +6659,32 @@ Reference deployment: https://basescan.org/address/{address}
     }
 
     #[test]
+    fn external_asset_resolution_matches_chain_suffixed_display_label_prefix() {
+        let asset = ExternalContractScopeAsset {
+            label: "SubgraphService - Arbitrum One".to_string(),
+            url: "https://arbiscan.io/address/0xb2bb92d0de618878e438b55d5846cfecd9301105"
+                .to_string(),
+            address: "0xb2bb92d0de618878e438b55d5846cfecd9301105".to_string(),
+            explorer: "arbiscan.io".to_string(),
+            source_location: "https://immunefi.com/bug-bounty/thegraph/scope/".to_string(),
+        };
+        let definitions = vec![SolidityDefinition {
+            name: "SubgraphService".to_string(),
+            path:
+                "./graphprotocol-contracts/packages/subgraph-service/contracts/SubgraphService.sol"
+                    .to_string(),
+            file_stem: "SubgraphService".to_string(),
+            normalized_name: normalize_identifier("SubgraphService"),
+            normalized_file_stem: normalize_identifier("SubgraphService"),
+            tokens: vec!["service".to_string(), "subgraph".to_string()],
+        }];
+
+        let record = deterministic_external_asset_resolution(&asset, None, &definitions).unwrap();
+
+        assert_eq!(record.paths, vec![definitions[0].path.clone()]);
+    }
+
+    #[test]
     fn scanner_metadata_parser_extracts_contract_names_source_files_and_implementation() {
         let implementation = "0x1111111111111111111111111111111111111111";
         let html = format!(
@@ -5954,7 +6924,10 @@ immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
             external_contract_scope_assets_from_sources(&sources).len(),
             1
         );
-        assert!(external_contract_scope_assets_for_audit(&cli, &sources, Some(&bounty)).is_empty());
+        assert!(
+            external_contract_scope_assets_for_audit(&cli, &sources, None, Some(&bounty))
+                .is_empty()
+        );
     }
 
     #[test]

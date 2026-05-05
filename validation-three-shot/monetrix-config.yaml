@@ -31,8 +31,8 @@ paths:
 # If V12 prior findings are embedded in a *-scope.md file for a contest, omit
 # the standalone {{SOURCE_ROOT}}/v12-findings.md entry.
 context_docs:
-  - audit-docs/monetrix-docs.md
-  - audit-docs/monetrix-scope.md
+  - audit-docs/monetrix/monetrix-docs.md
+  - audit-docs/monetrix/monetrix-scope.md
   - "{{SOURCE_ROOT}}/README.md"
   - "{{THREE_SHOT_ROOT}}/v12-checklist.md"
 

@@ -1,0 +1,8 @@
+{
+  "benchmark": "ens-contracts",
+  "finding_id": "C-3",
+  "status": "Ready",
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ens-contracts-run-001/C-3-Expired-eth-name-re-registration-without-resolver.md",
+  "review_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/ens-contracts-run-001/C-3-Expired-eth-name-re-registration-without-resolver.md",
+  "notes": "Report is submission-ready without edits. Severity and Bounty Criteria Match align to the Critical ENS Immunefi impact row for unintended alteration of what the NFT represents. Affected code is in scope, the attacker path is unprivileged, and the embedded PoC matches the verified top-level test content. PoC command passed locally: bun run test test/ExpiredNameNoResolverReRegistrationPoC.test.ts."
+}
