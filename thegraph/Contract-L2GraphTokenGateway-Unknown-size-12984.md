@@ -316,73 +316,39 @@ contract L2GraphTokenGateway is GraphTokenGateway, L2ArbitrumMessenger, Reentran
  ------------ END OF MAIN TARGET CONTRACT ------------ 
 
  ------------ ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES ------------ 
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-pragma solidity >=0.6.0 <0.8.0;
-import "../proxy/Initializable.sol";
+pragma solidity ^0.7.6;
+
+// TODO: Re-enable and fix issues when publishing a new version
+// solhint-disable use-natspec
 
 /**
- * @dev Contract module that helps prevent reentrant calls to a function.
- *
- * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
- * available, which can be applied to functions to make sure there are no nested
- * (reentrant) calls to them.
- *
- * Note that because there is a single `nonReentrant` guard, functions marked as
- * `nonReentrant` may not call one another. This can be worked around by making
- * those functions `private`, and then adding `external` `nonReentrant` entry
- * points to them.
- *
- * TIP: If you would like to learn more about reentrancy and alternative ways
- * to protect against it, check out our blog post
- * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
+ * @title ArbSys Mock Contract
+ * @dev This is a mock implementation of the ArbSys precompiled contract used in Arbitrum
+ * It's used for testing the L2GraphTokenGateway contract
  */
-abstract contract ReentrancyGuardUpgradeable is Initializable {
-    // Booleans are more expensive than uint256 or any type that takes up a full
-    // word because each write operation emits an extra SLOAD to first read the
-    // slot's contents, replace the bits taken up by the boolean, and then write
-    // back. This is the compiler's defense against contract upgrades and
-    // pointer aliasing, and it cannot be disabled.
-
-    // The values being non-zero value makes deployment a bit more expensive,
-    // but in exchange the refund on every call to nonReentrant will be lower in
-    // amount. Since refunds are capped to a percentage of the total
-    // transaction's gas, it is best to keep them low in cases like this one, to
-    // increase the likelihood of the full refund coming into effect.
-    uint256 private constant _NOT_ENTERED = 1;
-    uint256 private constant _ENTERED = 2;
-
-    uint256 private _status;
-
-    function __ReentrancyGuard_init() internal initializer {
-        __ReentrancyGuard_init_unchained();
-    }
-
-    function __ReentrancyGuard_init_unchained() internal initializer {
-        _status = _NOT_ENTERED;
-    }
+contract ArbSysMock {
+    /**
+     * @dev Emitted when a transaction is sent from L2 to L1
+     * @param from Address sending the transaction on L2
+     * @param to Address receiving the transaction on L1
+     * @param id Unique identifier for the L2-to-L1 transaction
+     * @param data Transaction data
+     */
+    event L2ToL1Tx(address indexed from, address indexed to, uint256 indexed id, bytes data);
 
     /**
-     * @dev Prevents a contract from calling itself, directly or indirectly.
-     * Calling a `nonReentrant` function from another `nonReentrant`
-     * function is not supported. It is possible to prevent this from happening
-     * by making the `nonReentrant` function external, and make it call a
-     * `private` function that does the actual work.
+     * @notice Send a transaction to L1
+     * @param destination The address on L1 to send the transaction to
+     * @param calldataForL1 The calldata for the transaction
+     * @return A unique identifier for this L2-to-L1 transaction
      */
-    modifier nonReentrant() {
-        // On the first call to nonReentrant, _notEntered will be true
-        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
-
-        // Any calls to nonReentrant after this point will fail
-        _status = _ENTERED;
-
-        _;
-
-        // By storing the original value once again, a refund is triggered (see
-        // https://eips.ethereum.org/EIPS/eip-2200)
-        _status = _NOT_ENTERED;
+    function sendTxToL1(address destination, bytes calldata calldataForL1) external returns (uint256) {
+        uint256 id = 1; // Always return 1 for testing
+        emit L2ToL1Tx(msg.sender, destination, id, calldataForL1);
+        return id;
     }
-    uint256[49] private __gap;
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -531,41 +497,6 @@ abstract contract L2ArbitrumMessenger {
 pragma solidity ^0.7.6;
 
 // TODO: Re-enable and fix issues when publishing a new version
-// solhint-disable use-natspec
-
-/**
- * @title ArbSys Mock Contract
- * @dev This is a mock implementation of the ArbSys precompiled contract used in Arbitrum
- * It's used for testing the L2GraphTokenGateway contract
- */
-contract ArbSysMock {
-    /**
-     * @dev Emitted when a transaction is sent from L2 to L1
-     * @param from Address sending the transaction on L2
-     * @param to Address receiving the transaction on L1
-     * @param id Unique identifier for the L2-to-L1 transaction
-     * @param data Transaction data
-     */
-    event L2ToL1Tx(address indexed from, address indexed to, uint256 indexed id, bytes data);
-
-    /**
-     * @notice Send a transaction to L1
-     * @param destination The address on L1 to send the transaction to
-     * @param calldataForL1 The calldata for the transaction
-     * @return A unique identifier for this L2-to-L1 transaction
-     */
-    function sendTxToL1(address destination, bytes calldata calldataForL1) external returns (uint256) {
-        uint256 id = 1; // Always return 1 for testing
-        emit L2ToL1Tx(msg.sender, destination, id, calldataForL1);
-        return id;
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-pragma solidity ^0.7.6;
-
-// TODO: Re-enable and fix issues when publishing a new version
 // solhint-disable gas-indexed-events
 
 import { GraphTokenUpgradeable } from "./GraphTokenUpgradeable.sol";
@@ -671,222 +602,73 @@ contract L2GraphToken is GraphTokenUpgradeable, IArbToken {
     }
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: MIT
 
-pragma solidity ^0.7.6;
-
-// TODO: Re-enable and fix issues when publishing a new version
-// solhint-disable gas-increment-by-one, gas-small-strings, gas-strict-inequalities
-// solhint-disable named-parameters-mapping
-
-import { ERC20BurnableUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20BurnableUpgradeable.sol";
-import { ECDSAUpgradeable } from "@openzeppelin/contracts-upgradeable/cryptography/ECDSAUpgradeable.sol";
-
-import { GraphUpgradeable } from "../../upgrades/GraphUpgradeable.sol";
-import { Governed } from "../../governance/Governed.sol";
+pragma solidity >=0.6.0 <0.8.0;
+import "../proxy/Initializable.sol";
 
 /**
- * @title GraphTokenUpgradeable contract
- * @author Edge & Node
- * @notice This is the implementation of the ERC20 Graph Token.
- * The implementation exposes a permit() function to allow for a spender to send a signed message
- * and approve funds to a spender following EIP2612 to make integration with other contracts easier.
+ * @dev Contract module that helps prevent reentrant calls to a function.
  *
- * The token is initially owned by the deployer address that can mint tokens to create the initial
- * distribution. For convenience, an initial supply can be passed in the constructor that will be
- * assigned to the deployer.
+ * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
+ * available, which can be applied to functions to make sure there are no nested
+ * (reentrant) calls to them.
  *
- * The governor can add contracts allowed to mint indexing rewards.
+ * Note that because there is a single `nonReentrant` guard, functions marked as
+ * `nonReentrant` may not call one another. This can be worked around by making
+ * those functions `private`, and then adding `external` `nonReentrant` entry
+ * points to them.
  *
- * Note this is an exact copy of the original GraphToken contract, but using
- * initializer functions and upgradeable OpenZeppelin contracts instead of
- * the original's constructor + non-upgradeable approach.
+ * TIP: If you would like to learn more about reentrancy and alternative ways
+ * to protect against it, check out our blog post
+ * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
  */
-abstract contract GraphTokenUpgradeable is GraphUpgradeable, Governed, ERC20BurnableUpgradeable {
-    // -- EIP712 --
-    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md#definition-of-domainseparator
+abstract contract ReentrancyGuardUpgradeable is Initializable {
+    // Booleans are more expensive than uint256 or any type that takes up a full
+    // word because each write operation emits an extra SLOAD to first read the
+    // slot's contents, replace the bits taken up by the boolean, and then write
+    // back. This is the compiler's defense against contract upgrades and
+    // pointer aliasing, and it cannot be disabled.
 
-    /// @dev Hash of the EIP-712 Domain type
-    bytes32 private immutable DOMAIN_TYPE_HASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)");
-    /// @dev Hash of the EIP-712 Domain name
-    bytes32 private immutable DOMAIN_NAME_HASH = keccak256("Graph Token");
-    /// @dev Hash of the EIP-712 Domain version
-    bytes32 private immutable DOMAIN_VERSION_HASH = keccak256("0");
-    /// @dev EIP-712 Domain salt
-    bytes32 private immutable DOMAIN_SALT = 0xe33842a7acd1d5a1d28f25a931703e5605152dc48d64dc4716efdae1f5659591; // Randomly generated salt
-    /// @dev Hash of the EIP-712 permit type
-    bytes32 private immutable PERMIT_TYPEHASH =
-        keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    // The values being non-zero value makes deployment a bit more expensive,
+    // but in exchange the refund on every call to nonReentrant will be lower in
+    // amount. Since refunds are capped to a percentage of the total
+    // transaction's gas, it is best to keep them low in cases like this one, to
+    // increase the likelihood of the full refund coming into effect.
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
 
-    // -- State --
+    uint256 private _status;
 
-    /// @dev EIP-712 Domain separator
-    bytes32 private DOMAIN_SEPARATOR; // solhint-disable-line var-name-mixedcase
-    /// @dev Addresses for which this mapping is true are allowed to mint tokens
-    mapping(address => bool) private _minters;
-    /// @notice Nonces for permit signatures for each token holder
-    mapping(address => uint256) public nonces;
-    /// @dev Storage gap added in case we need to add state variables to this contract
-    uint256[47] private __gap;
+    function __ReentrancyGuard_init() internal initializer {
+        __ReentrancyGuard_init_unchained();
+    }
 
-    // -- Events --
+    function __ReentrancyGuard_init_unchained() internal initializer {
+        _status = _NOT_ENTERED;
+    }
 
     /**
-     * @notice Emitted when a new minter is added
-     * @param account Address of the minter that was added
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and make it call a
+     * `private` function that does the actual work.
      */
-    event MinterAdded(address indexed account);
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
 
-    /**
-     * @notice Emitted when a minter is removed
-     * @param account Address of the minter that was removed
-     */
-    event MinterRemoved(address indexed account);
+        // Any calls to nonReentrant after this point will fail
+        _status = _ENTERED;
 
-    /// @dev Reverts if the caller is not an authorized minter
-    modifier onlyMinter() {
-        require(isMinter(msg.sender), "Only minter can call");
         _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _status = _NOT_ENTERED;
     }
-
-    /**
-     * @notice Approve token allowance by validating a message signed by the holder.
-     * @param _owner Address of the token holder
-     * @param _spender Address of the approved spender
-     * @param _value Amount of tokens to approve the spender
-     * @param _deadline Expiration time of the signed permit (if zero, the permit will never expire, so use with caution)
-     * @param _v Signature recovery id
-     * @param _r Signature r value
-     * @param _s Signature s value
-     */
-    function permit(
-        address _owner,
-        address _spender,
-        uint256 _value,
-        uint256 _deadline,
-        uint8 _v,
-        bytes32 _r,
-        bytes32 _s
-    ) external {
-        require(_deadline == 0 || block.timestamp <= _deadline, "GRT: expired permit");
-        bytes32 digest = keccak256(
-            abi.encodePacked(
-                "\x19\x01",
-                DOMAIN_SEPARATOR,
-                keccak256(abi.encode(PERMIT_TYPEHASH, _owner, _spender, _value, nonces[_owner], _deadline))
-            )
-        );
-
-        address recoveredAddress = ECDSAUpgradeable.recover(digest, _v, _r, _s);
-        require(_owner == recoveredAddress, "GRT: invalid permit");
-
-        nonces[_owner] = nonces[_owner] + 1;
-        _approve(_owner, _spender, _value);
-    }
-
-    /**
-     * @notice Add a new minter.
-     * @param _account Address of the minter
-     */
-    function addMinter(address _account) external onlyGovernor {
-        require(_account != address(0), "INVALID_MINTER");
-        _addMinter(_account);
-    }
-
-    /**
-     * @notice Remove a minter.
-     * @param _account Address of the minter
-     */
-    function removeMinter(address _account) external onlyGovernor {
-        require(isMinter(_account), "NOT_A_MINTER");
-        _removeMinter(_account);
-    }
-
-    /**
-     * @notice Renounce being a minter.
-     */
-    function renounceMinter() external {
-        require(isMinter(msg.sender), "NOT_A_MINTER");
-        _removeMinter(msg.sender);
-    }
-
-    /**
-     * @notice Mint new tokens.
-     * @param _to Address to send the newly minted tokens
-     * @param _amount Amount of tokens to mint
-     */
-    function mint(address _to, uint256 _amount) external onlyMinter {
-        _mint(_to, _amount);
-    }
-
-    /**
-     * @notice Return if the `_account` is a minter or not.
-     * @param _account Address to check
-     * @return True if the `_account` is minter
-     */
-    function isMinter(address _account) public view returns (bool) {
-        return _minters[_account];
-    }
-
-    /**
-     * @notice Graph Token Contract initializer.
-     * @param _owner Owner of this contract, who will hold the initial supply and will be a minter
-     * @param _initialSupply Initial supply of GRT
-     */
-    function _initialize(address _owner, uint256 _initialSupply) internal {
-        __ERC20_init("Graph Token", "GRT");
-        Governed._initialize(_owner);
-
-        // The Governor has the initial supply of tokens
-        _mint(_owner, _initialSupply);
-
-        // The Governor is the default minter
-        _addMinter(_owner);
-
-        // EIP-712 domain separator
-        DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                DOMAIN_TYPE_HASH,
-                DOMAIN_NAME_HASH,
-                DOMAIN_VERSION_HASH,
-                _getChainID(),
-                address(this),
-                DOMAIN_SALT
-            )
-        );
-    }
-
-    /**
-     * @notice Add a new minter.
-     * @param _account Address of the minter
-     */
-    function _addMinter(address _account) private {
-        _minters[_account] = true;
-        emit MinterAdded(_account);
-    }
-
-    /**
-     * @notice Remove a minter.
-     * @param _account Address of the minter
-     */
-    function _removeMinter(address _account) private {
-        _minters[_account] = false;
-        emit MinterRemoved(_account);
-    }
-
-    /**
-     * @notice Get the running network chain ID.
-     * @return The chain ID
-     */
-    function _getChainID() private pure returns (uint256) {
-        uint256 id;
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            id := chainid()
-        }
-        return id;
-    }
+    uint256[49] private __gap;
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -1188,6 +970,224 @@ abstract contract GraphDirectory {
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+pragma solidity ^0.7.6;
+
+// TODO: Re-enable and fix issues when publishing a new version
+// solhint-disable gas-increment-by-one, gas-small-strings, gas-strict-inequalities
+// solhint-disable named-parameters-mapping
+
+import { ERC20BurnableUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20BurnableUpgradeable.sol";
+import { ECDSAUpgradeable } from "@openzeppelin/contracts-upgradeable/cryptography/ECDSAUpgradeable.sol";
+
+import { GraphUpgradeable } from "../../upgrades/GraphUpgradeable.sol";
+import { Governed } from "../../governance/Governed.sol";
+
+/**
+ * @title GraphTokenUpgradeable contract
+ * @author Edge & Node
+ * @notice This is the implementation of the ERC20 Graph Token.
+ * The implementation exposes a permit() function to allow for a spender to send a signed message
+ * and approve funds to a spender following EIP2612 to make integration with other contracts easier.
+ *
+ * The token is initially owned by the deployer address that can mint tokens to create the initial
+ * distribution. For convenience, an initial supply can be passed in the constructor that will be
+ * assigned to the deployer.
+ *
+ * The governor can add contracts allowed to mint indexing rewards.
+ *
+ * Note this is an exact copy of the original GraphToken contract, but using
+ * initializer functions and upgradeable OpenZeppelin contracts instead of
+ * the original's constructor + non-upgradeable approach.
+ */
+abstract contract GraphTokenUpgradeable is GraphUpgradeable, Governed, ERC20BurnableUpgradeable {
+    // -- EIP712 --
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md#definition-of-domainseparator
+
+    /// @dev Hash of the EIP-712 Domain type
+    bytes32 private immutable DOMAIN_TYPE_HASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)");
+    /// @dev Hash of the EIP-712 Domain name
+    bytes32 private immutable DOMAIN_NAME_HASH = keccak256("Graph Token");
+    /// @dev Hash of the EIP-712 Domain version
+    bytes32 private immutable DOMAIN_VERSION_HASH = keccak256("0");
+    /// @dev EIP-712 Domain salt
+    bytes32 private immutable DOMAIN_SALT = 0xe33842a7acd1d5a1d28f25a931703e5605152dc48d64dc4716efdae1f5659591; // Randomly generated salt
+    /// @dev Hash of the EIP-712 permit type
+    bytes32 private immutable PERMIT_TYPEHASH =
+        keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+
+    // -- State --
+
+    /// @dev EIP-712 Domain separator
+    bytes32 private DOMAIN_SEPARATOR; // solhint-disable-line var-name-mixedcase
+    /// @dev Addresses for which this mapping is true are allowed to mint tokens
+    mapping(address => bool) private _minters;
+    /// @notice Nonces for permit signatures for each token holder
+    mapping(address => uint256) public nonces;
+    /// @dev Storage gap added in case we need to add state variables to this contract
+    uint256[47] private __gap;
+
+    // -- Events --
+
+    /**
+     * @notice Emitted when a new minter is added
+     * @param account Address of the minter that was added
+     */
+    event MinterAdded(address indexed account);
+
+    /**
+     * @notice Emitted when a minter is removed
+     * @param account Address of the minter that was removed
+     */
+    event MinterRemoved(address indexed account);
+
+    /// @dev Reverts if the caller is not an authorized minter
+    modifier onlyMinter() {
+        require(isMinter(msg.sender), "Only minter can call");
+        _;
+    }
+
+    /**
+     * @notice Approve token allowance by validating a message signed by the holder.
+     * @param _owner Address of the token holder
+     * @param _spender Address of the approved spender
+     * @param _value Amount of tokens to approve the spender
+     * @param _deadline Expiration time of the signed permit (if zero, the permit will never expire, so use with caution)
+     * @param _v Signature recovery id
+     * @param _r Signature r value
+     * @param _s Signature s value
+     */
+    function permit(
+        address _owner,
+        address _spender,
+        uint256 _value,
+        uint256 _deadline,
+        uint8 _v,
+        bytes32 _r,
+        bytes32 _s
+    ) external {
+        require(_deadline == 0 || block.timestamp <= _deadline, "GRT: expired permit");
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                DOMAIN_SEPARATOR,
+                keccak256(abi.encode(PERMIT_TYPEHASH, _owner, _spender, _value, nonces[_owner], _deadline))
+            )
+        );
+
+        address recoveredAddress = ECDSAUpgradeable.recover(digest, _v, _r, _s);
+        require(_owner == recoveredAddress, "GRT: invalid permit");
+
+        nonces[_owner] = nonces[_owner] + 1;
+        _approve(_owner, _spender, _value);
+    }
+
+    /**
+     * @notice Add a new minter.
+     * @param _account Address of the minter
+     */
+    function addMinter(address _account) external onlyGovernor {
+        require(_account != address(0), "INVALID_MINTER");
+        _addMinter(_account);
+    }
+
+    /**
+     * @notice Remove a minter.
+     * @param _account Address of the minter
+     */
+    function removeMinter(address _account) external onlyGovernor {
+        require(isMinter(_account), "NOT_A_MINTER");
+        _removeMinter(_account);
+    }
+
+    /**
+     * @notice Renounce being a minter.
+     */
+    function renounceMinter() external {
+        require(isMinter(msg.sender), "NOT_A_MINTER");
+        _removeMinter(msg.sender);
+    }
+
+    /**
+     * @notice Mint new tokens.
+     * @param _to Address to send the newly minted tokens
+     * @param _amount Amount of tokens to mint
+     */
+    function mint(address _to, uint256 _amount) external onlyMinter {
+        _mint(_to, _amount);
+    }
+
+    /**
+     * @notice Return if the `_account` is a minter or not.
+     * @param _account Address to check
+     * @return True if the `_account` is minter
+     */
+    function isMinter(address _account) public view returns (bool) {
+        return _minters[_account];
+    }
+
+    /**
+     * @notice Graph Token Contract initializer.
+     * @param _owner Owner of this contract, who will hold the initial supply and will be a minter
+     * @param _initialSupply Initial supply of GRT
+     */
+    function _initialize(address _owner, uint256 _initialSupply) internal {
+        __ERC20_init("Graph Token", "GRT");
+        Governed._initialize(_owner);
+
+        // The Governor has the initial supply of tokens
+        _mint(_owner, _initialSupply);
+
+        // The Governor is the default minter
+        _addMinter(_owner);
+
+        // EIP-712 domain separator
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                DOMAIN_TYPE_HASH,
+                DOMAIN_NAME_HASH,
+                DOMAIN_VERSION_HASH,
+                _getChainID(),
+                address(this),
+                DOMAIN_SALT
+            )
+        );
+    }
+
+    /**
+     * @notice Add a new minter.
+     * @param _account Address of the minter
+     */
+    function _addMinter(address _account) private {
+        _minters[_account] = true;
+        emit MinterAdded(_account);
+    }
+
+    /**
+     * @notice Remove a minter.
+     * @param _account Address of the minter
+     */
+    function _removeMinter(address _account) private {
+        _minters[_account] = false;
+        emit MinterRemoved(_account);
+    }
+
+    /**
+     * @notice Get the running network chain ID.
+     * @return The chain ID
+     */
+    function _getChainID() private pure returns (uint256) {
+        uint256 id;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            id := chainid()
+        }
+        return id;
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 pragma solidity ^0.7.6 || 0.8.27 || 0.8.33;
 
 // TODO: Re-enable and fix issues when publishing a new version
@@ -1348,57 +1348,6 @@ abstract contract GraphUpgradeable {
     }
 }
 
-// SPDX-License-Identifier: Apache-2.0
-
-/*
- * Copyright 2019-2021, Offchain Labs, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * Originally copied from:
- * https://github.com/OffchainLabs/arbitrum/tree/84e64dee6ee82adbf8ec34fd4b86c207a61d9007/packages/arb-bridge-eth
- *
- * MODIFIED from Offchain Labs' implementation:
- * - Changed solidity version to 0.7.3 (pablo@edgeandnode.com)
- *
- */
-
-pragma solidity ^0.7.3;
-
-// TODO: Re-enable and fix issues when publishing a new version
-// solhint-disable use-natspec
-
-library AddressAliasHelper {
-    // solhint-disable-next-line const-name-snakecase
-    uint160 internal constant offset = uint160(0x1111000000000000000000000000000000001111);
-
-    /// @notice Utility function that converts the address in the L1 that submitted a tx to
-    /// the inbox to the msg.sender viewed in the L2
-    /// @param l1Address the address in the L1 that triggered the tx to L2
-    /// @return l2Address L2 address as viewed in msg.sender
-    function applyL1ToL2Alias(address l1Address) internal pure returns (address l2Address) {
-        l2Address = address(uint160(l1Address) + offset);
-    }
-
-    /// @notice Utility function that converts the msg.sender viewed in the L2 to the
-    /// address in the L1 that submitted a tx to the inbox
-    /// @param l2Address L2 address as viewed in msg.sender
-    /// @return l1Address the address in the L1 that triggered the tx to L2
-    function undoL1ToL2Alias(address l2Address) internal pure returns (address l1Address) {
-        l1Address = address(uint160(l2Address) - offset);
-    }
-}
-
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 pragma solidity ^0.7.6 || 0.8.27 || 0.8.33;
@@ -1487,6 +1436,57 @@ abstract contract Governed {
 
         emit NewOwnership(oldGovernor, governor);
         emit NewPendingOwnership(oldPendingGovernor, pendingGovernor);
+    }
+}
+
+// SPDX-License-Identifier: Apache-2.0
+
+/*
+ * Copyright 2019-2021, Offchain Labs, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Originally copied from:
+ * https://github.com/OffchainLabs/arbitrum/tree/84e64dee6ee82adbf8ec34fd4b86c207a61d9007/packages/arb-bridge-eth
+ *
+ * MODIFIED from Offchain Labs' implementation:
+ * - Changed solidity version to 0.7.3 (pablo@edgeandnode.com)
+ *
+ */
+
+pragma solidity ^0.7.3;
+
+// TODO: Re-enable and fix issues when publishing a new version
+// solhint-disable use-natspec
+
+library AddressAliasHelper {
+    // solhint-disable-next-line const-name-snakecase
+    uint160 internal constant offset = uint160(0x1111000000000000000000000000000000001111);
+
+    /// @notice Utility function that converts the address in the L1 that submitted a tx to
+    /// the inbox to the msg.sender viewed in the L2
+    /// @param l1Address the address in the L1 that triggered the tx to L2
+    /// @return l2Address L2 address as viewed in msg.sender
+    function applyL1ToL2Alias(address l1Address) internal pure returns (address l2Address) {
+        l2Address = address(uint160(l1Address) + offset);
+    }
+
+    /// @notice Utility function that converts the msg.sender viewed in the L2 to the
+    /// address in the L1 that submitted a tx to the inbox
+    /// @param l2Address L2 address as viewed in msg.sender
+    /// @return l1Address the address in the L1 that triggered the tx to L2
+    function undoL1ToL2Alias(address l2Address) internal pure returns (address l1Address) {
+        l1Address = address(uint160(l2Address) - offset);
     }
 }
 

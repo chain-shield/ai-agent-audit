@@ -1,0 +1,8 @@
+{
+  "benchmark": "ens-contracts",
+  "finding_id": "C-3",
+  "status": "Fixed And Ready",
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ens-contracts-run-002/C-3-Expired-eth-name-re-registration-without-resolver.md",
+  "review_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/ens-contracts-run-002/C-3-Expired-eth-name-re-registration-without-resolver.md",
+  "notes": "Report is submission-ready after a small PoC-packaging edit clarifying that no new files are required beyond the test file and that the PoC uses the repository's existing OwnedResolver artifact. Severity matches the round 3 Critical classification and the exact ENS Immunefi impact row for unintended alteration of NFT representation. The embedded PoC matched the verified test file before that documentation-only note was added, and the test passed from the ENS repo root with MAINNET_RPC_URL loaded from the audit workspace environment."
+}

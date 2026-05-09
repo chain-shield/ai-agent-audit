@@ -30,7 +30,7 @@ pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
 
 // if true set DISCOVERY_RUNS accordingly
 pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
-pub const INVARIANT_DISCOVERY_RUNS: usize = 3; // old value 5
+pub const INVARIANT_DISCOVERY_RUNS: usize = 5; // old value 5
 pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
 pub const OPENAI_MODEL: &str = "gpt-5.5";
@@ -48,8 +48,8 @@ pub const SKIP_INVARIANT_RUNS: bool = false;
 // SKIP or RUN MAIN PATTERN RUNS
 pub const SKIP_ACTOR_PATTERN_RUNS: bool = false;
 // RUNS R1 (basic) and R2 (complex) patterns
-pub const R1_RUNS: usize = 1; // default: 10 , testing: 5
-pub const R2_RUNS: usize = 1; // default: 10 , testing: 5
+pub const R1_RUNS: usize = 10; // default: 10 , testing: 5
+pub const R2_RUNS: usize = 10; // default: 10 , testing: 5
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis

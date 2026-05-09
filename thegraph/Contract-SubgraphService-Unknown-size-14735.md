@@ -1092,6 +1092,32 @@ abstract contract AllocationManager is
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.33;
 
+import { ISubgraphService } from "@graphprotocol/interfaces/contracts/subgraph-service/ISubgraphService.sol";
+
+/**
+ * @title SubgraphServiceStorage
+ * @author Edge & Node
+ * @notice This contract holds all the storage variables for the Subgraph Service contract
+ * @custom:security-contact Please email security+contracts@thegraph.com if you find any
+ * bugs. We may have an active bug bounty program.
+ */
+abstract contract SubgraphServiceV1Storage is ISubgraphService {
+    /// @notice Service providers registered in the data service
+    mapping(address indexer => ISubgraphService.Indexer details) public override indexers;
+
+    ///@notice Multiplier for how many tokens back collected query fees
+    uint256 public override stakeToFeesRatio;
+
+    /// @notice The cut curators take from query fee payments. In PPM.
+    uint256 public override curationFeesCut;
+
+    /// @notice Destination of indexer payments
+    mapping(address indexer => address destination) public override paymentsDestination;
+}
+
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity 0.8.33;
+
 // TODO: Re-enable and fix issues when publishing a new version
 // solhint-disable gas-indexed-events
 // forge-lint: disable-start(unwrapped-modifier-logic)
@@ -1209,27 +1235,38 @@ abstract contract Directory {
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.33;
 
-import { ISubgraphService } from "@graphprotocol/interfaces/contracts/subgraph-service/ISubgraphService.sol";
+import { IAllocation } from "@graphprotocol/interfaces/contracts/subgraph-service/internal/IAllocation.sol";
+import { IAllocationManager } from "@graphprotocol/interfaces/contracts/subgraph-service/internal/IAllocationManager.sol";
+import { ILegacyAllocation } from "@graphprotocol/interfaces/contracts/subgraph-service/internal/ILegacyAllocation.sol";
 
 /**
- * @title SubgraphServiceStorage
+ * @title AllocationManagerStorage
  * @author Edge & Node
- * @notice This contract holds all the storage variables for the Subgraph Service contract
+ * @notice This contract holds all the storage variables for the Allocation Manager contract
  * @custom:security-contact Please email security+contracts@thegraph.com if you find any
  * bugs. We may have an active bug bounty program.
  */
-abstract contract SubgraphServiceV1Storage is ISubgraphService {
-    /// @notice Service providers registered in the data service
-    mapping(address indexer => ISubgraphService.Indexer details) public override indexers;
+abstract contract AllocationManagerV1Storage is IAllocationManager {
+    /// @notice Allocation details
+    mapping(address allocationId => IAllocation.State allocation) internal _allocations;
 
-    ///@notice Multiplier for how many tokens back collected query fees
-    uint256 public override stakeToFeesRatio;
+    /// @notice Legacy allocation details
+    mapping(address allocationId => ILegacyAllocation.State allocation) internal _legacyAllocations;
 
-    /// @notice The cut curators take from query fee payments. In PPM.
-    uint256 public override curationFeesCut;
+    /// @notice Tracks allocated tokens per indexer
+    mapping(address indexer => uint256 tokens) public override allocationProvisionTracker;
 
-    /// @notice Destination of indexer payments
-    mapping(address indexer => address destination) public override paymentsDestination;
+    // forge-lint: disable-next-item(mixed-case-variable)
+    /// @notice Maximum amount of time, in seconds, allowed between presenting POIs to qualify for indexing rewards
+    uint256 public override maxPOIStaleness;
+
+    /// @notice Track total tokens allocated per subgraph deployment
+    /// @dev Used to calculate indexing rewards
+    mapping(bytes32 subgraphDeploymentId => uint256 tokens) internal _subgraphAllocatedTokens;
+
+    // forge-lint: disable-next-item(mixed-case-variable)
+    /// @dev Gap to allow adding variables in future upgrades
+    uint256[50] private __gap;
 }
 
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -1417,43 +1454,6 @@ library Allocation {
         require(allocation.exists(), IAllocation.AllocationDoesNotExist(allocationId));
         return allocation;
     }
-}
-
-// SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity 0.8.33;
-
-import { IAllocation } from "@graphprotocol/interfaces/contracts/subgraph-service/internal/IAllocation.sol";
-import { IAllocationManager } from "@graphprotocol/interfaces/contracts/subgraph-service/internal/IAllocationManager.sol";
-import { ILegacyAllocation } from "@graphprotocol/interfaces/contracts/subgraph-service/internal/ILegacyAllocation.sol";
-
-/**
- * @title AllocationManagerStorage
- * @author Edge & Node
- * @notice This contract holds all the storage variables for the Allocation Manager contract
- * @custom:security-contact Please email security+contracts@thegraph.com if you find any
- * bugs. We may have an active bug bounty program.
- */
-abstract contract AllocationManagerV1Storage is IAllocationManager {
-    /// @notice Allocation details
-    mapping(address allocationId => IAllocation.State allocation) internal _allocations;
-
-    /// @notice Legacy allocation details
-    mapping(address allocationId => ILegacyAllocation.State allocation) internal _legacyAllocations;
-
-    /// @notice Tracks allocated tokens per indexer
-    mapping(address indexer => uint256 tokens) public override allocationProvisionTracker;
-
-    // forge-lint: disable-next-item(mixed-case-variable)
-    /// @notice Maximum amount of time, in seconds, allowed between presenting POIs to qualify for indexing rewards
-    uint256 public override maxPOIStaleness;
-
-    /// @notice Track total tokens allocated per subgraph deployment
-    /// @dev Used to calculate indexing rewards
-    mapping(bytes32 subgraphDeploymentId => uint256 tokens) internal _subgraphAllocatedTokens;
-
-    // forge-lint: disable-next-item(mixed-case-variable)
-    /// @dev Gap to allow adding variables in future upgrades
-    uint256[50] private __gap;
 }
 
 // SPDX-License-Identifier: GPL-3.0-or-later

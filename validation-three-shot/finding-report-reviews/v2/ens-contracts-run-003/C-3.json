@@ -1,0 +1,9 @@
+{
+  "benchmark": "ens-contracts",
+  "finding_id": "C-3",
+  "status": "Fixed And Ready",
+  "gist_url": "https://gist.github.com/apmfree78/798d4abf243f35aef745a1de9c17b0e7",
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ens-contracts-run-003/C-3-Expired-eth-name-re-registration-without-resolver.md",
+  "review_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/ens-contracts-run-003/C-3-Expired-eth-name-re-registration-without-resolver.md",
+  "notes": "R8 reviewed C-3 only. After R9 severity sanity review, the report was reframed from Critical to Medium under the ENS medium smart contract griefing row. The exploit is unprivileged and in-scope, the report is under the 1000-word prose cap, the embedded PoC matches the verified top-level test except for a trailing newline, and the report links a secret Gist PoC bundle. Ran the PoC from the ENS repo with MAINNET_RPC_URL sourced from the audit repo .env; bun run test test/ExpiredNameNoResolverReRegistrationPoC.test.ts passed with 1 test."
+}

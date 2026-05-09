@@ -1,0 +1,36 @@
+{
+  "benchmark": "thegraph",
+  "finding_id": "H-31",
+  "judge_decision": "Accepted",
+  "judge_severity": "Critical",
+  "confidence": "High",
+  "estimated_payout": {
+    "amount": null,
+    "currency": "USD",
+    "range_basis": "Critical smart-contract reward range is $15,000-$50,000 in the severity rubric; bounty rules also state rewards are paid in GRT on Arbitrum and the maximum bounty is $50,000.",
+    "confidence": "Medium",
+    "rationale": "The finding maps to the exact Critical direct-theft impact row, but the provided docs do not specify an exact payout within the range or the GRT conversion process."
+  },
+  "acceptance_risks": [
+    "The attacker must be the RAV dataService or control a provisioned Horizon data-service verifier; triage may ask whether that role is trusted by design.",
+    "For canonical SubgraphService collection, the dataService is the SubgraphService contract and the mediated path uses the provider paymentsDestination registry, so the report must clearly frame the direct GraphTallyCollector path.",
+    "The PoC uses synthetic local-fork balances to create a high-value escrow/RAV state; it proves the code impact but not that a live escrow currently exceeds $1M.",
+    "A judge may ask whether unsigned settlement parameters are already a known issue or private duplicate; the supplied artifacts do not show a matching public known issue."
+  ],
+  "likely_questions": [
+    "Why is a malicious provisioned data service not a trusted-role or by-design assumption?",
+    "Can the same signed RAV still recover the same signer after only receiverDestination changes?",
+    "Does any on-chain registry or SubgraphService check constrain receiverDestination on direct GraphTallyCollector.collect calls?",
+    "What concrete user funds are stolen and why can the service provider not recollect after the attack?",
+    "What supports Critical rather than High if the >$1M value is demonstrated with local-fork funding?"
+  ],
+  "recommended_pre_submission_edits": [
+    "State that deployed HorizonStaking.__DEPRECATED_getThawingPeriod() returns 0, so arbitrary verifier/data-service provisions are currently enabled.",
+    "Add a concise threat-model paragraph distinguishing a permissionless data-service participant from governance, owner, signer, payer, or service-provider key compromise.",
+    "Make the canonical SubgraphService contrast explicit: its mediated path derives paymentsDestination from provider state, but GraphTallyCollector direct collection accepts unsigned calldata.",
+    "Add a short digest comparison showing receiverDestination is outside the RAV and changing it does not change recoverRAVSigner.",
+    "Include the exact local-fork command and assertion summary for the PoC."
+  ],
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/thegraph-run-001/H-31-Unsigned-receiverDestination-lets-the-data-service.md",
+  "notes": "Accepted as Critical because in-scope GraphTallyCollector omits receiverDestination from the signed RAV, accepts it from data-service calldata, and forwards it through in-scope PaymentsEscrow and GraphPayments so the receiver share can be transferred to an attacker-controlled address while consuming the escrowed aggregate."
+}

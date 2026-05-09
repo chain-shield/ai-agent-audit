@@ -40,6 +40,7 @@ Never collapse these into one question. A real bug can still be `Low / QA`, and 
 7. Unsupported integrations, future component failures, and deployment / setup mistakes are not current H/M code vulnerabilities by default.
 8. In raw validation, do not dedupe report findings against other report findings. Evaluate each finding on its own code path, bug existence, and H/M impact.
 9. Use `Needs Review` sparingly. It is for genuine unresolved ambiguity after tracing the code, not for severity indecision on an already-proven bug family.
+10. Delegated authority counts as trusted-role authority: malicious use of an intentionally granted capability is not a bug unless the report proves incremental unauthorized impact.
 
 ## Pre-Gate Sanity Check: Verify The Bug Exists
 
@@ -153,6 +154,7 @@ Usually H/M-compatible:
 Usually Low / QA or Invalid:
 - requires privileged role compromise
 - requires trusted admin/operator to act maliciously or contrary to docs
+- requires malicious use of delegated authority or has no incremental impact beyond an authorized same-actor path
 - requires an irrational attacker to lose material value only to grief
 - requires unsupported deployment choices
 - requires a future integration not present in current code/scope
@@ -184,6 +186,8 @@ Low / QA is appropriate when:
 
 Trusted roles are trusted unless the benchmark scope says otherwise.
 
+If source/docs show an actor was delegated the disputed action or parameter, treat that actor as trusted for that delegated capability.
+
 Reject or downgrade if the issue only exists because a trusted role:
 - acts maliciously
 - ignores documented responsibilities
@@ -191,10 +195,13 @@ Reject or downgrade if the issue only exists because a trusted role:
 - deploys incorrectly
 - withholds expected maintenance forever
 
+Reject or downgrade if the issue only exists because a delegated actor uses that authority maliciously, or because the same actor has an authorized path to the same or greater impact.
+
 Do not reject if:
 - a trusted role acts according to spec and the code still permits a harmful state
 - a normal role-triggered workflow exposes a permissionless exploit path
 - the bug is missing validation, missing postcondition checks, stale accounting, or unsafe sequencing in a normal privileged workflow
+- the delegated actor exceeds the capability actually granted or harms parties who did not grant that authority
 
 User error is not H/M unless the protocol is supposed to protect users from that exact mistake and the code failure creates material loss beyond ordinary misuse.
 
@@ -224,7 +231,7 @@ Mark `Valid` with `Low / QA` when:
 
 Mark `Invalid` when:
 - bug does not exist
-- claim is impossible, speculative, unsupported, out of scope, duplicate of V12/prior finding, or depends on trusted-role/user/deployment error
+- claim is impossible, speculative, unsupported, out of scope, duplicate of V12/prior finding, depends on trusted/delegated-role, user, or deployment error, or has no incremental impact beyond an authorized same-actor path
 
 Mark `Needs Review` only when:
 - the code and docs leave a real unresolved ambiguity

@@ -596,144 +596,273 @@ abstract contract Managed is GraphDirectory {
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
-// solhint-disable one-contract-per-file
 
-pragma solidity ^0.7.6;
+pragma solidity ^0.7.6 || 0.8.27 || 0.8.33;
+
+/* solhint-disable gas-custom-errors */ // Cannot use custom errors with 0.7.6
+
+import { IGraphToken } from "@graphprotocol/interfaces/contracts/contracts/token/IGraphToken.sol";
+
+/**
+ * @title TokenUtils library
+ * @author Edge & Node
+ * @notice This library contains utility functions for handling tokens (transfers and burns).
+ * It is specifically adapted for the GraphToken, so does not need to handle edge cases
+ * for other tokens.
+ */
+library TokenUtils {
+    /**
+     * @notice Pull tokens from an address to this contract.
+     * @param _graphToken Token to transfer
+     * @param _from Address sending the tokens
+     * @param _amount Amount of tokens to transfer
+     */
+    function pullTokens(IGraphToken _graphToken, address _from, uint256 _amount) internal {
+        if (_amount > 0) {
+            require(_graphToken.transferFrom(_from, address(this), _amount), "!transfer");
+        }
+    }
+
+    /**
+     * @notice Push tokens from this contract to a receiving address.
+     * @param _graphToken Token to transfer
+     * @param _to Address receiving the tokens
+     * @param _amount Amount of tokens to transfer
+     */
+    function pushTokens(IGraphToken _graphToken, address _to, uint256 _amount) internal {
+        if (_amount > 0) {
+            require(_graphToken.transfer(_to, _amount), "!transfer");
+        }
+    }
+
+    /**
+     * @notice Burn tokens held by this contract.
+     * @param _graphToken Token to burn
+     * @param _amount Amount of tokens to burn
+     */
+    function burnTokens(IGraphToken _graphToken, uint256 _amount) internal {
+        if (_amount > 0) {
+            _graphToken.burn(_amount);
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+pragma solidity ^0.7.3;
+pragma experimental ABIEncoderV2;
 
 // TODO: Re-enable and fix issues when publishing a new version
-// solhint-disable one-contract-per-file, max-states-count
-// solhint-disable named-parameters-mapping
+// solhint-disable use-natspec
 
-import { Managed } from "../governance/Managed.sol";
-
-import { IStakingData } from "@graphprotocol/interfaces/contracts/contracts/staking/IStakingData.sol";
-import { IStakes } from "@graphprotocol/interfaces/contracts/contracts/staking/libs/IStakes.sol";
+import { SafeMath } from "@openzeppelin/contracts/math/SafeMath.sol";
 
 /**
- * @title StakingV1Storage
- * @author Edge & Node
- * @notice This contract holds all the storage variables for the Staking contract, version 1
- * @dev Note that we use a double underscore prefix for variable names; this prefix identifies
- * variables that used to be public but are now internal, getters can be found on StakingExtension.sol.
+ * @title A collection of data structures and functions to manage the Indexer Stake state.
+ *        Used for low-level state changes, require() conditions should be evaluated
+ *        at the caller function scope.
  */
-contract StakingV1Storage is Managed {
-    // -- Staking --
+library Stakes {
+    using SafeMath for uint256;
+    using Stakes for Stakes.Indexer;
 
-    /// @dev Minimum amount of tokens an indexer needs to stake
-    uint256 internal __minimumIndexerStake;
+    struct Indexer {
+        uint256 tokensStaked; // Tokens on the indexer stake (staked by the indexer)
+        uint256 tokensAllocated; // Tokens used in allocations
+        uint256 tokensLocked; // Tokens locked for withdrawal subject to thawing period
+        uint256 tokensLockedUntil; // Block when locked tokens can be withdrawn
+    }
 
-    /// @dev Time in blocks to unstake
-    uint32 internal __thawingPeriod; // in blocks
+    /**
+     * @dev Deposit tokens to the indexer stake.
+     * @param stake Stake data
+     * @param _tokens Amount of tokens to deposit
+     */
+    function deposit(Stakes.Indexer storage stake, uint256 _tokens) internal {
+        stake.tokensStaked = stake.tokensStaked.add(_tokens);
+    }
 
-    /// @dev Percentage of fees going to curators
-    /// Parts per million. (Allows for 4 decimal points, 999,999 = 99.9999%)
-    uint32 internal __curationPercentage;
+    /**
+     * @dev Release tokens from the indexer stake.
+     * @param stake Stake data
+     * @param _tokens Amount of tokens to release
+     */
+    function release(Stakes.Indexer storage stake, uint256 _tokens) internal {
+        stake.tokensStaked = stake.tokensStaked.sub(_tokens);
+    }
 
-    /// @dev Percentage of fees burned as protocol fee
-    /// Parts per million. (Allows for 4 decimal points, 999,999 = 99.9999%)
-    uint32 internal __protocolPercentage;
+    /**
+     * @dev Allocate tokens from the main stack to a SubgraphDeployment.
+     * @param stake Stake data
+     * @param _tokens Amount of tokens to allocate
+     */
+    function allocate(Stakes.Indexer storage stake, uint256 _tokens) internal {
+        stake.tokensAllocated = stake.tokensAllocated.add(_tokens);
+    }
 
-    /// @dev Period for allocation to be finalized
-    uint32 private __DEPRECATED_channelDisputeEpochs; // solhint-disable-line var-name-mixedcase
+    /**
+     * @dev Unallocate tokens from a SubgraphDeployment back to the main stack.
+     * @param stake Stake data
+     * @param _tokens Amount of tokens to unallocate
+     */
+    function unallocate(Stakes.Indexer storage stake, uint256 _tokens) internal {
+        stake.tokensAllocated = stake.tokensAllocated.sub(_tokens);
+    }
 
-    /// @dev Maximum allocation time
-    uint32 internal __maxAllocationEpochs;
+    /**
+     * @dev Lock tokens until a thawing period pass.
+     * @param stake Stake data
+     * @param _tokens Amount of tokens to unstake
+     * @param _period Period in blocks that need to pass before withdrawal
+     */
+    function lockTokens(Stakes.Indexer storage stake, uint256 _tokens, uint256 _period) internal {
+        // Take into account period averaging for multiple unstake requests
+        uint256 lockingPeriod = _period;
+        if (stake.tokensLocked > 0) {
+            lockingPeriod = stake.getLockingPeriod(_tokens, _period);
+        }
 
-    /// @dev Rebate alpha numerator
-    // Originally used for Cobb-Douglas rebates, now used for exponential rebates
-    uint32 internal __alphaNumerator;
+        // Update balances
+        stake.tokensLocked = stake.tokensLocked.add(_tokens);
+        stake.tokensLockedUntil = block.number.add(lockingPeriod);
+    }
 
-    /// @dev Rebate alpha denominator
-    // Originally used for Cobb-Douglas rebates, now used for exponential rebates
-    uint32 internal __alphaDenominator;
+    /**
+     * @dev Unlock tokens.
+     * @param stake Stake data
+     * @param _tokens Amount of tokens to unkock
+     */
+    function unlockTokens(Stakes.Indexer storage stake, uint256 _tokens) internal {
+        stake.tokensLocked = stake.tokensLocked.sub(_tokens);
+        if (stake.tokensLocked == 0) {
+            stake.tokensLockedUntil = 0;
+        }
+    }
 
-    /// @dev Indexer stakes : indexer => Stake
-    mapping(address => IStakes.Indexer) internal __stakes;
+    /**
+     * @dev Take all tokens out from the locked stake for withdrawal.
+     * @param stake Stake data
+     * @return Amount of tokens being withdrawn
+     */
+    function withdrawTokens(Stakes.Indexer storage stake) internal returns (uint256) {
+        // Calculate tokens that can be released
+        uint256 tokensToWithdraw = stake.tokensWithdrawable();
 
-    /// @dev Allocations : allocationID => Allocation
-    mapping(address => IStakingData.Allocation) internal __allocations;
+        if (tokensToWithdraw > 0) {
+            // Reset locked tokens
+            stake.unlockTokens(tokensToWithdraw);
 
-    /// @dev Subgraph Allocations: subgraphDeploymentID => tokens
-    mapping(bytes32 => uint256) internal __subgraphAllocations;
+            // Decrease indexer stake
+            stake.release(tokensToWithdraw);
+        }
 
-    /// @dev Deprecated rebate pools mapping (no longer used)
-    mapping(uint256 => uint256) private __DEPRECATED_rebates; // solhint-disable-line var-name-mixedcase
+        return tokensToWithdraw;
+    }
 
-    // -- Slashing --
+    /**
+     * @dev Get the locking period of the tokens to unstake.
+     * If already unstaked before calculate the weighted average.
+     * @param stake Stake data
+     * @param _tokens Amount of tokens to unstake
+     * @param _thawingPeriod Period in blocks that need to pass before withdrawal
+     * @return True if staked
+     */
+    function getLockingPeriod(
+        Stakes.Indexer memory stake,
+        uint256 _tokens,
+        uint256 _thawingPeriod
+    ) internal view returns (uint256) {
+        uint256 blockNum = block.number;
+        uint256 periodA = (stake.tokensLockedUntil > blockNum) ? stake.tokensLockedUntil.sub(blockNum) : 0;
+        uint256 periodB = _thawingPeriod;
+        uint256 stakeA = stake.tokensLocked;
+        uint256 stakeB = _tokens;
+        return periodA.mul(stakeA).add(periodB.mul(stakeB)).div(stakeA.add(stakeB));
+    }
 
-    /// @dev List of addresses allowed to slash stakes
-    mapping(address => bool) internal __slashers;
+    /**
+     * @dev Return true if there are tokens staked by the Indexer.
+     * @param stake Stake data
+     * @return True if staked
+     */
+    function hasTokens(Stakes.Indexer memory stake) internal pure returns (bool) {
+        return stake.tokensStaked > 0;
+    }
 
-    // -- Delegation --
+    /**
+     * @dev Return the amount of tokens used in allocations and locked for withdrawal.
+     * @param stake Stake data
+     * @return Token amount
+     */
+    function tokensUsed(Stakes.Indexer memory stake) internal pure returns (uint256) {
+        return stake.tokensAllocated.add(stake.tokensLocked);
+    }
 
-    /// @dev Set the delegation capacity multiplier defined by the delegation ratio
-    /// If delegation ratio is 100, and an Indexer has staked 5 GRT,
-    /// then they can use up to 500 GRT from the delegated stake
-    uint32 internal __delegationRatio;
+    /**
+     * @dev Return the amount of tokens staked not considering the ones that are already going
+     * through the thawing period or are ready for withdrawal. We call it secure stake because
+     * it is not subject to change by a withdraw call from the indexer.
+     * @param stake Stake data
+     * @return Token amount
+     */
+    function tokensSecureStake(Stakes.Indexer memory stake) internal pure returns (uint256) {
+        return stake.tokensStaked.sub(stake.tokensLocked);
+    }
 
-    /// @dev Time in blocks an indexer needs to wait to change delegation parameters (deprecated)
-    uint32 internal __DEPRECATED_delegationParametersCooldown; // solhint-disable-line var-name-mixedcase
+    /**
+     * @dev Tokens free balance on the indexer stake that can be used for any purpose.
+     * Any token that is allocated cannot be used as well as tokens that are going through the
+     * thawing period or are withdrawable
+     * Calc: tokensStaked - tokensAllocated - tokensLocked
+     * @param stake Stake data
+     * @return Token amount
+     */
+    function tokensAvailable(Stakes.Indexer memory stake) internal pure returns (uint256) {
+        return stake.tokensAvailableWithDelegation(0);
+    }
 
-    /// @dev Time in epochs a delegator needs to wait to withdraw delegated stake
-    uint32 internal __delegationUnbondingPeriod; // in epochs
+    /**
+     * @dev Tokens free balance on the indexer stake that can be used for allocations.
+     * This function accepts a parameter for extra delegated capacity that takes into
+     * account delegated tokens
+     * @param stake Stake data
+     * @param _delegatedCapacity Amount of tokens used from delegators to calculate availability
+     * @return Token amount
+     */
+    function tokensAvailableWithDelegation(
+        Stakes.Indexer memory stake,
+        uint256 _delegatedCapacity
+    ) internal pure returns (uint256) {
+        uint256 tokensCapacity = stake.tokensStaked.add(_delegatedCapacity);
+        uint256 _tokensUsed = stake.tokensUsed();
+        // If more tokens are used than the current capacity, the indexer is overallocated.
+        // This means the indexer doesn't have available capacity to create new allocations.
+        // We can reach this state when the indexer has funds allocated and then any
+        // of these conditions happen:
+        // - The delegationCapacity ratio is reduced.
+        // - The indexer stake is slashed.
+        // - A delegator removes enough stake.
+        if (_tokensUsed > tokensCapacity) {
+            // Indexer stake is over allocated: return 0 to avoid stake to be used until
+            // the overallocation is restored by staking more tokens, unallocating tokens
+            // or using more delegated funds
+            return 0;
+        }
+        return tokensCapacity.sub(_tokensUsed);
+    }
 
-    /// @dev Percentage of tokens to tax a delegation deposit
-    /// Parts per million. (Allows for 4 decimal points, 999,999 = 99.9999%)
-    uint32 internal __delegationTaxPercentage;
-
-    /// @dev Delegation pools : indexer => DelegationPool
-    mapping(address => IStakingData.DelegationPool) internal __delegationPools;
-
-    // -- Operators --
-
-    /// @dev Operator auth : indexer => operator => is authorized
-    mapping(address => mapping(address => bool)) internal __operatorAuth;
-
-    // -- Asset Holders --
-
-    /// @dev DEPRECATED: Allowed AssetHolders: assetHolder => is allowed
-    mapping(address => bool) private __DEPRECATED_assetHolders; // solhint-disable-line var-name-mixedcase
-}
-
-/**
- * @title StakingV2Storage
- * @author Edge & Node
- * @notice This contract holds all the storage variables for the Staking contract, version 2
- * @dev Note that we use a double underscore prefix for variable names; this prefix identifies
- * variables that used to be public but are now internal, getters can be found on StakingExtension.sol.
- */
-contract StakingV2Storage is StakingV1Storage {
-    /// @dev Destination of accrued rewards : beneficiary => rewards destination
-    mapping(address => address) internal __rewardsDestination;
-}
-
-/**
- * @title StakingV3Storage
- * @author Edge & Node
- * @notice This contract holds all the storage variables for the base Staking contract, version 3.
- */
-contract StakingV3Storage is StakingV2Storage {
-    /// @dev Address of the counterpart Staking contract on L1/L2
-    address internal counterpartStakingAddress;
-    /// @dev Address of the StakingExtension implementation
-    address internal extensionImpl;
-}
-
-/**
- * @title StakingV4Storage
- * @author Edge & Node
- * @notice This contract holds all the storage variables for the base Staking contract, version 4.
- * @dev Note that it includes a storage gap - if adding future versions, make sure to move the gap
- * to the new version and reduce the size of the gap accordingly.
- */
-contract StakingV4Storage is StakingV3Storage {
-    /// @dev Numerator for the lambda parameter in exponential rebate calculations
-    uint32 internal __lambdaNumerator;
-    /// @dev Denominator for the lambda parameter in exponential rebate calculations
-    uint32 internal __lambdaDenominator;
-
-    /// @dev Gap to allow adding variables in future upgrades (since L1Staking and L2Staking can have their own storage as well)
-    uint256[50] private __gap;
+    /**
+     * @dev Tokens available for withdrawal after thawing period.
+     * @param stake Stake data
+     * @return Token amount
+     */
+    function tokensWithdrawable(Stakes.Indexer memory stake) internal view returns (uint256) {
+        // No tokens to withdraw before locking period
+        if (stake.tokensLockedUntil == 0 || block.number < stake.tokensLockedUntil) {
+            return 0;
+        }
+        return stake.tokensLocked;
+    }
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -1035,221 +1164,144 @@ abstract contract GraphUpgradeable {
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
+// solhint-disable one-contract-per-file
 
-pragma solidity ^0.7.3;
-pragma experimental ABIEncoderV2;
+pragma solidity ^0.7.6;
 
 // TODO: Re-enable and fix issues when publishing a new version
-// solhint-disable use-natspec
+// solhint-disable one-contract-per-file, max-states-count
+// solhint-disable named-parameters-mapping
 
-import { SafeMath } from "@openzeppelin/contracts/math/SafeMath.sol";
+import { Managed } from "../governance/Managed.sol";
+
+import { IStakingData } from "@graphprotocol/interfaces/contracts/contracts/staking/IStakingData.sol";
+import { IStakes } from "@graphprotocol/interfaces/contracts/contracts/staking/libs/IStakes.sol";
 
 /**
- * @title A collection of data structures and functions to manage the Indexer Stake state.
- *        Used for low-level state changes, require() conditions should be evaluated
- *        at the caller function scope.
+ * @title StakingV1Storage
+ * @author Edge & Node
+ * @notice This contract holds all the storage variables for the Staking contract, version 1
+ * @dev Note that we use a double underscore prefix for variable names; this prefix identifies
+ * variables that used to be public but are now internal, getters can be found on StakingExtension.sol.
  */
-library Stakes {
-    using SafeMath for uint256;
-    using Stakes for Stakes.Indexer;
+contract StakingV1Storage is Managed {
+    // -- Staking --
 
-    struct Indexer {
-        uint256 tokensStaked; // Tokens on the indexer stake (staked by the indexer)
-        uint256 tokensAllocated; // Tokens used in allocations
-        uint256 tokensLocked; // Tokens locked for withdrawal subject to thawing period
-        uint256 tokensLockedUntil; // Block when locked tokens can be withdrawn
-    }
+    /// @dev Minimum amount of tokens an indexer needs to stake
+    uint256 internal __minimumIndexerStake;
 
-    /**
-     * @dev Deposit tokens to the indexer stake.
-     * @param stake Stake data
-     * @param _tokens Amount of tokens to deposit
-     */
-    function deposit(Stakes.Indexer storage stake, uint256 _tokens) internal {
-        stake.tokensStaked = stake.tokensStaked.add(_tokens);
-    }
+    /// @dev Time in blocks to unstake
+    uint32 internal __thawingPeriod; // in blocks
 
-    /**
-     * @dev Release tokens from the indexer stake.
-     * @param stake Stake data
-     * @param _tokens Amount of tokens to release
-     */
-    function release(Stakes.Indexer storage stake, uint256 _tokens) internal {
-        stake.tokensStaked = stake.tokensStaked.sub(_tokens);
-    }
+    /// @dev Percentage of fees going to curators
+    /// Parts per million. (Allows for 4 decimal points, 999,999 = 99.9999%)
+    uint32 internal __curationPercentage;
 
-    /**
-     * @dev Allocate tokens from the main stack to a SubgraphDeployment.
-     * @param stake Stake data
-     * @param _tokens Amount of tokens to allocate
-     */
-    function allocate(Stakes.Indexer storage stake, uint256 _tokens) internal {
-        stake.tokensAllocated = stake.tokensAllocated.add(_tokens);
-    }
+    /// @dev Percentage of fees burned as protocol fee
+    /// Parts per million. (Allows for 4 decimal points, 999,999 = 99.9999%)
+    uint32 internal __protocolPercentage;
 
-    /**
-     * @dev Unallocate tokens from a SubgraphDeployment back to the main stack.
-     * @param stake Stake data
-     * @param _tokens Amount of tokens to unallocate
-     */
-    function unallocate(Stakes.Indexer storage stake, uint256 _tokens) internal {
-        stake.tokensAllocated = stake.tokensAllocated.sub(_tokens);
-    }
+    /// @dev Period for allocation to be finalized
+    uint32 private __DEPRECATED_channelDisputeEpochs; // solhint-disable-line var-name-mixedcase
 
-    /**
-     * @dev Lock tokens until a thawing period pass.
-     * @param stake Stake data
-     * @param _tokens Amount of tokens to unstake
-     * @param _period Period in blocks that need to pass before withdrawal
-     */
-    function lockTokens(Stakes.Indexer storage stake, uint256 _tokens, uint256 _period) internal {
-        // Take into account period averaging for multiple unstake requests
-        uint256 lockingPeriod = _period;
-        if (stake.tokensLocked > 0) {
-            lockingPeriod = stake.getLockingPeriod(_tokens, _period);
-        }
+    /// @dev Maximum allocation time
+    uint32 internal __maxAllocationEpochs;
 
-        // Update balances
-        stake.tokensLocked = stake.tokensLocked.add(_tokens);
-        stake.tokensLockedUntil = block.number.add(lockingPeriod);
-    }
+    /// @dev Rebate alpha numerator
+    // Originally used for Cobb-Douglas rebates, now used for exponential rebates
+    uint32 internal __alphaNumerator;
 
-    /**
-     * @dev Unlock tokens.
-     * @param stake Stake data
-     * @param _tokens Amount of tokens to unkock
-     */
-    function unlockTokens(Stakes.Indexer storage stake, uint256 _tokens) internal {
-        stake.tokensLocked = stake.tokensLocked.sub(_tokens);
-        if (stake.tokensLocked == 0) {
-            stake.tokensLockedUntil = 0;
-        }
-    }
+    /// @dev Rebate alpha denominator
+    // Originally used for Cobb-Douglas rebates, now used for exponential rebates
+    uint32 internal __alphaDenominator;
 
-    /**
-     * @dev Take all tokens out from the locked stake for withdrawal.
-     * @param stake Stake data
-     * @return Amount of tokens being withdrawn
-     */
-    function withdrawTokens(Stakes.Indexer storage stake) internal returns (uint256) {
-        // Calculate tokens that can be released
-        uint256 tokensToWithdraw = stake.tokensWithdrawable();
+    /// @dev Indexer stakes : indexer => Stake
+    mapping(address => IStakes.Indexer) internal __stakes;
 
-        if (tokensToWithdraw > 0) {
-            // Reset locked tokens
-            stake.unlockTokens(tokensToWithdraw);
+    /// @dev Allocations : allocationID => Allocation
+    mapping(address => IStakingData.Allocation) internal __allocations;
 
-            // Decrease indexer stake
-            stake.release(tokensToWithdraw);
-        }
+    /// @dev Subgraph Allocations: subgraphDeploymentID => tokens
+    mapping(bytes32 => uint256) internal __subgraphAllocations;
 
-        return tokensToWithdraw;
-    }
+    /// @dev Deprecated rebate pools mapping (no longer used)
+    mapping(uint256 => uint256) private __DEPRECATED_rebates; // solhint-disable-line var-name-mixedcase
 
-    /**
-     * @dev Get the locking period of the tokens to unstake.
-     * If already unstaked before calculate the weighted average.
-     * @param stake Stake data
-     * @param _tokens Amount of tokens to unstake
-     * @param _thawingPeriod Period in blocks that need to pass before withdrawal
-     * @return True if staked
-     */
-    function getLockingPeriod(
-        Stakes.Indexer memory stake,
-        uint256 _tokens,
-        uint256 _thawingPeriod
-    ) internal view returns (uint256) {
-        uint256 blockNum = block.number;
-        uint256 periodA = (stake.tokensLockedUntil > blockNum) ? stake.tokensLockedUntil.sub(blockNum) : 0;
-        uint256 periodB = _thawingPeriod;
-        uint256 stakeA = stake.tokensLocked;
-        uint256 stakeB = _tokens;
-        return periodA.mul(stakeA).add(periodB.mul(stakeB)).div(stakeA.add(stakeB));
-    }
+    // -- Slashing --
 
-    /**
-     * @dev Return true if there are tokens staked by the Indexer.
-     * @param stake Stake data
-     * @return True if staked
-     */
-    function hasTokens(Stakes.Indexer memory stake) internal pure returns (bool) {
-        return stake.tokensStaked > 0;
-    }
+    /// @dev List of addresses allowed to slash stakes
+    mapping(address => bool) internal __slashers;
 
-    /**
-     * @dev Return the amount of tokens used in allocations and locked for withdrawal.
-     * @param stake Stake data
-     * @return Token amount
-     */
-    function tokensUsed(Stakes.Indexer memory stake) internal pure returns (uint256) {
-        return stake.tokensAllocated.add(stake.tokensLocked);
-    }
+    // -- Delegation --
 
-    /**
-     * @dev Return the amount of tokens staked not considering the ones that are already going
-     * through the thawing period or are ready for withdrawal. We call it secure stake because
-     * it is not subject to change by a withdraw call from the indexer.
-     * @param stake Stake data
-     * @return Token amount
-     */
-    function tokensSecureStake(Stakes.Indexer memory stake) internal pure returns (uint256) {
-        return stake.tokensStaked.sub(stake.tokensLocked);
-    }
+    /// @dev Set the delegation capacity multiplier defined by the delegation ratio
+    /// If delegation ratio is 100, and an Indexer has staked 5 GRT,
+    /// then they can use up to 500 GRT from the delegated stake
+    uint32 internal __delegationRatio;
 
-    /**
-     * @dev Tokens free balance on the indexer stake that can be used for any purpose.
-     * Any token that is allocated cannot be used as well as tokens that are going through the
-     * thawing period or are withdrawable
-     * Calc: tokensStaked - tokensAllocated - tokensLocked
-     * @param stake Stake data
-     * @return Token amount
-     */
-    function tokensAvailable(Stakes.Indexer memory stake) internal pure returns (uint256) {
-        return stake.tokensAvailableWithDelegation(0);
-    }
+    /// @dev Time in blocks an indexer needs to wait to change delegation parameters (deprecated)
+    uint32 internal __DEPRECATED_delegationParametersCooldown; // solhint-disable-line var-name-mixedcase
 
-    /**
-     * @dev Tokens free balance on the indexer stake that can be used for allocations.
-     * This function accepts a parameter for extra delegated capacity that takes into
-     * account delegated tokens
-     * @param stake Stake data
-     * @param _delegatedCapacity Amount of tokens used from delegators to calculate availability
-     * @return Token amount
-     */
-    function tokensAvailableWithDelegation(
-        Stakes.Indexer memory stake,
-        uint256 _delegatedCapacity
-    ) internal pure returns (uint256) {
-        uint256 tokensCapacity = stake.tokensStaked.add(_delegatedCapacity);
-        uint256 _tokensUsed = stake.tokensUsed();
-        // If more tokens are used than the current capacity, the indexer is overallocated.
-        // This means the indexer doesn't have available capacity to create new allocations.
-        // We can reach this state when the indexer has funds allocated and then any
-        // of these conditions happen:
-        // - The delegationCapacity ratio is reduced.
-        // - The indexer stake is slashed.
-        // - A delegator removes enough stake.
-        if (_tokensUsed > tokensCapacity) {
-            // Indexer stake is over allocated: return 0 to avoid stake to be used until
-            // the overallocation is restored by staking more tokens, unallocating tokens
-            // or using more delegated funds
-            return 0;
-        }
-        return tokensCapacity.sub(_tokensUsed);
-    }
+    /// @dev Time in epochs a delegator needs to wait to withdraw delegated stake
+    uint32 internal __delegationUnbondingPeriod; // in epochs
 
-    /**
-     * @dev Tokens available for withdrawal after thawing period.
-     * @param stake Stake data
-     * @return Token amount
-     */
-    function tokensWithdrawable(Stakes.Indexer memory stake) internal view returns (uint256) {
-        // No tokens to withdraw before locking period
-        if (stake.tokensLockedUntil == 0 || block.number < stake.tokensLockedUntil) {
-            return 0;
-        }
-        return stake.tokensLocked;
-    }
+    /// @dev Percentage of tokens to tax a delegation deposit
+    /// Parts per million. (Allows for 4 decimal points, 999,999 = 99.9999%)
+    uint32 internal __delegationTaxPercentage;
+
+    /// @dev Delegation pools : indexer => DelegationPool
+    mapping(address => IStakingData.DelegationPool) internal __delegationPools;
+
+    // -- Operators --
+
+    /// @dev Operator auth : indexer => operator => is authorized
+    mapping(address => mapping(address => bool)) internal __operatorAuth;
+
+    // -- Asset Holders --
+
+    /// @dev DEPRECATED: Allowed AssetHolders: assetHolder => is allowed
+    mapping(address => bool) private __DEPRECATED_assetHolders; // solhint-disable-line var-name-mixedcase
+}
+
+/**
+ * @title StakingV2Storage
+ * @author Edge & Node
+ * @notice This contract holds all the storage variables for the Staking contract, version 2
+ * @dev Note that we use a double underscore prefix for variable names; this prefix identifies
+ * variables that used to be public but are now internal, getters can be found on StakingExtension.sol.
+ */
+contract StakingV2Storage is StakingV1Storage {
+    /// @dev Destination of accrued rewards : beneficiary => rewards destination
+    mapping(address => address) internal __rewardsDestination;
+}
+
+/**
+ * @title StakingV3Storage
+ * @author Edge & Node
+ * @notice This contract holds all the storage variables for the base Staking contract, version 3.
+ */
+contract StakingV3Storage is StakingV2Storage {
+    /// @dev Address of the counterpart Staking contract on L1/L2
+    address internal counterpartStakingAddress;
+    /// @dev Address of the StakingExtension implementation
+    address internal extensionImpl;
+}
+
+/**
+ * @title StakingV4Storage
+ * @author Edge & Node
+ * @notice This contract holds all the storage variables for the base Staking contract, version 4.
+ * @dev Note that it includes a storage gap - if adding future versions, make sure to move the gap
+ * to the new version and reduce the size of the gap accordingly.
+ */
+contract StakingV4Storage is StakingV3Storage {
+    /// @dev Numerator for the lambda parameter in exponential rebate calculations
+    uint32 internal __lambdaNumerator;
+    /// @dev Denominator for the lambda parameter in exponential rebate calculations
+    uint32 internal __lambdaDenominator;
+
+    /// @dev Gap to allow adding variables in future upgrades (since L1Staking and L2Staking can have their own storage as well)
+    uint256[50] private __gap;
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -1306,58 +1358,6 @@ library MathUtils {
      */
     function diffOrZero(uint256 x, uint256 y) internal pure returns (uint256) {
         return (x > y) ? x - y : 0;
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-pragma solidity ^0.7.6 || 0.8.27 || 0.8.33;
-
-/* solhint-disable gas-custom-errors */ // Cannot use custom errors with 0.7.6
-
-import { IGraphToken } from "@graphprotocol/interfaces/contracts/contracts/token/IGraphToken.sol";
-
-/**
- * @title TokenUtils library
- * @author Edge & Node
- * @notice This library contains utility functions for handling tokens (transfers and burns).
- * It is specifically adapted for the GraphToken, so does not need to handle edge cases
- * for other tokens.
- */
-library TokenUtils {
-    /**
-     * @notice Pull tokens from an address to this contract.
-     * @param _graphToken Token to transfer
-     * @param _from Address sending the tokens
-     * @param _amount Amount of tokens to transfer
-     */
-    function pullTokens(IGraphToken _graphToken, address _from, uint256 _amount) internal {
-        if (_amount > 0) {
-            require(_graphToken.transferFrom(_from, address(this), _amount), "!transfer");
-        }
-    }
-
-    /**
-     * @notice Push tokens from this contract to a receiving address.
-     * @param _graphToken Token to transfer
-     * @param _to Address receiving the tokens
-     * @param _amount Amount of tokens to transfer
-     */
-    function pushTokens(IGraphToken _graphToken, address _to, uint256 _amount) internal {
-        if (_amount > 0) {
-            require(_graphToken.transfer(_to, _amount), "!transfer");
-        }
-    }
-
-    /**
-     * @notice Burn tokens held by this contract.
-     * @param _graphToken Token to burn
-     * @param _amount Amount of tokens to burn
-     */
-    function burnTokens(IGraphToken _graphToken, uint256 _amount) internal {
-        if (_amount > 0) {
-            _graphToken.burn(_amount);
-        }
     }
 }
 

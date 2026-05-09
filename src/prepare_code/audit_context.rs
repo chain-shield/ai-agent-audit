@@ -282,6 +282,29 @@ struct GeneratedMarkdown {
     source_notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BountyPlatform {
+    Code4rena,
+    Immunefi,
+}
+
+#[derive(Debug, Clone)]
+struct BountyArtifactPaths {
+    platform: BountyPlatform,
+    source_json: PathBuf,
+    bounty_rules_md: PathBuf,
+    severity_rubric_md: PathBuf,
+    severity_rubric_json: PathBuf,
+    poc_runtime_md: Option<PathBuf>,
+    poc_runtime_json: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+enum FetchedBounty {
+    Code4rena(Code4renaBountyData),
+    Immunefi(ImmunefiBountyData),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExternalContractScopeAsset {
     label: String,
@@ -327,6 +350,12 @@ struct ExternalContractScopeResolutionReport {
     unresolved: Vec<ExternalContractScopeAsset>,
     metadata: Vec<ExternalContractMetadata>,
     warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct DeploymentScopePageCandidate {
+    url: String,
+    label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -399,6 +428,95 @@ struct CodexExternalScopeUnresolvedAsset {
     reason: String,
 }
 
+impl BountyPlatform {
+    // Platform-specific files share the same lifecycle: write raw source JSON,
+    // markdown rules, and machine-readable severity data before LLM context.
+    fn artifact_paths(self, output_dir: &Path, artifact_prefix: &str) -> BountyArtifactPaths {
+        match self {
+            BountyPlatform::Code4rena => BountyArtifactPaths {
+                platform: self,
+                source_json: output_dir
+                    .join(format!("{artifact_prefix}-code4rena-bounty-source.json")),
+                bounty_rules_md: output_dir
+                    .join(format!("{artifact_prefix}-code4rena-bounty-rules.md")),
+                severity_rubric_md: output_dir
+                    .join(format!("{artifact_prefix}-code4rena-severity-rubric.md")),
+                severity_rubric_json: output_dir
+                    .join(format!("{artifact_prefix}-code4rena-severity-rubric.json")),
+                poc_runtime_md: None,
+                poc_runtime_json: None,
+            },
+            BountyPlatform::Immunefi => BountyArtifactPaths {
+                platform: self,
+                source_json: output_dir.join(format!("{artifact_prefix}-immunefi-source.json")),
+                bounty_rules_md: output_dir
+                    .join(format!("{artifact_prefix}-immunefi-bounty-rules.md")),
+                severity_rubric_md: output_dir
+                    .join(format!("{artifact_prefix}-immunefi-severity-rubric.md")),
+                severity_rubric_json: output_dir
+                    .join(format!("{artifact_prefix}-immunefi-severity-rubric.json")),
+                poc_runtime_md: Some(
+                    output_dir.join(format!("{artifact_prefix}-immunefi-poc-runtime.md")),
+                ),
+                poc_runtime_json: Some(
+                    output_dir.join(format!("{artifact_prefix}-immunefi-poc-runtime.json")),
+                ),
+            },
+        }
+    }
+}
+
+fn scope_bounty_platform(cli: &Cli) -> Option<BountyPlatform> {
+    // Scope policy is keyed by audit type, even when a platform URL is missing,
+    // because fallback behavior must still fail closed for bounty modes.
+    match cli.audit_type {
+        AuditType::Code4renaBounty => Some(BountyPlatform::Code4rena),
+        AuditType::ImmunefiBugBounty => Some(BountyPlatform::Immunefi),
+        _ => None,
+    }
+}
+
+impl BountyArtifactPaths {
+    fn for_cli(cli: &Cli, output_dir: &Path, artifact_prefix: &str) -> Option<Self> {
+        // Only create C4 bounty artifacts when there is an actual configured
+        // bounty page. Immunefi bounty mode always requires a live bounty URL.
+        if matches!(cli.audit_type, AuditType::Code4renaBounty) && cli.code4rena_bounty.is_some() {
+            return Some(BountyPlatform::Code4rena.artifact_paths(output_dir, artifact_prefix));
+        }
+        if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
+            return Some(BountyPlatform::Immunefi.artifact_paths(output_dir, artifact_prefix));
+        }
+        None
+    }
+
+    fn extra_docs(&self) -> Vec<PathBuf> {
+        let mut docs = vec![
+            self.bounty_rules_md.clone(),
+            self.severity_rubric_md.clone(),
+        ];
+        if let Some(poc_runtime_md) = &self.poc_runtime_md {
+            docs.push(poc_runtime_md.clone());
+        }
+        docs
+    }
+}
+
+impl FetchedBounty {
+    fn code4rena(&self) -> Option<&Code4renaBountyData> {
+        match self {
+            FetchedBounty::Code4rena(bounty) => Some(bounty),
+            FetchedBounty::Immunefi(_) => None,
+        }
+    }
+
+    fn immunefi(&self) -> Option<&ImmunefiBountyData> {
+        match self {
+            FetchedBounty::Code4rena(_) => None,
+            FetchedBounty::Immunefi(bounty) => Some(bounty),
+        }
+    }
+}
+
 /// Generates all audit-context artifacts for a prepared repository workspace.
 ///
 /// `@notice` This is the top-level context-generation entry point called after
@@ -430,54 +548,14 @@ pub async fn generate_audit_context(
     let scope_md = output_dir.join(format!("{artifact_prefix}-scope.md"));
     let docs_md = output_dir.join(format!("{artifact_prefix}-docs.md"));
     let sources_json = output_dir.join(format!("{artifact_prefix}-context-sources.json"));
-    let mut extra_docs = Vec::new();
-    let code4rena_artifacts =
-        if matches!(cli.audit_type, AuditType::Code4renaBounty) && cli.code4rena_bounty.is_some() {
-            let source_json =
-                output_dir.join(format!("{artifact_prefix}-code4rena-bounty-source.json"));
-            let bounty_rules_md =
-                output_dir.join(format!("{artifact_prefix}-code4rena-bounty-rules.md"));
-            let severity_rubric_md =
-                output_dir.join(format!("{artifact_prefix}-code4rena-severity-rubric.md"));
-            let severity_rubric_json =
-                output_dir.join(format!("{artifact_prefix}-code4rena-severity-rubric.json"));
-            extra_docs.extend([bounty_rules_md.clone(), severity_rubric_md.clone()]);
-            Some((
-                source_json,
-                bounty_rules_md,
-                severity_rubric_md,
-                severity_rubric_json,
-            ))
-        } else {
-            None
-        };
-    let immunefi_artifacts = if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
-        let source_json = output_dir.join(format!("{artifact_prefix}-immunefi-source.json"));
-        let bounty_rules_md =
-            output_dir.join(format!("{artifact_prefix}-immunefi-bounty-rules.md"));
-        let severity_rubric_md =
-            output_dir.join(format!("{artifact_prefix}-immunefi-severity-rubric.md"));
-        let severity_rubric_json =
-            output_dir.join(format!("{artifact_prefix}-immunefi-severity-rubric.json"));
-        let poc_runtime_md = output_dir.join(format!("{artifact_prefix}-immunefi-poc-runtime.md"));
-        let poc_runtime_json =
-            output_dir.join(format!("{artifact_prefix}-immunefi-poc-runtime.json"));
-        extra_docs.extend([
-            bounty_rules_md.clone(),
-            severity_rubric_md.clone(),
-            poc_runtime_md.clone(),
-        ]);
-        Some((
-            source_json,
-            bounty_rules_md,
-            severity_rubric_md,
-            severity_rubric_json,
-            poc_runtime_md,
-            poc_runtime_json,
-        ))
-    } else {
-        None
-    };
+    // Bounty modes emit platform-specific rule/rubric files alongside the
+    // generic context artifacts. Keep path construction centralized so C4 and
+    // Immunefi do not drift as the artifact set evolves.
+    let bounty_artifacts = BountyArtifactPaths::for_cli(cli, &output_dir, &artifact_prefix);
+    let extra_docs = bounty_artifacts
+        .as_ref()
+        .map(BountyArtifactPaths::extra_docs)
+        .unwrap_or_default();
 
     let mut report = ContextSourceReport {
         artifact_prefix: artifact_prefix.clone(),
@@ -493,6 +571,8 @@ pub async fn generate_audit_context(
         && docs_md.exists()
         && extra_docs.iter().all(|path| path.exists());
     if all_outputs_exist && !context_config.force_regenerate {
+        // Cached artifacts are safe to reuse only when every mode-specific
+        // markdown artifact exists. Raw JSON sidecars are diagnostic, not inputs.
         info!(
             "Reusing generated audit context files in {}",
             output_dir.display()
@@ -510,102 +590,15 @@ pub async fn generate_audit_context(
         });
     }
 
-    let code4rena_bounty =
-        if let Some((source_json, bounty_rules_md, severity_rubric_md, severity_rubric_json)) =
-            &code4rena_artifacts
-        {
-            let bounty_url = cli
-                .code4rena_bounty
-                .as_deref()
-                .context("code4rena_bounty is required for Code4renaBounty context generation")?;
-            let bounty = fetch_code4rena_bounty(bounty_url).await.with_context(|| {
-                format!("Failed to fetch Code4rena bounty metadata from {bounty_url}")
-            })?;
-            fs::write(&source_json, serde_json::to_string_pretty(&bounty)?)
-                .with_context(|| format!("Failed to write {}", source_json.display()))?;
-            fs::write(
-                &bounty_rules_md,
-                render_code4rena_bounty_rules_markdown(&bounty),
-            )
-            .with_context(|| format!("Failed to write {}", bounty_rules_md.display()))?;
-            fs::write(
-                &severity_rubric_md,
-                render_code4rena_severity_rubric_markdown(&bounty),
-            )
-            .with_context(|| format!("Failed to write {}", severity_rubric_md.display()))?;
-            fs::write(
-                &severity_rubric_json,
-                render_code4rena_severity_rubric_json(&bounty)?,
-            )
-            .with_context(|| format!("Failed to write {}", severity_rubric_json.display()))?;
-            info!(
-                "Wrote Code4rena bounty rules and severity rubric: rules={}, rubric={}",
-                bounty_rules_md.display(),
-                severity_rubric_md.display()
-            );
-            Some(bounty)
-        } else {
-            None
-        };
-
-    let immunefi_bounty = if let Some((
-        source_json,
-        bounty_rules_md,
-        severity_rubric_md,
-        severity_rubric_json,
-        poc_runtime_md,
-        poc_runtime_json,
-    )) = &immunefi_artifacts
-    {
-        let bounty_url = cli
-            .immunefi_bounty
-            .as_deref()
-            .context("immunefi_bounty is required for AuditType::ImmunefiBugBounty")?;
-        let bounty = fetch_immunefi_bounty(bounty_url).await.with_context(|| {
-            format!("Failed to fetch Immunefi bounty metadata from {bounty_url}")
-        })?;
-        fs::write(&source_json, serde_json::to_string_pretty(&bounty)?)
-            .with_context(|| format!("Failed to write {}", source_json.display()))?;
-        info!(
-            "Wrote Immunefi bounty source report: path={}",
-            source_json.display()
-        );
-        let poc_runtime = build_immunefi_poc_runtime(&bounty, &cli.poc);
-        fs::write(
-            &bounty_rules_md,
-            render_immunefi_bounty_rules_markdown(&bounty),
-        )
-        .with_context(|| format!("Failed to write {}", bounty_rules_md.display()))?;
-        fs::write(
-            &severity_rubric_md,
-            render_immunefi_severity_rubric_markdown(&bounty),
-        )
-        .with_context(|| format!("Failed to write {}", severity_rubric_md.display()))?;
-        fs::write(
-            &severity_rubric_json,
-            render_immunefi_severity_rubric_json(&bounty)?,
-        )
-        .with_context(|| format!("Failed to write {}", severity_rubric_json.display()))?;
-        fs::write(
-            &poc_runtime_md,
-            render_immunefi_poc_runtime_markdown(&poc_runtime),
-        )
-        .with_context(|| format!("Failed to write {}", poc_runtime_md.display()))?;
-        fs::write(
-            &poc_runtime_json,
-            serde_json::to_string_pretty(&poc_runtime)?,
-        )
-        .with_context(|| format!("Failed to write {}", poc_runtime_json.display()))?;
-        info!(
-            "Wrote Immunefi bounty rules, severity rubric, and PoC runtime: rules={}, rubric={}, runtime={}",
-            bounty_rules_md.display(),
-            severity_rubric_md.display(),
-            poc_runtime_md.display()
-        );
-        Some(bounty)
+    // Fetch once, render all platform artifacts, then pass borrowed bounty data
+    // into generic source collection and scope resolution.
+    let fetched_bounty = if let Some(artifacts) = &bounty_artifacts {
+        Some(fetch_and_write_bounty_artifacts(cli, artifacts).await?)
     } else {
         None
     };
+    let code4rena_bounty = fetched_bounty.as_ref().and_then(FetchedBounty::code4rena);
+    let immunefi_bounty = fetched_bounty.as_ref().and_then(FetchedBounty::immunefi);
 
     info!(
         "Generating audit context artifacts for {} from {}",
@@ -619,8 +612,8 @@ pub async fn generate_audit_context(
         protocol_root,
         repo_name,
         &cli.audit_type,
-        code4rena_bounty.as_ref(),
-        immunefi_bounty.as_ref(),
+        code4rena_bounty,
+        immunefi_bounty,
     )
     .await?;
     report.link_decisions = link_decisions;
@@ -652,8 +645,8 @@ pub async fn generate_audit_context(
         protocol_root,
         &scope_txt,
         &sources,
-        code4rena_bounty.as_ref(),
-        immunefi_bounty.as_ref(),
+        code4rena_bounty,
+        immunefi_bounty,
     )
     .await?;
     report.warnings.extend(scope_file_list.warnings.clone());
@@ -734,6 +727,126 @@ pub async fn generate_audit_context(
     })
 }
 
+async fn fetch_and_write_bounty_artifacts(
+    cli: &Cli,
+    artifacts: &BountyArtifactPaths,
+) -> Result<FetchedBounty> {
+    match artifacts.platform {
+        BountyPlatform::Code4rena => {
+            // Code4rena bounty pages provide smart-contract scope, custom
+            // severity rules, and program-specific exclusions in one page.
+            let bounty_url = cli
+                .code4rena_bounty
+                .as_deref()
+                .context("code4rena_bounty is required for Code4renaBounty context generation")?;
+            let bounty = fetch_code4rena_bounty(bounty_url).await.with_context(|| {
+                format!("Failed to fetch Code4rena bounty metadata from {bounty_url}")
+            })?;
+            fs::write(
+                &artifacts.source_json,
+                serde_json::to_string_pretty(&bounty)?,
+            )
+            .with_context(|| format!("Failed to write {}", artifacts.source_json.display()))?;
+            fs::write(
+                &artifacts.bounty_rules_md,
+                render_code4rena_bounty_rules_markdown(&bounty),
+            )
+            .with_context(|| format!("Failed to write {}", artifacts.bounty_rules_md.display()))?;
+            fs::write(
+                &artifacts.severity_rubric_md,
+                render_code4rena_severity_rubric_markdown(&bounty),
+            )
+            .with_context(|| {
+                format!("Failed to write {}", artifacts.severity_rubric_md.display())
+            })?;
+            fs::write(
+                &artifacts.severity_rubric_json,
+                render_code4rena_severity_rubric_json(&bounty)?,
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to write {}",
+                    artifacts.severity_rubric_json.display()
+                )
+            })?;
+            info!(
+                "Wrote Code4rena bounty rules and severity rubric: rules={}, rubric={}",
+                artifacts.bounty_rules_md.display(),
+                artifacts.severity_rubric_md.display()
+            );
+            Ok(FetchedBounty::Code4rena(bounty))
+        }
+        BountyPlatform::Immunefi => {
+            // Immunefi has separate tabs plus PoC runtime constraints. Keep
+            // Smart Contract data, fork preferences, and severity rows together.
+            let bounty_url = cli
+                .immunefi_bounty
+                .as_deref()
+                .context("immunefi_bounty is required for AuditType::ImmunefiBugBounty")?;
+            let bounty = fetch_immunefi_bounty(bounty_url).await.with_context(|| {
+                format!("Failed to fetch Immunefi bounty metadata from {bounty_url}")
+            })?;
+            fs::write(
+                &artifacts.source_json,
+                serde_json::to_string_pretty(&bounty)?,
+            )
+            .with_context(|| format!("Failed to write {}", artifacts.source_json.display()))?;
+            info!(
+                "Wrote Immunefi bounty source report: path={}",
+                artifacts.source_json.display()
+            );
+            let poc_runtime = build_immunefi_poc_runtime(&bounty, &cli.poc);
+            fs::write(
+                &artifacts.bounty_rules_md,
+                render_immunefi_bounty_rules_markdown(&bounty),
+            )
+            .with_context(|| format!("Failed to write {}", artifacts.bounty_rules_md.display()))?;
+            fs::write(
+                &artifacts.severity_rubric_md,
+                render_immunefi_severity_rubric_markdown(&bounty),
+            )
+            .with_context(|| {
+                format!("Failed to write {}", artifacts.severity_rubric_md.display())
+            })?;
+            fs::write(
+                &artifacts.severity_rubric_json,
+                render_immunefi_severity_rubric_json(&bounty)?,
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to write {}",
+                    artifacts.severity_rubric_json.display()
+                )
+            })?;
+            let poc_runtime_md = artifacts
+                .poc_runtime_md
+                .as_ref()
+                .context("internal error: Immunefi PoC runtime markdown path missing")?;
+            let poc_runtime_json = artifacts
+                .poc_runtime_json
+                .as_ref()
+                .context("internal error: Immunefi PoC runtime JSON path missing")?;
+            fs::write(
+                poc_runtime_md,
+                render_immunefi_poc_runtime_markdown(&poc_runtime),
+            )
+            .with_context(|| format!("Failed to write {}", poc_runtime_md.display()))?;
+            fs::write(
+                poc_runtime_json,
+                serde_json::to_string_pretty(&poc_runtime)?,
+            )
+            .with_context(|| format!("Failed to write {}", poc_runtime_json.display()))?;
+            info!(
+                "Wrote Immunefi bounty rules, severity rubric, and PoC runtime: rules={}, rubric={}, runtime={}",
+                artifacts.bounty_rules_md.display(),
+                artifacts.severity_rubric_md.display(),
+                poc_runtime_md.display()
+            );
+            Ok(FetchedBounty::Immunefi(bounty))
+        }
+    }
+}
+
 pub fn should_generate_context(cli: &Cli) -> bool {
     // Bounty modes always regenerate/consume dynamic context because the bounty
     // page is the source of truth for rules, severity, scope, and runtime hints.
@@ -800,6 +913,8 @@ async fn collect_context_sources(
     let code4rena_bounty_audit = matches!(audit_type, AuditType::Code4renaBounty);
     let immunefi_bug_bounty = matches!(audit_type, AuditType::ImmunefiBugBounty);
 
+    // Entry sources are the high-trust roots. Immunefi uses captured tabs;
+    // other modes start from configured local files, usually README.md.
     if immunefi_bug_bounty {
         let bounty = immunefi_bounty
             .context("internal error: missing fetched Immunefi bounty data for context sources")?;
@@ -839,6 +954,8 @@ async fn collect_context_sources(
         push_code4rena_bounty_source(&mut sources, &mut seen_locations, bounty)?;
     }
 
+    // Local known-issue and audit notes are scope context, but not traversal
+    // roots. This avoids recursively chasing old report/navigation links.
     let known_issue_files = discover_known_issue_files(protocol_root);
     debug!(
         "Codex context discovery: found {} possible known-issues/security/audit markdown files",
@@ -860,6 +977,8 @@ async fn collect_context_sources(
     }
 
     if protocol_root.join("scope.txt").exists() {
+        // A repo-provided scope.txt is the strongest machine-readable scope
+        // signal, so preserve it as source material for provenance as well.
         debug!(
             "Codex context discovery: found repository scope.txt at {}",
             protocol_root.join("scope.txt").display()
@@ -875,6 +994,8 @@ async fn collect_context_sources(
     }
 
     let mut links = Vec::new();
+    // Second-level traversal is intentionally shallow and budgeted. Entry
+    // sources can point us to docs/scope/rules; linked pages do not fan out.
     for source in &sources {
         if !should_extract_links_from_source(source) {
             debug!(
@@ -896,6 +1017,8 @@ async fn collect_context_sources(
         links.len()
     );
     for url in &config.urls {
+        // User-configured URLs bypass entry-source extraction but still pass
+        // through the same classification, skip, and fetch-budget rules.
         debug!(
             "Codex context discovery: adding configured context URL {}",
             url
@@ -907,6 +1030,8 @@ async fn collect_context_sources(
         });
     }
     if code4rena_bounty_audit {
+        // C4 bounty defaults are mandatory context unless the bounty page
+        // narrows them, so they are fetched outside the normal remote budget.
         links.push(ExtractedLink {
             from: "code4rena-bounty-defaults".to_string(),
             url: CODE4RENA_BOUNTY_GUIDE_URL.to_string(),
@@ -922,6 +1047,8 @@ async fn collect_context_sources(
         .iter()
         .filter(|link| classify_link(&link.url, &link.label) == LinkClassification::V12)
         .count();
+    // V12/prior finding reports are competition-only. Bounty audits must not
+    // inherit competition-stage assumptions or old contest submission rules.
     let v12_links = if !code4rena_competition {
         debug!(
             "Codex context discovery: skipping V12 lookup because audit_type={:?}; V12 context is Code4rena competition-only",
@@ -958,6 +1085,8 @@ async fn collect_context_sources(
     let mut failed_count = 0usize;
     let mut accepted_count = 0usize;
     for link in deduped_links {
+        // Every link gets a report entry so skipped/fetched decisions are
+        // auditable in `<protocol>-context-sources.json`.
         let classification = classify_link(&link.url, &link.label);
         debug!(
             "Codex context discovery: checking link from={}, classification={:?}, url={}",
@@ -992,6 +1121,8 @@ async fn collect_context_sources(
         let remote_link = is_remote_link(&link.url);
         let counts_against_remote_budget = remote_link_counts_against_fetch_budget(&classification);
         if remote_link && counts_against_remote_budget {
+            // Remote pages are the noisiest inputs. Keep total fetches small,
+            // and keep prior audits even tighter because they are often long.
             if remote_fetch_count >= MAX_REMOTE_LINK_FETCHES {
                 let reason = format!(
                     "Skipped remote link after reaching fetch budget of {MAX_REMOTE_LINK_FETCHES}"
@@ -2649,6 +2780,8 @@ async fn generate_scope_txt(
     // means the repo/subfolder is wrong.
     let source_scope = protocol_root.join("scope.txt");
     if source_scope.exists() {
+        // A checked-in scope.txt wins over inferred scope. We still normalize
+        // and existence-check lines so downstream reports can show misses.
         info!(
             "Codex task: creating scope.txt by copying repository-provided scope file {}",
             source_scope.display()
@@ -2677,38 +2810,20 @@ async fn generate_scope_txt(
     let mut external_scope_asset_count = 0usize;
     let mut external_scope_entry_count = 0usize;
     let mut external_scope_unresolved = Vec::new();
-    let external_contract_scope_audit = matches!(
-        cli.audit_type,
-        AuditType::Code4renaBounty | AuditType::ImmunefiBugBounty
-    );
-    let bounty_scope_names = if matches!(cli.audit_type, AuditType::Code4renaBounty) {
-        let bounty_scope =
-            deterministic_bounty_contract_name_scope_extract(sources, protocol_root, cli);
-        if !bounty_scope.entries.is_empty() {
-            source = ScopeFileSource::ExtractedFromBountyScope;
-            extracted.extend(bounty_scope.entries.clone());
-        }
-        if !bounty_scope.unmapped_names.is_empty() {
-            warnings.push(format!(
-                "Could not map {} bounty scope contract names to local Solidity definitions: {}",
-                bounty_scope.unmapped_names.len(),
-                bounty_scope.unmapped_names.join(", ")
-            ));
-        }
-        bounty_scope.discovered_names
-    } else {
-        Vec::new()
-    };
-    if matches!(cli.audit_type, AuditType::Code4renaBounty)
-        && let Some(bounty) = code4rena_bounty
-    {
-        let github_scope = code4rena_github_scope_entries(bounty, protocol_root, cli);
-        if !github_scope.is_empty() {
-            source = ScopeFileSource::ExtractedFromBountyScope;
-            extracted.extend(github_scope);
-        }
+    let scope_platform = scope_bounty_platform(cli);
+    let external_contract_scope_audit = scope_platform.is_some();
+    // C4 pages often list contract names or GitHub blobs instead of local
+    // paths. Resolve those before trying heavier explorer metadata.
+    let code4rena_scope =
+        collect_code4rena_bounty_scope(cli, protocol_root, sources, code4rena_bounty);
+    if !code4rena_scope.entries.is_empty() {
+        source = ScopeFileSource::ExtractedFromBountyScope;
+        extracted.extend(code4rena_scope.entries);
     }
+    warnings.extend(code4rena_scope.warnings);
     if external_contract_scope_audit {
+        // Bounty explorer/deployment assets are precise scope claims. Map them
+        // to local Solidity files before permitting any broad fallback.
         let external_scope = resolve_external_contract_scope(
             cli,
             protocol_root,
@@ -2739,43 +2854,51 @@ async fn generate_scope_txt(
             && !default_non_runtime_scope_path_excludes(&entry.path)
     });
     let existing_count = extracted.iter().filter(|entry| entry.exists).count();
-    if matches!(cli.audit_type, AuditType::Code4renaBounty)
-        && !bounty_scope_names.is_empty()
+    // Contract-name extraction proves the bounty declared concrete contracts.
+    // If none map locally, the prepared repo/subfolder is probably wrong.
+    if scope_platform == Some(BountyPlatform::Code4rena)
+        && !code4rena_scope.discovered_names.is_empty()
         && existing_count == 0
     {
         anyhow::bail!(
             "Found Code4rena bounty scope contract names in context but none mapped to local Solidity files: {}. Provide context.files/context.urls that identify the source repo, adjust code_folders/subfolder, or provide scoped_files explicitly.",
-            bounty_scope_names.join(", ")
+            code4rena_scope.discovered_names.join(", ")
         );
     }
     if external_contract_scope_audit
         && external_scope_asset_count > 0
         && external_scope_entry_count == 0
     {
+        // Explorer-linked assets are exact deployed-scope inputs. Auditing all
+        // code instead would produce false confidence and mispriced findings.
         anyhow::bail!(
             "Found {external_scope_asset_count} external explorer-linked bounty scope assets but none mapped to local Solidity files. See {} for details. Provide the correct source repo/subfolder or add scoped_files explicitly.",
             external_scope_resolution_report_path(output_path).display()
         );
     }
-    if matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
+    if scope_platform == Some(BountyPlatform::Immunefi)
         && external_scope_asset_count == 0
         && immunefi_bounty
             .map(|bounty| !bounty.smart_contract_assets(false).is_empty())
             .unwrap_or(false)
     {
+        // Immunefi Smart Contract scope must resolve from structured assets or
+        // deployment pages; Web & App / broad repo content is intentionally out.
         anyhow::bail!(
             "Immunefi Smart Contract assets were found, but no explorer-linked deployed contracts could be extracted directly or from deployment pages. See {} for details. Refusing to fall back to all code folders because Immunefi scope must be precise.",
             external_scope_resolution_report_path(output_path).display()
         );
     }
     if external_contract_scope_audit && !external_scope_unresolved.is_empty() {
+        // C4 bounties fail closed on any unresolved deployed asset. Immunefi
+        // records unresolved assets as warnings after mapped entries exist.
         let preview = external_scope_unresolved
             .iter()
             .take(10)
             .map(|asset| format!("{} ({})", asset.label, asset.address))
             .collect::<Vec<_>>()
             .join(", ");
-        if matches!(cli.audit_type, AuditType::Code4renaBounty) {
+        if scope_platform == Some(BountyPlatform::Code4rena) {
             anyhow::bail!(
                 "Could not map {} external explorer-linked bounty scope assets to local Solidity files: {}. See {} for the full resolution report. Refusing to fall back to all code folders because Code4rena bounty submissions cost money and scope must be precise.",
                 external_scope_unresolved.len(),
@@ -2791,7 +2914,10 @@ async fn generate_scope_txt(
         ));
     }
     if extracted.is_empty() || existing_count == 0 {
-        if matches!(cli.audit_type, AuditType::Code4renaBounty)
+        // Generic/competition audits can fall back to configured code folders.
+        // Bounty modes only reach this point when no precise structured scope
+        // exists or when platform policy explicitly allows the fallback.
+        if scope_platform == Some(BountyPlatform::Code4rena)
             && code4rena_bounty
                 .map(code4rena_structured_scope_requires_precise_mapping)
                 .unwrap_or(false)
@@ -2801,7 +2927,7 @@ async fn generate_scope_txt(
                 cli.code_folders
             );
         }
-        if matches!(cli.audit_type, AuditType::ImmunefiBugBounty) {
+        if scope_platform == Some(BountyPlatform::Immunefi) {
             anyhow::bail!(
                 "Could not map Immunefi Smart Contract scope to local Solidity files. Refusing to fall back to all Solidity files under configured code_folders {:?}. Provide the correct repo/subfolder or scoped_files explicitly.",
                 cli.code_folders
@@ -2915,6 +3041,49 @@ struct BountyContractNameScope {
     entries: Vec<ScopeFileEntry>,
     discovered_names: Vec<String>,
     unmapped_names: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct BountyScopeExtraction {
+    entries: Vec<ScopeFileEntry>,
+    discovered_names: Vec<String>,
+    warnings: Vec<String>,
+}
+
+fn collect_code4rena_bounty_scope(
+    cli: &Cli,
+    protocol_root: &Path,
+    sources: &[SourceContent],
+    bounty: Option<&Code4renaBountyData>,
+) -> BountyScopeExtraction {
+    if !matches!(cli.audit_type, AuditType::Code4renaBounty) {
+        return BountyScopeExtraction::default();
+    }
+
+    // Code4rena bounty scope may be written as contract names, GitHub blob
+    // links, or explorer/deployment links. This helper collects the local-file
+    // forms; explorer links are handled by external scope resolution later.
+    let mut extraction = BountyScopeExtraction::default();
+    let name_scope = deterministic_bounty_contract_name_scope_extract(sources, protocol_root, cli);
+    extraction.discovered_names = name_scope.discovered_names;
+    extraction.entries.extend(name_scope.entries);
+    if !name_scope.unmapped_names.is_empty() {
+        extraction.warnings.push(format!(
+            "Could not map {} bounty scope contract names to local Solidity definitions: {}",
+            name_scope.unmapped_names.len(),
+            name_scope.unmapped_names.join(", ")
+        ));
+    }
+
+    if let Some(bounty) = bounty {
+        extraction
+            .entries
+            .extend(code4rena_github_scope_entries(bounty, protocol_root, cli));
+    }
+
+    extraction.entries.sort_by(|a, b| a.path.cmp(&b.path));
+    extraction.entries.dedup_by(|a, b| a.path == b.path);
+    extraction
 }
 
 fn deterministic_bounty_contract_name_scope_extract(
@@ -3176,17 +3345,23 @@ async fn resolve_external_contract_scope(
     let mut resolution = ExternalContractScopeResolution::default();
     resolution.assets =
         external_contract_scope_assets_for_audit(cli, sources, code4rena_bounty, immunefi_bounty);
-    if matches!(cli.audit_type, AuditType::Code4renaBounty)
-        && let Some(bounty) = code4rena_bounty
-    {
-        let page_assets = fetch_code4rena_deployment_page_scope_assets(bounty).await;
-        merge_external_scope_assets(&mut resolution.assets, page_assets);
-    }
-    if matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
-        && let Some(bounty) = immunefi_bounty
-    {
-        let page_assets = fetch_immunefi_deployment_page_scope_assets(bounty).await;
-        merge_external_scope_assets(&mut resolution.assets, page_assets);
+    // Deployment/wiki pages are a second structured source for bounty scope.
+    // They are platform-specific at the edge, but both resolve into the same
+    // explorer asset model before local Solidity matching begins.
+    match scope_bounty_platform(cli) {
+        Some(BountyPlatform::Code4rena) => {
+            if let Some(bounty) = code4rena_bounty {
+                let page_assets = fetch_code4rena_deployment_page_scope_assets(bounty).await;
+                merge_external_scope_assets(&mut resolution.assets, page_assets);
+            }
+        }
+        Some(BountyPlatform::Immunefi) => {
+            if let Some(bounty) = immunefi_bounty {
+                let page_assets = fetch_immunefi_deployment_page_scope_assets(bounty).await;
+                merge_external_scope_assets(&mut resolution.assets, page_assets);
+            }
+        }
+        None => {}
     }
     if resolution.assets.is_empty() {
         return Ok(resolution);
@@ -3258,28 +3433,33 @@ fn external_contract_scope_assets_for_audit(
     code4rena_bounty: Option<&Code4renaBountyData>,
     immunefi_bounty: Option<&ImmunefiBountyData>,
 ) -> Vec<ExternalContractScopeAsset> {
-    if matches!(cli.audit_type, AuditType::Code4renaBounty)
-        && let Some(bounty) = code4rena_bounty
-    {
-        let assets = code4rena_external_contract_scope_assets(bounty);
-        if !assets.is_empty() {
-            return assets;
+    // Prefer structured platform assets over scraped source text. If a bounty
+    // page has structured scope but no direct explorer links, leave deployment
+    // pages to the dedicated fetcher instead of broad source scraping.
+    match scope_bounty_platform(cli) {
+        Some(BountyPlatform::Code4rena) => {
+            if let Some(bounty) = code4rena_bounty {
+                let assets = code4rena_external_contract_scope_assets(bounty);
+                if !assets.is_empty() {
+                    return assets;
+                }
+                if bounty.has_structured_scope_assets() {
+                    return Vec::new();
+                }
+            }
         }
-        if bounty.has_structured_scope_assets() {
-            return Vec::new();
+        Some(BountyPlatform::Immunefi) => {
+            if let Some(bounty) = immunefi_bounty {
+                let assets = immunefi_external_contract_scope_assets(bounty);
+                if !assets.is_empty() {
+                    return assets;
+                }
+                if !bounty.smart_contract_assets(false).is_empty() {
+                    return Vec::new();
+                }
+            }
         }
-    }
-
-    if matches!(cli.audit_type, AuditType::ImmunefiBugBounty)
-        && let Some(bounty) = immunefi_bounty
-    {
-        let assets = immunefi_external_contract_scope_assets(bounty);
-        if !assets.is_empty() {
-            return assets;
-        }
-        if !bounty.smart_contract_assets(false).is_empty() {
-            return Vec::new();
-        }
+        None => {}
     }
 
     external_contract_scope_assets_from_sources(sources)
@@ -3292,28 +3472,13 @@ fn code4rena_external_contract_scope_assets(
     let mut seen = BTreeSet::new();
 
     for asset in &bounty.scope_assets {
-        let url = clean_external_contract_url(&asset.url);
-        if !is_explorer_contract_url(&url) {
-            continue;
-        }
-        let Some(address) = contract_address_from_url(&url) else {
-            continue;
-        };
-        let explorer = explorer_host(&url).unwrap_or_else(|| "unknown-explorer".to_string());
-        let key = format!(
-            "{}|{}",
-            explorer.to_ascii_lowercase(),
-            address.to_ascii_lowercase()
+        push_explorer_scope_asset(
+            &mut assets,
+            &mut seen,
+            &asset.label,
+            &asset.url,
+            &bounty.url,
         );
-        if seen.insert(key) {
-            assets.push(ExternalContractScopeAsset {
-                label: asset.label.clone(),
-                url,
-                address,
-                explorer,
-                source_location: bounty.url.clone(),
-            });
-        }
     }
 
     assets.sort_by(|a, b| {
@@ -3335,35 +3500,20 @@ fn immunefi_external_contract_scope_assets(
         if asset.is_primacy_of_impact {
             continue;
         }
-        let url = clean_external_contract_url(&asset.url);
-        if !is_explorer_contract_url(&url) {
-            continue;
-        }
-        let Some(address) = contract_address_from_url(&url) else {
-            continue;
-        };
-        let explorer = explorer_host(&url).unwrap_or_else(|| "unknown-explorer".to_string());
         let label = asset
             .description
             .as_deref()
             .map(str::trim)
             .filter(|description| !description.is_empty())
-            .unwrap_or(&address)
+            .unwrap_or_default()
             .to_string();
-        let key = format!(
-            "{}|{}",
-            explorer.to_ascii_lowercase(),
-            address.to_ascii_lowercase()
+        push_explorer_scope_asset(
+            &mut assets,
+            &mut seen,
+            &label,
+            &asset.url,
+            &bounty.urls.scope,
         );
-        if seen.insert(key) {
-            assets.push(ExternalContractScopeAsset {
-                label,
-                url,
-                address,
-                explorer,
-                source_location: bounty.urls.scope.clone(),
-            });
-        }
     }
 
     assets.sort_by(|a, b| {
@@ -3375,65 +3525,103 @@ fn immunefi_external_contract_scope_assets(
     assets
 }
 
+fn push_explorer_scope_asset(
+    assets: &mut Vec<ExternalContractScopeAsset>,
+    seen: &mut BTreeSet<String>,
+    label: &str,
+    raw_url: &str,
+    source_location: &str,
+) {
+    // Normalize all platform-specific asset rows into one explorer/address
+    // record so later local-file matching does not care where it came from.
+    let url = clean_external_contract_url(raw_url);
+    if !is_explorer_contract_url(&url) {
+        return;
+    }
+    let Some(address) = contract_address_from_url(&url) else {
+        return;
+    };
+    let explorer = explorer_host(&url).unwrap_or_else(|| "unknown-explorer".to_string());
+    let key = format!(
+        "{}|{}",
+        explorer.to_ascii_lowercase(),
+        address.to_ascii_lowercase()
+    );
+    if seen.insert(key) {
+        let label = label.trim();
+        assets.push(ExternalContractScopeAsset {
+            label: if label.is_empty() {
+                address.clone()
+            } else {
+                label.to_string()
+            },
+            url,
+            address,
+            explorer,
+            source_location: source_location.to_string(),
+        });
+    }
+}
+
 async fn fetch_immunefi_deployment_page_scope_assets(
     bounty: &ImmunefiBountyData,
 ) -> Vec<ExternalContractScopeAsset> {
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .user_agent("ai-agent-audit-immunefi-scope/0.1")
-        .build()
-    else {
-        return Vec::new();
-    };
-
-    let mut out = Vec::new();
-    for asset in bounty.smart_contract_assets(false) {
-        if asset.is_primacy_of_impact || is_explorer_contract_url(&asset.url) {
-            continue;
-        }
-        let url = clean_external_contract_url(&asset.url);
-        if !is_remote_link(&url)
-            || !likely_deployment_scope_page(&url, asset.description.as_deref())
-        {
-            continue;
-        }
-        match fetch_deployment_scope_page_text(&client, &url).await {
-            Ok(text) => {
-                let production_text = production_scope_text(&text);
-                let parsed = external_contract_assets_from_text(&production_text, &url);
-                if parsed.is_empty() {
-                    debug!(
-                        "No explorer contract links extracted from Immunefi deployment page {url}"
-                    );
-                }
-                out.extend(parsed);
-            }
-            Err(err) => {
-                warn!("Could not fetch Immunefi deployment scope page {url}: {err:#}");
-            }
-        }
-    }
-    out
+    let candidates = bounty
+        .smart_contract_assets(false)
+        .into_iter()
+        .filter(|asset| !asset.is_primacy_of_impact && !is_explorer_contract_url(&asset.url))
+        .map(|asset| DeploymentScopePageCandidate {
+            url: asset.url.clone(),
+            label: asset.description.clone(),
+        })
+        .collect::<Vec<_>>();
+    fetch_platform_deployment_page_scope_assets(
+        "Immunefi",
+        "ai-agent-audit-immunefi-scope/0.1",
+        candidates,
+    )
+    .await
 }
 
 async fn fetch_code4rena_deployment_page_scope_assets(
     bounty: &Code4renaBountyData,
 ) -> Vec<ExternalContractScopeAsset> {
+    let candidates = bounty
+        .scope_assets
+        .iter()
+        .filter(|asset| !is_explorer_contract_url(&asset.url))
+        .map(|asset| DeploymentScopePageCandidate {
+            url: asset.url.clone(),
+            label: Some(asset.label.clone()),
+        })
+        .collect::<Vec<_>>();
+    fetch_platform_deployment_page_scope_assets(
+        "Code4rena",
+        "ai-agent-audit-code4rena-bounty-scope/0.1",
+        candidates,
+    )
+    .await
+}
+
+async fn fetch_platform_deployment_page_scope_assets(
+    platform_name: &str,
+    user_agent: &str,
+    candidates: Vec<DeploymentScopePageCandidate>,
+) -> Vec<ExternalContractScopeAsset> {
+    // Some bounty rows point to deployment wikis instead of explorers. Fetch
+    // only likely deployment pages, then keep production/mainnet sections.
     let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .user_agent("ai-agent-audit-code4rena-bounty-scope/0.1")
+        .user_agent(user_agent)
         .build()
     else {
         return Vec::new();
     };
 
     let mut out = Vec::new();
-    for asset in &bounty.scope_assets {
-        if is_explorer_contract_url(&asset.url) {
-            continue;
-        }
-        let url = clean_external_contract_url(&asset.url);
-        if !is_remote_link(&url) || !likely_deployment_scope_page(&url, Some(asset.label.as_str()))
+    for candidate in candidates {
+        let url = clean_external_contract_url(&candidate.url);
+        if !is_remote_link(&url) || !likely_deployment_scope_page(&url, candidate.label.as_deref())
         {
             continue;
         }
@@ -3443,13 +3631,13 @@ async fn fetch_code4rena_deployment_page_scope_assets(
                 let parsed = external_contract_assets_from_text(&production_text, &url);
                 if parsed.is_empty() {
                     debug!(
-                        "No explorer contract links extracted from Code4rena deployment page {url}"
+                        "No explorer contract links extracted from {platform_name} deployment page {url}"
                     );
                 }
                 out.extend(parsed);
             }
             Err(err) => {
-                warn!("Could not fetch Code4rena deployment scope page {url}: {err:#}");
+                warn!("Could not fetch {platform_name} deployment scope page {url}: {err:#}");
             }
         }
     }
@@ -4974,10 +5162,8 @@ fn fallback_scope_from_code_folders(cli: &Cli, protocol_root: &Path) -> Vec<Scop
 }
 
 fn scope_fallback_code_folders(cli: &Cli) -> Vec<String> {
-    if matches!(
-        cli.audit_type,
-        AuditType::ImmunefiBugBounty | AuditType::Code4renaBounty
-    ) && cli.code_folders == vec!["src".to_string()]
+    if scope_bounty_platform(cli).is_some()
+        && cli.code_folders == vec!["src".to_string()]
         && !cli.repo_tree_paths.is_empty()
     {
         let mut folders = cli

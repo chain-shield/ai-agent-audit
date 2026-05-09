@@ -790,6 +790,58 @@ contract DisputeManager is DisputeManagerV1Storage, GraphUpgradeable, IDisputeMa
  ------------ ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES ------------ 
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+pragma solidity ^0.7.6 || 0.8.27 || 0.8.33;
+
+/* solhint-disable gas-custom-errors */ // Cannot use custom errors with 0.7.6
+
+import { IGraphToken } from "@graphprotocol/interfaces/contracts/contracts/token/IGraphToken.sol";
+
+/**
+ * @title TokenUtils library
+ * @author Edge & Node
+ * @notice This library contains utility functions for handling tokens (transfers and burns).
+ * It is specifically adapted for the GraphToken, so does not need to handle edge cases
+ * for other tokens.
+ */
+library TokenUtils {
+    /**
+     * @notice Pull tokens from an address to this contract.
+     * @param _graphToken Token to transfer
+     * @param _from Address sending the tokens
+     * @param _amount Amount of tokens to transfer
+     */
+    function pullTokens(IGraphToken _graphToken, address _from, uint256 _amount) internal {
+        if (_amount > 0) {
+            require(_graphToken.transferFrom(_from, address(this), _amount), "!transfer");
+        }
+    }
+
+    /**
+     * @notice Push tokens from this contract to a receiving address.
+     * @param _graphToken Token to transfer
+     * @param _to Address receiving the tokens
+     * @param _amount Amount of tokens to transfer
+     */
+    function pushTokens(IGraphToken _graphToken, address _to, uint256 _amount) internal {
+        if (_amount > 0) {
+            require(_graphToken.transfer(_to, _amount), "!transfer");
+        }
+    }
+
+    /**
+     * @notice Burn tokens held by this contract.
+     * @param _graphToken Token to burn
+     * @param _amount Amount of tokens to burn
+     */
+    function burnTokens(IGraphToken _graphToken, uint256 _amount) internal {
+        if (_amount > 0) {
+            _graphToken.burn(_amount);
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 pragma solidity 0.8.27 || 0.8.33;
 
 import { GraphDirectory } from "../../utilities/GraphDirectory.sol";
@@ -867,49 +919,67 @@ pragma solidity ^0.7.6 || 0.8.27 || 0.8.33;
 
 /* solhint-disable gas-custom-errors */ // Cannot use custom errors with 0.7.6
 
-import { IGraphToken } from "@graphprotocol/interfaces/contracts/contracts/token/IGraphToken.sol";
+import { IGraphProxy } from "@graphprotocol/interfaces/contracts/contracts/upgrades/IGraphProxy.sol";
 
 /**
- * @title TokenUtils library
+ * @title Graph Upgradeable
  * @author Edge & Node
- * @notice This library contains utility functions for handling tokens (transfers and burns).
- * It is specifically adapted for the GraphToken, so does not need to handle edge cases
- * for other tokens.
+ * @notice This contract is intended to be inherited from upgradeable contracts.
  */
-library TokenUtils {
+abstract contract GraphUpgradeable {
     /**
-     * @notice Pull tokens from an address to this contract.
-     * @param _graphToken Token to transfer
-     * @param _from Address sending the tokens
-     * @param _amount Amount of tokens to transfer
+     * @dev Storage slot with the address of the current implementation.
+     * This is the keccak-256 hash of "eip1967.proxy.implementation" subtracted by 1, and is
+     * validated in the constructor.
      */
-    function pullTokens(IGraphToken _graphToken, address _from, uint256 _amount) internal {
-        if (_amount > 0) {
-            require(_graphToken.transferFrom(_from, address(this), _amount), "!transfer");
+    bytes32 internal constant IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    /**
+     * @dev Check if the caller is the proxy admin.
+     * @param _proxy The proxy contract to check admin for
+     */
+    modifier onlyProxyAdmin(IGraphProxy _proxy) {
+        require(msg.sender == _proxy.admin(), "Caller must be the proxy admin");
+        _;
+    }
+
+    /**
+     * @dev Check if the caller is the implementation.
+     */
+    modifier onlyImpl() {
+        require(msg.sender == _implementation(), "Only implementation");
+        _;
+    }
+
+    /**
+     * @notice Returns the current implementation.
+     * @return impl Address of the current implementation
+     */
+    function _implementation() internal view returns (address impl) {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            impl := sload(slot)
         }
     }
 
     /**
-     * @notice Push tokens from this contract to a receiving address.
-     * @param _graphToken Token to transfer
-     * @param _to Address receiving the tokens
-     * @param _amount Amount of tokens to transfer
+     * @notice Accept to be an implementation of proxy.
+     * @param _proxy Proxy to accept
      */
-    function pushTokens(IGraphToken _graphToken, address _to, uint256 _amount) internal {
-        if (_amount > 0) {
-            require(_graphToken.transfer(_to, _amount), "!transfer");
-        }
+    function acceptProxy(IGraphProxy _proxy) external onlyProxyAdmin(_proxy) {
+        _proxy.acceptUpgrade();
     }
 
     /**
-     * @notice Burn tokens held by this contract.
-     * @param _graphToken Token to burn
-     * @param _amount Amount of tokens to burn
+     * @notice Accept to be an implementation of proxy and then call a function from the new
+     * implementation as specified by `_data`, which should be an encoded function call. This is
+     * useful to initialize new storage variables in the proxied contract.
+     * @param _proxy Proxy to accept
+     * @param _data Calldata for the initialization function call (including selector)
      */
-    function burnTokens(IGraphToken _graphToken, uint256 _amount) internal {
-        if (_amount > 0) {
-            _graphToken.burn(_amount);
-        }
+    function acceptProxyAndCall(IGraphProxy _proxy, bytes calldata _data) external onlyProxyAdmin(_proxy) {
+        _proxy.acceptUpgradeAndCall(_data);
     }
 }
 
@@ -1183,76 +1253,6 @@ abstract contract GraphDirectory {
         address contractAddress = GRAPH_CONTROLLER.getContractProxy(keccak256(_contractName));
         require(contractAddress != address(0), GraphDirectoryInvalidZeroAddress(_contractName));
         return contractAddress;
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-pragma solidity ^0.7.6 || 0.8.27 || 0.8.33;
-
-/* solhint-disable gas-custom-errors */ // Cannot use custom errors with 0.7.6
-
-import { IGraphProxy } from "@graphprotocol/interfaces/contracts/contracts/upgrades/IGraphProxy.sol";
-
-/**
- * @title Graph Upgradeable
- * @author Edge & Node
- * @notice This contract is intended to be inherited from upgradeable contracts.
- */
-abstract contract GraphUpgradeable {
-    /**
-     * @dev Storage slot with the address of the current implementation.
-     * This is the keccak-256 hash of "eip1967.proxy.implementation" subtracted by 1, and is
-     * validated in the constructor.
-     */
-    bytes32 internal constant IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
-
-    /**
-     * @dev Check if the caller is the proxy admin.
-     * @param _proxy The proxy contract to check admin for
-     */
-    modifier onlyProxyAdmin(IGraphProxy _proxy) {
-        require(msg.sender == _proxy.admin(), "Caller must be the proxy admin");
-        _;
-    }
-
-    /**
-     * @dev Check if the caller is the implementation.
-     */
-    modifier onlyImpl() {
-        require(msg.sender == _implementation(), "Only implementation");
-        _;
-    }
-
-    /**
-     * @notice Returns the current implementation.
-     * @return impl Address of the current implementation
-     */
-    function _implementation() internal view returns (address impl) {
-        bytes32 slot = IMPLEMENTATION_SLOT;
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            impl := sload(slot)
-        }
-    }
-
-    /**
-     * @notice Accept to be an implementation of proxy.
-     * @param _proxy Proxy to accept
-     */
-    function acceptProxy(IGraphProxy _proxy) external onlyProxyAdmin(_proxy) {
-        _proxy.acceptUpgrade();
-    }
-
-    /**
-     * @notice Accept to be an implementation of proxy and then call a function from the new
-     * implementation as specified by `_data`, which should be an encoded function call. This is
-     * useful to initialize new storage variables in the proxied contract.
-     * @param _proxy Proxy to accept
-     * @param _data Calldata for the initialization function call (including selector)
-     */
-    function acceptProxyAndCall(IGraphProxy _proxy, bytes calldata _data) external onlyProxyAdmin(_proxy) {
-        _proxy.acceptUpgradeAndCall(_data);
     }
 }
 

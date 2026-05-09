@@ -9,6 +9,7 @@ Three-shot validation splits the full-report pass into:
 4. optional canonicalization cleanup on the surviving reportable candidates
 4a. optional second V12 overlap sweep on post-canonicalization candidates for competition runs
 5. optional PoC generation and verification on submission candidates
+6. optional submission report creation, review, and judge simulation
 
 This is intended to cheaply strip obvious false positives before the expensive
 final gate analysis while preserving recall on approved roots.
@@ -61,6 +62,8 @@ POC_WORKER_MODEL = "gpt-5.5"
 POC_WORKER_REASONING = "xhigh"
 REPORT_WORKER_MODEL = "gpt-5.5"
 REPORT_WORKER_REASONING = "xhigh"
+JUDGE_WORKER_MODEL = "gpt-5.5"
+JUDGE_WORKER_REASONING = "xhigh"
 SCORING_WORKER_MODEL = "gpt-5.4"
 SCORING_WORKER_REASONING = "xhigh"
 DEFAULT_WORKER_LAUNCHER = "/Users/apmfree/codex-minimal-worker"
@@ -333,6 +336,20 @@ def finding_report_review_unit_json_path(prompt_version: str, benchmark: str, ru
     return finding_report_review_unit_dir(prompt_version, benchmark, run_id) / f"{finding_id}.json"
 
 
+def judge_simulation_unit_dir(prompt_version: str, benchmark: str, run_id: str) -> Path:
+    return THREE_SHOT_ROOT / "judge-simulations" / prompt_version / f"{benchmark}-{run_id}"
+
+
+def judge_simulation_unit_path(prompt_version: str, benchmark: str, run_id: str, finding_id: str) -> Path:
+    return judge_simulation_unit_dir(prompt_version, benchmark, run_id) / (
+        f"{finding_id}-{finding_report_slug(prompt_version, benchmark, run_id, finding_id)}.md"
+    )
+
+
+def judge_simulation_unit_json_path(prompt_version: str, benchmark: str, run_id: str, finding_id: str) -> Path:
+    return judge_simulation_unit_dir(prompt_version, benchmark, run_id) / f"{finding_id}.json"
+
+
 def result_path(prompt_version: str, benchmark: str, run_id: str) -> Path:
     return THREE_SHOT_ROOT / "results" / prompt_version / f"{benchmark}-{run_id}.md"
 
@@ -375,6 +392,10 @@ def round7_input_path(prompt_version: str, benchmark: str, run_id: str, finding_
 
 def round8_input_path(prompt_version: str, benchmark: str, run_id: str, finding_id: str) -> Path:
     return THREE_SHOT_ROOT / "inputs" / "r8" / prompt_version / f"{benchmark}-{run_id}" / f"{finding_id}.md"
+
+
+def round9_input_path(prompt_version: str, benchmark: str, run_id: str, finding_id: str) -> Path:
+    return THREE_SHOT_ROOT / "inputs" / "r9" / prompt_version / f"{benchmark}-{run_id}" / f"{finding_id}.md"
 
 
 def validation_prompt_path(prompt_version: str) -> Path:
@@ -1155,6 +1176,32 @@ JSON summary: `{finding_report_review_unit_json_path(prompt_version, benchmark, 
     return path
 
 
+def init_judge_simulation_unit(
+    prompt_version: str,
+    benchmark: str,
+    run_id: str,
+    finding_id: str,
+    reset: bool = False,
+) -> Path:
+    path = judge_simulation_unit_path(prompt_version, benchmark, run_id, finding_id)
+    if path.exists() and not reset:
+        return path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = f"""# {finding_id} Judge Simulation
+
+Status: In progress
+Benchmark: `{benchmark}`
+Source input: `{round9_input_path(prompt_version, benchmark, run_id, finding_id)}`
+Post-R8 report under judge simulation: `{finding_report_unit_path(prompt_version, benchmark, run_id, finding_id)}`
+JSON summary: `{judge_simulation_unit_json_path(prompt_version, benchmark, run_id, finding_id)}`
+
+<!-- R9 WORKER REPLACES THIS FILE WITH THE JUDGE SIMULATION -->
+"""
+    path.write_text(content)
+    return path
+
+
 def parse_screen(path: Path) -> dict[str, dict[str, str]]:
     if not path.exists():
         raise SystemExit(f"Missing required screen file: {path}")
@@ -1843,6 +1890,19 @@ def report_review_unit_complete(prompt_version: str, benchmark: str, run_id: str
     )
 
 
+def judge_simulation_unit_complete(prompt_version: str, benchmark: str, run_id: str, finding_id: str) -> bool:
+    path = judge_simulation_unit_path(prompt_version, benchmark, run_id, finding_id)
+    if not path.exists():
+        return False
+    text = path.read_text()
+    if "Status: In progress" in text or "R9 WORKER REPLACES THIS FILE" in text:
+        return False
+    return json_has_finding(
+        judge_simulation_unit_json_path(prompt_version, benchmark, run_id, finding_id),
+        finding_id,
+    )
+
+
 def next_report_finding(prompt_version: str, benchmark: str, run_id: str) -> str | None:
     blocks = submission_candidate_blocks(prompt_version, benchmark, run_id)
     for finding_id in blocks:
@@ -1861,6 +1921,18 @@ def next_report_review_finding(prompt_version: str, benchmark: str, run_id: str)
         if not report_unit_complete(prompt_version, benchmark, run_id, finding_id):
             continue
         if not report_review_unit_complete(prompt_version, benchmark, run_id, finding_id):
+            return finding_id
+    return None
+
+
+def next_judge_simulation_finding(prompt_version: str, benchmark: str, run_id: str) -> str | None:
+    blocks = submission_candidate_blocks(prompt_version, benchmark, run_id)
+    for finding_id in blocks:
+        if not reportable_after_poc_review(prompt_version, benchmark, run_id, finding_id):
+            continue
+        if not report_review_unit_complete(prompt_version, benchmark, run_id, finding_id):
+            continue
+        if not judge_simulation_unit_complete(prompt_version, benchmark, run_id, finding_id):
             return finding_id
     return None
 
@@ -1925,6 +1997,34 @@ def write_round8_input(
             f"R7 report: `{finding_report_unit_path(prompt_version, benchmark, run_id, finding_id)}`",
             f"R7 JSON summary: `{finding_report_unit_json_path(prompt_version, benchmark, run_id, finding_id)}`",
             f"R6 PoC review unit: `{poc_review_unit_path(prompt_version, benchmark, run_id, finding_id)}`",
+            "",
+            "## Candidate",
+            "",
+            block.strip(),
+            "",
+        ]
+    )
+    path.write_text(content)
+    return path
+
+
+def write_round9_input(
+    path: Path,
+    prompt_version: str,
+    benchmark: str,
+    run_id: str,
+    finding_id: str,
+    block: str,
+) -> Path:
+    if not report_review_unit_complete(prompt_version, benchmark, run_id, finding_id):
+        raise SystemExit(f"R8 finding report review for {finding_id} is incomplete.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = "\n".join(
+        [
+            f"# {benchmark} Round 9 Single-Finding Judge Simulation Input: {finding_id}",
+            "",
+            f"Source submission candidates: `{submission_candidates_path(prompt_version, benchmark, run_id)}`",
+            f"Post-R8 finalized report to judge: `{finding_report_unit_path(prompt_version, benchmark, run_id, finding_id)}`",
             "",
             "## Candidate",
             "",
@@ -2213,6 +2313,39 @@ def render_finding_report_review_prompt(
             "FINDING_REPORT_PATH": finding_report_unit_path(prompt_version, benchmark, run_id, finding_id),
             "FINDING_REPORT_REVIEW_PATH": finding_report_review_unit_path(prompt_version, benchmark, run_id, finding_id),
             "FINDING_REPORT_REVIEW_JSON_PATH": finding_report_review_unit_json_path(prompt_version, benchmark, run_id, finding_id),
+        },
+        config,
+    )
+
+
+def render_judge_simulation_prompt(
+    prompt_version: str,
+    benchmark: str,
+    run_id: str,
+    finding_id: str,
+    config: dict[str, object],
+) -> str:
+    blocks = submission_candidate_blocks(prompt_version, benchmark, run_id)
+    finding_id = validate_finding_id(finding_id, blocks)
+    input_path = write_round9_input(
+        round9_input_path(prompt_version, benchmark, run_id, finding_id),
+        prompt_version,
+        benchmark,
+        run_id,
+        finding_id,
+        blocks[finding_id],
+    )
+    return render_stage_prompt(
+        "r9.md",
+        {
+            **render_common_replacements(prompt_version, benchmark),
+            **contest_replacements(config),
+            **worker_replacements(config, "r9", JUDGE_WORKER_MODEL, JUDGE_WORKER_REASONING),
+            "FINDING_ID": finding_id,
+            "JUDGE_INPUT_PATH": input_path,
+            "FINDING_REPORT_PATH": finding_report_unit_path(prompt_version, benchmark, run_id, finding_id),
+            "JUDGE_SIMULATION_PATH": judge_simulation_unit_path(prompt_version, benchmark, run_id, finding_id),
+            "JUDGE_SIMULATION_JSON_PATH": judge_simulation_unit_json_path(prompt_version, benchmark, run_id, finding_id),
         },
         config,
     )
@@ -3244,6 +3377,126 @@ def cmd_prepare_report_review(args: argparse.Namespace) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
+def cmd_prepare_judge(args: argparse.Namespace) -> None:
+    config = resolve_run_args(args)
+    blocks = submission_candidate_blocks(args.prompt_version, args.benchmark, args.run_id)
+    expected_reports = [
+        fid
+        for fid in blocks
+        if reportable_after_poc_review(args.prompt_version, args.benchmark, args.run_id, fid)
+    ]
+    judgeable = [
+        fid
+        for fid in expected_reports
+        if report_review_unit_complete(args.prompt_version, args.benchmark, args.run_id, fid)
+    ]
+    requested_finding = args.finding_id or next_judge_simulation_finding(args.prompt_version, args.benchmark, args.run_id)
+    if requested_finding is None:
+        completed_r6 = sum(
+            1
+            for fid in blocks
+            if poc_review_unit_complete(args.prompt_version, args.benchmark, args.run_id, fid)
+        )
+        completed_r7 = sum(
+            1
+            for fid in expected_reports
+            if report_unit_complete(args.prompt_version, args.benchmark, args.run_id, fid)
+        )
+        completed_r8 = sum(
+            1
+            for fid in expected_reports
+            if report_review_unit_complete(args.prompt_version, args.benchmark, args.run_id, fid)
+        )
+        completed = sum(
+            1
+            for fid in expected_reports
+            if judge_simulation_unit_complete(args.prompt_version, args.benchmark, args.run_id, fid)
+        )
+        phase = (
+            "complete"
+            if (
+                completed_r6 == len(blocks)
+                and completed_r7 == len(expected_reports)
+                and completed_r8 == len(expected_reports)
+                and completed == len(expected_reports)
+            )
+            else "blocked"
+        )
+        summary = (
+            "All R9 per-finding judge simulation units are complete."
+            if phase == "complete"
+            else "No judgeable R9 unit is available because some upstream R7/R8 units are incomplete."
+        )
+        payload = {
+            "benchmark": args.benchmark,
+            "prompt_version": args.prompt_version,
+            "run_id": args.run_id,
+            "worker_type": "none",
+            "phase": phase,
+            "input_scope": "single_reviewed_submission_report",
+            "reportable_findings": len(expected_reports),
+            "judgeable_findings": len(judgeable),
+            "completed_r6_findings": completed_r6,
+            "completed_r7_findings": completed_r7,
+            "completed_r8_findings": completed_r8,
+            "completed_findings": completed,
+            "source_candidates_path": str(submission_candidates_path(args.prompt_version, args.benchmark, args.run_id)),
+            "summary": summary,
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
+    finding_id = validate_finding_id(requested_finding, blocks)
+    if not reportable_after_poc_review(args.prompt_version, args.benchmark, args.run_id, finding_id):
+        raise SystemExit(f"Finding {finding_id} is not judgeable until R6 marks its PoC Verified or Fixed And Verified.")
+    if not report_unit_complete(args.prompt_version, args.benchmark, args.run_id, finding_id):
+        raise SystemExit(f"R7 finding report for {finding_id} is incomplete; cannot prepare R9.")
+    if not report_review_unit_complete(args.prompt_version, args.benchmark, args.run_id, finding_id):
+        raise SystemExit(f"R8 finding report review for {finding_id} is incomplete; cannot prepare R9.")
+    input_path = write_round9_input(
+        round9_input_path(args.prompt_version, args.benchmark, args.run_id, finding_id),
+        args.prompt_version,
+        args.benchmark,
+        args.run_id,
+        finding_id,
+        blocks[finding_id],
+    )
+    path = init_judge_simulation_unit(args.prompt_version, args.benchmark, args.run_id, finding_id, reset=args.reset)
+    prompt_text = render_judge_simulation_prompt(args.prompt_version, args.benchmark, args.run_id, finding_id, config)
+    completed = sum(
+        1
+        for fid in judgeable
+        if judge_simulation_unit_complete(args.prompt_version, args.benchmark, args.run_id, fid)
+    )
+    payload = {
+        "benchmark": args.benchmark,
+        "prompt_version": args.prompt_version,
+        "run_id": args.run_id,
+        "finding_id": finding_id,
+        "stage_path": str(path),
+        "json_path": str(judge_simulation_unit_json_path(args.prompt_version, args.benchmark, args.run_id, finding_id)),
+        "single_finding_input_path": str(input_path),
+        "source_candidates_path": str(submission_candidates_path(args.prompt_version, args.benchmark, args.run_id)),
+        "input_scope": "single_reviewed_submission_report",
+        "input_findings": 1,
+        "total_judgeable_findings": len(judgeable),
+        "completed_findings": completed,
+        "remaining_findings": len(judgeable) - completed,
+        "worker_type": "three-shot-r9-immunefi-judge-simulation-finding"
+        if is_immunefi_bounty_profile(config)
+        else "three-shot-r9-c4-bounty-judge-simulation-finding"
+        if is_bounty_profile(config)
+        else "three-shot-r9-c4-judge-simulation-finding",
+        **worker_payload(config, "r9", JUDGE_WORKER_MODEL, JUDGE_WORKER_REASONING),
+        "worker_prompt_source": str(prompt_template_path("r9.md", config)),
+        "requires_fresh_worker_context": True,
+        "worker_prompt": prompt_text if args.include_prompt else None,
+    }
+    if args.write_prompt:
+        attach_worker_prompt_path(payload, prompt_text, Path(args.write_prompt))
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
 def row_from_poc_unit(path: Path, finding_id: str) -> dict[str, str]:
     rows = parse_poc_rows(path)
     if finding_id not in rows:
@@ -3566,6 +3819,14 @@ def main() -> None:
     prepare_report_review.add_argument("--write-prompt")
     prepare_report_review.add_argument("--reset", action="store_true", help="Reset this finding's round 8 report review before emitting the prompt.")
     prepare_report_review.set_defaults(func=cmd_prepare_report_review)
+
+    prepare_judge = subparsers.add_parser("prepare-judge", help="Initialize round 9 judge simulation for one finding.")
+    add_run_args(prepare_judge)
+    prepare_judge.add_argument("--finding-id", help="Prepare this exact finding. Defaults to the next R8-complete/R9-unfinished unit.")
+    prepare_judge.add_argument("--include-prompt", action="store_true")
+    prepare_judge.add_argument("--write-prompt")
+    prepare_judge.add_argument("--reset", action="store_true", help="Reset this finding's round 9 judge simulation before emitting the prompt.")
+    prepare_judge.set_defaults(func=cmd_prepare_judge)
 
     assemble = subparsers.add_parser("assemble", help="Assemble the final three-shot run from stages 1-3.")
     add_run_args(assemble)

@@ -1,0 +1,16 @@
+{
+  "benchmark": "thegraph",
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/inputs/r5/v2/thegraph-run-001/H-31.md",
+  "source_poc_run": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/poc-runs/v2/thegraph-run-001/H-31.md",
+  "results": [
+    {
+      "finding_id": "H-31",
+      "title": "Unsigned receiverDestination lets the data service redirect GraphTallyCollector payouts",
+      "status": "Verified PoC",
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/thegraph-023b7fdc8558/graphprotocol-contracts/packages/horizon/test/UnsignedRavPayoutDestinationPoC.t.sol",
+      "test_command": "cd graphprotocol-contracts/packages/horizon && forge test --match-path test/UnsignedRavPayoutDestinationPoC.t.sol --fork-url \"$ARBITRUM_RPC_URL\" --fork-block-number 460062146",
+      "verification_result": "passed and proves vulnerability",
+      "notes": "Arbitrum fork passed 1 test. Same signed RAV with changed receiverDestination redirected 19,800,000 GRT to attacker, emptied escrow, and left provider balance and stake unchanged."
+    }
+  ]
+}
