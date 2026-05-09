@@ -1,0 +1,9 @@
+{
+  "benchmark": "thegraph",
+  "finding_id": "H-115",
+  "status": "Fixed And Ready",
+  "gist_url": "https://gist.github.com/apmfree78/bb1bed1fac56107883e8308ff2dd6c5c",
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/thegraph-run-001/H-115-RAV-signatures-omit-payment-parameters-allowing-da.md",
+  "review_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/thegraph-run-001/H-115-RAV-signatures-omit-payment-parameters-allowing-da.md",
+  "notes": "Edited Proof of Code reproduction labels to anchor Save as and Run to the graphprotocol-contracts repo root and packages/horizon package. Verified severity/impact against The Graph Immunefi Critical smart contract row, confirmed in-scope assets and unprivileged data-service exploit path, compared embedded PoC with the verified PoC file, validated the secret Gist PoC bundle against the local PoC file, and reran the local Arbitrum fork PoC successfully: 1 passed, 0 failed."
+}

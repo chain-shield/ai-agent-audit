@@ -9,8 +9,8 @@ use log::info;
 use crate::{config::AuditType, prepare_code::git_clone::RepoPaths};
 
 const THREE_SHOT_DIR: &str = "validation-three-shot";
-const PROMPT_VERSION: &str = "v2";
-const RUN_ID: &str = "run-001";
+pub(crate) const PROMPT_VERSION: &str = "v2";
+pub(crate) const RUN_ID: &str = "run-001";
 const V12_CHECKLIST_ENTRY: &str = "{{THREE_SHOT_ROOT}}/v12-checklist.md";
 const BOUNTY_CRITERIA_ENTRY: &str = "{{THREE_SHOT_ROOT}}/code4rena-bounty-criteria.md";
 
@@ -207,7 +207,7 @@ fn common_source_root(source_code_folders: &[PathBuf]) -> Option<PathBuf> {
     Some(path)
 }
 
-fn config_slug(value: &str) -> String {
+pub(crate) fn config_slug(value: &str) -> String {
     let slug = value
         .trim_end_matches(".git")
         .chars()

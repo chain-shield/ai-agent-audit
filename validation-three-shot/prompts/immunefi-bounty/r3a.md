@@ -37,6 +37,7 @@ Relevant Immunefi feasibility standards to apply:
 - Attacker financial risk matters only when risk massively outweighs reward from an external attacker's perspective.
 - No-profit attacks that mainly cause damage should be classified as Medium griefing when the damage/cost posture matches Immunefi's griefing guidance.
 - Attacks requiring privileged-address access are out of scope, but do not reject when a privileged role is merely affected or when a fork PoC uses local scaffolding to create normal protocol state.
+- Delegated-authority issues are not feasibility issues: if the candidate only shows malicious use of delegated authority or no incremental unauthorized impact, mark `Exclude` or `Needs Review`.
 
 Round 3a goal:
 - Review only R3 candidates already marked `Valid` with reportable Immunefi severity.
@@ -59,6 +60,8 @@ Feasibility categories:
 - `financial-risk-massively-outweighs-reward`
 - `medium-griefing`
 - `privileged-access-required`
+- `delegated-authority`
+- `no-incremental-impact`
 - `case-by-case`
 
 Output requirements:

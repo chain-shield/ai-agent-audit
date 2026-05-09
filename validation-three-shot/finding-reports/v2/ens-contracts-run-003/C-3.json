@@ -1,0 +1,8 @@
+{
+  "benchmark": "ens-contracts",
+  "finding_id": "C-3",
+  "status": "Report Created",
+  "gist_url": "https://gist.github.com/apmfree78/798d4abf243f35aef745a1de9c17b0e7",
+  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ens-contracts-run-003/C-3-Expired-eth-name-re-registration-without-resolver.md",
+  "notes": "Created submission-ready Medium Immunefi report for the validated stale resolver state finding. The report uses the R6 verified local mainnet fork PoC at block 25030187, frames the impact under the ENS medium smart contract griefing row, and links a secret Gist PoC bundle."
+}

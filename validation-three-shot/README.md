@@ -34,7 +34,7 @@ For `validation_profile: immunefi-bounty`, the controller uses Immunefi-specific
 
 Recommended worker split:
 
-- all R1-R8 workers must be launched with the configured minimal Codex worker launcher, currently `/Users/apmfree/codex-minimal-worker`, so plugin MCP servers are not loaded into every parallel worker while normal local file access and native Codex web search remain available. Web search here means the native `--search` flag only; it must not re-enable browser, GitHub, or other MCP servers.
+- all R1-R9 workers must be launched with the configured minimal Codex worker launcher, currently `/Users/apmfree/codex-minimal-worker`, so plugin MCP servers are not loaded into every parallel worker while normal local file access and native Codex web search remain available. Web search here means the native `--search` flag only; it must not re-enable browser, GitHub, or other MCP servers.
 - round 1 scope worker: `gpt-5.5` with `xhigh`
 - round 2 token worker: `gpt-5.5` with `xhigh`
 - round 3 final validation worker: `gpt-5.5` with `xhigh`
@@ -44,11 +44,12 @@ Recommended worker split:
 - optional round 6 PoC verification workers: one fresh `gpt-5.5` / `xhigh` worker per finding
 - optional round 7 report generation workers: one fresh `gpt-5.5` / `xhigh` worker per finding
 - optional round 8 report review workers: one fresh `gpt-5.5` / `xhigh` worker per finding
+- optional round 9 judge simulation workers: one fresh `gpt-5.5` / `xhigh` worker per reviewed report
 - scoring worker: `gpt-5.4` with `xhigh`
 - PoC workers must produce submission-ready artifacts: filenames include finding IDs for traceability, Solidity names avoid pipeline IDs and use descriptive vulnerability names, comments tersely explain setup/trigger/proof, and each final finding preferably gets one standalone PoC file. Existing template files are read-only seeds: workers copy, rename, and edit the copied finding-specific file rather than touching the template.
 - Report workers must produce ultra-concise submission-ready reports: one fresh worker per finding, about 200-300 words excluding code, two primary sections plus proof of concept, and `Need Further Review` when not submission-ready.
 
-Each validation round should be run by a separate spawned minimal Codex worker with cleared context. For R5-R8, each individual finding must get its own fresh minimal worker and isolated prompt/output files. Minimal workers are expected to read the local files listed in their prompt and may use native web search to verify cited public source URLs.
+Each validation round should be run by a separate spawned minimal Codex worker with cleared context. For R5-R9, each individual finding/report must get its own fresh minimal worker and isolated prompt/output files. Minimal workers are expected to read the local files listed in their prompt and may use native web search to verify cited public source URLs.
 
 Configuration:
 
@@ -70,12 +71,29 @@ Configuration:
 - Live worker prompts live in profile subfolders under `validation-three-shot/prompts/`.
 - The old top-level `validation-prompts/` directory and old `validation-three-shot/validation-prompts/` directory are not required by this workflow.
 
+GUI-supervised validation:
+
+- Audit runs can opt into Codex GUI supervision with `--validation-supervision gui`, or `validation_supervision: gui` in the audit YAML config.
+- The audit app still only produces deterministic artifacts. It does not run R1-R9 directly.
+- After report export, the app writes a ready-marked job folder:
+  - `validation-three-shot/jobs/<benchmark>/<run-id>/manifest.json`
+  - `validation-three-shot/jobs/<benchmark>/<run-id>/config.yaml`
+  - `validation-three-shot/jobs/<benchmark>/<run-id>/supervisor.md`
+  - `validation-three-shot/jobs/<benchmark>/<run-id>/status.md`
+  - `validation-three-shot/jobs/<benchmark>/<run-id>/events.jsonl`
+  - `validation-three-shot/jobs/<benchmark>/<run-id>/ready`
+- `ready` is written last. Codex GUI supervisors should ignore job folders without this marker.
+- If the same `<benchmark>/<run-id>` already has a non-terminal `manifest.json` status, such as `pending` or `running`, the audit app refuses to overwrite that job. Delete the job folder or change `run_id` after the current validation job is resolved.
+- The manifest points at the job-local `config.yaml` snapshot, not the shared `validation-three-shot/<benchmark>-config.yaml`, so later audit runs cannot mutate the config a running GUI supervisor is using.
+- The intended trigger is a dedicated Codex heartbeat supervisor that wakes every 5 minutes, scans `validation-three-shot/jobs/*/*/ready`, claims pending manifests, runs preflight, then follows the job-specific `supervisor.md`.
+- The GUI supervisor provides commentary and status updates; minimal Codex workers launched from the emitted `worker_spawn_command` do the production R1-R9 work.
+
 Editable round prompts:
 
-- `validation-three-shot/prompts/code4rena/r1.md` through `r8.md`
-- `validation-three-shot/prompts/code4rena-bounty/r1.md` through `r8.md`
-- `validation-three-shot/prompts/immunefi-bounty/r1.md` through `r8.md`, plus optional `r3a.md`
-- `validation-three-shot/prompts/default/r1.md` through `r8.md`
+- `validation-three-shot/prompts/code4rena/r1.md` through `r9.md`
+- `validation-three-shot/prompts/code4rena-bounty/r1.md` through `r9.md`
+- `validation-three-shot/prompts/immunefi-bounty/r1.md` through `r9.md`, plus optional `r3a.md`
+- `validation-three-shot/prompts/default/r1.md` through `r9.md`
 - `validation-three-shot/prompts/validation-v2.md`
 - `validation-three-shot/prompts/<profile>/score.md`
 
@@ -123,6 +141,7 @@ python3 scripts/three_shot_round.py prepare-poc-review --write-prompt /tmp/three
 python3 scripts/three_shot_round.py assemble-poc-review
 python3 scripts/three_shot_round.py prepare-report --write-prompt /tmp/three-shot-r7.md
 python3 scripts/three_shot_round.py prepare-report-review --write-prompt /tmp/three-shot-r8.md
+python3 scripts/three_shot_round.py prepare-judge --write-prompt /tmp/three-shot-r9.md
 python3 scripts/three_shot_round.py score-prompt --write-prompt /tmp/three-shot-score.md
 ```
 
@@ -139,6 +158,8 @@ However, `prepare-poc` emits exactly one R5 worker unit at a time. By default it
 After all R5 units complete, run `assemble-poc` to create the aggregate R5 table/JSON. R6 follows the same per-finding model: `prepare-poc-review` emits exactly one review worker for the next R5-complete and R6-unfinished finding, and `assemble-poc-review` creates the aggregate R6 table/JSON after every review unit completes.
 
 R7 and R8 also follow the same per-finding model. `prepare-report` emits one report-writing worker for the next R6-verified finding without an R7 report. `prepare-report-review` emits one review worker for the next completed R7 report without an R8 review. Every R8 worker either marks the report `Ready`, fixes it and marks `Fixed And Ready`, or flags `Need Further Review` with detailed notes.
+
+R9 follows the same per-report model. `prepare-judge` emits one non-mutating judge-simulation worker for the next completed R8 report without an R9 simulation. Every R9 worker writes a Markdown/JSON decision under `validation-three-shot/judge-simulations/<prompt-version>/<benchmark>-<run-id>/` and does not edit the report or PoC.
 
 Optional deterministic local scorer:
 

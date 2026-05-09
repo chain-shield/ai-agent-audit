@@ -1,7 +1,7 @@
 use ai_agent_audit::{
     // test_rig,
     build_brain::enrichment,
-    cli_args::parse,
+    cli_args::parse::{self, ValidationSupervisionMode},
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
     enumerator::{self, codeblocks, interface_implementations},
@@ -13,7 +13,7 @@ use ai_agent_audit::{
     prepare_code::{self},
     reporting::{
         audit::{self},
-        competition_reports, contract_data, save_file, three_shot_config,
+        competition_reports, contract_data, save_file, three_shot_config, validation_supervision,
     },
 };
 use dotenvy::dotenv;
@@ -129,7 +129,21 @@ async fn main() -> Result<()> {
     // Save all reports and analysis data to markdown files
     let audit_report_path = save_file::save_audit_report("audit-report.md", &audit_report, &repo)?;
     competition_reports::generate_and_save_pro_reports(&security_findings, &repo)?;
-    three_shot_config::write_protocol_config(&repo, &audit_report_path)?;
+    let validation_supervision_mode = cli.validation_supervision_mode();
+    if validation_supervision_mode == ValidationSupervisionMode::Gui {
+        validation_supervision::refuse_existing_non_terminal_job_for_repo(&repo)?;
+    }
+    let three_shot_config_path =
+        three_shot_config::write_protocol_config(&repo, &audit_report_path)?;
+    if validation_supervision_mode == ValidationSupervisionMode::Gui {
+        let job = validation_supervision::write_gui_job(&repo, &three_shot_config_path)?;
+        info!(
+            "Codex GUI validation supervision job ready: manifest={}, supervisor_prompt={}, status={}",
+            job.manifest_path.display(),
+            job.supervisor_prompt_path.display(),
+            job.status_path.display()
+        );
+    }
 
     // Display total inference cost across all LLM providers
     let total_cost = get_total_inference_cost().await;

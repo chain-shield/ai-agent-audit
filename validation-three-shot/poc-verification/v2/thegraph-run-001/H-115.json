@@ -1,0 +1,16 @@
+{
+  "benchmark": "thegraph",
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/inputs/r5/v2/thegraph-run-001/H-115.md",
+  "source_poc_run": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/poc-runs/v2/thegraph-run-001/H-115.md",
+  "results": [
+    {
+      "finding_id": "H-115",
+      "title": "RAV signatures omit payment parameters allowing data service to redirect or skim collections",
+      "status": "Verified PoC",
+      "final_poc_test_path": "packages/horizon/test/UnsignedRavPaymentParamsPoC.t.sol",
+      "test_command": "cd packages/horizon && forge test --match-path test/UnsignedRavPaymentParamsPoC.t.sol --fork-url \"$ARBITRUM_RPC_URL\" --fork-block-number 460064183",
+      "verification_result": "passed and proves vulnerability",
+      "notes": "Arbitrum fork block 460064183. Valid RAV signature excludes dataServiceCut and receiverDestination. Malicious data service collected 20M GRT escrow into itself and attacker destination while provider received zero."
+    }
+  ]
+}

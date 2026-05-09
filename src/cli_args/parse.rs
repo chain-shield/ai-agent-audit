@@ -314,6 +314,14 @@ pub enum BuilderType {
     Auto,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[clap(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
+pub enum ValidationSupervisionMode {
+    Off,
+    Gui,
+}
+
 #[derive(Parser, Clone, Debug, Deserialize)]
 #[command(author, version, about)]
 pub struct Cli {
@@ -412,6 +420,11 @@ pub struct Cli {
     #[arg(long)]
     pub build_cmd: Option<String>,
 
+    /// Emit a Codex GUI-supervised validation job after report export
+    #[arg(long, value_enum)]
+    #[serde(default)]
+    pub validation_supervision: Option<ValidationSupervisionMode>,
+
     /// Optional generated audit context configuration. YAML-only for now.
     #[arg(skip)]
     #[serde(default)]
@@ -495,6 +508,11 @@ impl Cli {
             if config_values.build_cmd.is_some() {
                 config_cli.build_cmd = config_values.build_cmd;
             }
+            if config_cli.validation_supervision.is_none()
+                && config_values.validation_supervision.is_some()
+            {
+                config_cli.validation_supervision = config_values.validation_supervision;
+            }
             if config_values.context.is_some() {
                 config_cli.context = config_values.context;
             }
@@ -542,6 +560,20 @@ impl Cli {
         self.repo
             .as_ref()
             .expect("repo should be validated in parse_args")
+    }
+
+    pub fn validation_supervision_mode(&self) -> ValidationSupervisionMode {
+        self.validation_supervision
+            .or_else(|| {
+                std::env::var("AI_AGENT_AUDIT_VALIDATION_SUPERVISION")
+                    .ok()
+                    .and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+                        "gui" => Some(ValidationSupervisionMode::Gui),
+                        "off" | "" => Some(ValidationSupervisionMode::Off),
+                        _ => None,
+                    })
+            })
+            .unwrap_or(ValidationSupervisionMode::Off)
     }
 
     pub fn generate_build_command(&self) -> String {

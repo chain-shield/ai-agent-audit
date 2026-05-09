@@ -1,5 +1,37 @@
 # Validation Prompt Changelog
 
+## Delegated authority trust-model update on 2026-05-08
+
+- Hardened bounty and validation prompts after an Immunefi trust-model rejection.
+- Added concise delegated-authority handling: malicious use of intentionally granted capabilities is trusted-role/OOS unless the report proves incremental unauthorized impact.
+- Strengthened R5/R6/R8/R9 to reject or block PoCs/reports that only demonstrate malicious use of delegated authority.
+
+## Immunefi secret-Gist PoC bundle update on 2026-05-07
+
+- Added Immunefi R7 requirements to create one secret GitHub Gist per finding containing `README.md`, `.env.example`, and the exact report-ready PoC file.
+- Added Immunefi R8 checks to verify the Gist is secret/unlisted, contains the expected files, matches the verified PoC, and contains no secrets, raw RPC URLs, local absolute paths, or broadcast commands.
+- Added `Secret Gist PoC bundle:` and `gist_url` report/JSON fields for Immunefi bounty submissions.
+
+## Judge simulation update on 2026-05-06
+
+- Added R9 judge-simulation prompts for Code4rena contests, Code4rena bounties, Immunefi bounties, and the default profile.
+- R9 is non-mutating: one fresh minimal worker per R8-reviewed report, writing Markdown and JSON under `validation-three-shot/judge-simulations/`.
+- R9 asks workers to simulate a skeptical judge decision, likely final severity, acceptance risks, likely objections, and bounty payout estimate when bounty docs support one.
+- R9 judges only the post-R8 finalized report plus benchmark/source context, and must independently investigate source code to verify the bug is real, reachable, not guarded, and not by design.
+
+## Bounty report concision update on 2026-05-06
+
+- Capped Immunefi and Code4rena bounty R7 reports at 1,000 prose words excluding PoC source, source-code snippets, GitHub/Etherscan links, run commands, and reference-only material.
+- Added an 800-1,000 prose-word target and explicit anti-repetition guidance so workers keep exploit dossiers comprehensive without restating the same root cause, exploit path, and impact across multiple sections.
+- Tightened R8 review prompts so reviewers must trim overlong or repetitive bounty reports while preserving exploit mechanics, feasibility, impact mapping, and PoC reproducibility.
+
+## Bug bounty exploit-dossier update on 2026-05-05
+
+- Upgraded Immunefi and Code4rena bounty R5/R6 prompts from minimal PoC tests to full reproduction packages with attacker/victim setup, exploit trigger, concrete assertions, expected results, and clean-checkout run commands.
+- Upgraded bounty R7/R8 prompts from concise contest-style reports to long-form exploit dossiers with executive summary, root cause, threat model, exploit walkthrough, impact/severity mapping, full PoC package, mitigation, and references.
+- Clarified that bounty reports should be complete before short; later superseded by the 2026-05-06 1,000-word prose cap.
+- Kept normal Code4rena contest prompts unchanged so contest reports remain concise.
+
 ## Bounty PoC portability update on 2026-05-04
 
 - Tightened bounty R5/R6 PoC rules so final PoCs must be copy/paste runnable from the repo's top-level `test/` folder.

@@ -502,79 +502,6 @@ contract L1GraphTokenGateway is Initializable, GraphTokenGateway, L1ArbitrumMess
  ------------ END OF MAIN TARGET CONTRACT ------------ 
 
  ------------ ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES ------------ 
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-pragma solidity 0.8.27 || 0.8.33;
-
-import { GraphDirectory } from "../../utilities/GraphDirectory.sol";
-
-/* solhint-disable var-name-mixedcase */
-
-/**
- * @title Graph Managed contract
- * @author Edge & Node
- * @notice The Managed contract provides an interface to interact with the Controller
- * @dev For Graph Horizon this contract is mostly a shell that uses {GraphDirectory}, however since the {HorizonStaking}
- * contract uses it we need to preserve the storage layout.
- * Inspired by Livepeer: https://github.com/livepeer/protocol/blob/streamflow/contracts/Controller.sol
- * @custom:security-contact Please email security+contracts@thegraph.com if you find any
- * bugs. We may have an active bug bounty program.
- */
-abstract contract Managed is GraphDirectory {
-    // -- State --
-
-    // forge-lint: disable-next-item(mixed-case-variable)
-    /// @notice Controller that manages this contract
-    address private __DEPRECATED_controller;
-
-    // forge-lint: disable-next-item(mixed-case-variable)
-    /// @dev Cache for the addresses of the contracts retrieved from the controller
-    mapping(bytes32 contractName => address contractAddress) private __DEPRECATED_addressCache;
-
-    // forge-lint: disable-next-item(mixed-case-variable)
-    /// @dev Gap for future storage variables
-    uint256[10] private __gap;
-
-    /**
-     * @notice Thrown when a protected function is called and the contract is paused.
-     */
-    error ManagedIsPaused();
-
-    /**
-     * @notice Thrown when a the caller is not the expected controller address.
-     */
-    error ManagedOnlyController();
-
-    /**
-     * @notice Thrown when a the caller is not the governor.
-     */
-    error ManagedOnlyGovernor();
-
-    // forge-lint: disable-next-item(unwrapped-modifier-logic)
-    /**
-     * @dev Revert if the controller is paused
-     */
-    modifier notPaused() {
-        require(!_graphController().paused(), ManagedIsPaused());
-        _;
-    }
-
-    // forge-lint: disable-next-item(unwrapped-modifier-logic)
-    /**
-     * @dev Revert if the caller is not the governor
-     */
-    modifier onlyGovernor() {
-        require(msg.sender == _graphController().getGovernor(), ManagedOnlyGovernor());
-        _;
-    }
-
-    /**
-     * @notice Initialize the contract
-     * @param controller_ The address of the Graph controller contract
-     */
-    constructor(address controller_) GraphDirectory(controller_) {}
-}
-
 // SPDX-License-Identifier: MIT
 
 pragma solidity >=0.6.0 <0.8.0;
@@ -790,160 +717,77 @@ library SafeMathUpgradeable {
     }
 }
 
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-/*
- * Copyright 2020, Offchain Labs, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * Originally copied from:
- * https://github.com/OffchainLabs/arbitrum/tree/e3a6307ad8a2dc2cad35728a2a9908cfd8dd8ef9/packages/arb-bridge-peripherals
- *
- * MODIFIED from Offchain Labs' implementation:
- * - Changed solidity version to 0.7.6 (pablo@edgeandnode.com)
- *
- */
+pragma solidity 0.8.27 || 0.8.33;
 
-pragma solidity ^0.7.6;
+import { GraphDirectory } from "../../utilities/GraphDirectory.sol";
 
-import { IInbox } from "@graphprotocol/interfaces/contracts/contracts/arbitrum/IInbox.sol";
-import { IOutbox } from "@graphprotocol/interfaces/contracts/contracts/arbitrum/IOutbox.sol";
-import { IBridge } from "@graphprotocol/interfaces/contracts/contracts/arbitrum/IBridge.sol";
+/* solhint-disable var-name-mixedcase */
 
 /**
- * @title L1 Arbitrum Messenger
+ * @title Graph Managed contract
  * @author Edge & Node
- * @notice L1 utility contract to assist with L1 <=> L2 interactions
- * @dev this is an abstract contract instead of library so the functions can be easily overridden when testing
+ * @notice The Managed contract provides an interface to interact with the Controller
+ * @dev For Graph Horizon this contract is mostly a shell that uses {GraphDirectory}, however since the {HorizonStaking}
+ * contract uses it we need to preserve the storage layout.
+ * Inspired by Livepeer: https://github.com/livepeer/protocol/blob/streamflow/contracts/Controller.sol
+ * @custom:security-contact Please email security+contracts@thegraph.com if you find any
+ * bugs. We may have an active bug bounty program.
  */
-abstract contract L1ArbitrumMessenger {
-    /**
-     * @notice Emitted when a transaction is sent to L2
-     * @param _from Address sending the transaction
-     * @param _to Address receiving the transaction on L2
-     * @param _seqNum Sequence number of the retryable ticket
-     * @param _data Transaction data
-     */
-    event TxToL2(address indexed _from, address indexed _to, uint256 indexed _seqNum, bytes _data);
+abstract contract Managed is GraphDirectory {
+    // -- State --
+
+    // forge-lint: disable-next-item(mixed-case-variable)
+    /// @notice Controller that manages this contract
+    address private __DEPRECATED_controller;
+
+    // forge-lint: disable-next-item(mixed-case-variable)
+    /// @dev Cache for the addresses of the contracts retrieved from the controller
+    mapping(bytes32 contractName => address contractAddress) private __DEPRECATED_addressCache;
+
+    // forge-lint: disable-next-item(mixed-case-variable)
+    /// @dev Gap for future storage variables
+    uint256[10] private __gap;
 
     /**
-     * @dev Parameters for L2 gas configuration
-     * @param _maxSubmissionCost Maximum cost for submitting the transaction
-     * @param _maxGas Maximum gas for the L2 transaction
-     * @param _gasPriceBid Gas price bid for the L2 transaction
+     * @notice Thrown when a protected function is called and the contract is paused.
      */
-    struct L2GasParams {
-        uint256 _maxSubmissionCost;
-        uint256 _maxGas;
-        uint256 _gasPriceBid;
+    error ManagedIsPaused();
+
+    /**
+     * @notice Thrown when a the caller is not the expected controller address.
+     */
+    error ManagedOnlyController();
+
+    /**
+     * @notice Thrown when a the caller is not the governor.
+     */
+    error ManagedOnlyGovernor();
+
+    // forge-lint: disable-next-item(unwrapped-modifier-logic)
+    /**
+     * @dev Revert if the controller is paused
+     */
+    modifier notPaused() {
+        require(!_graphController().paused(), ManagedIsPaused());
+        _;
+    }
+
+    // forge-lint: disable-next-item(unwrapped-modifier-logic)
+    /**
+     * @dev Revert if the caller is not the governor
+     */
+    modifier onlyGovernor() {
+        require(msg.sender == _graphController().getGovernor(), ManagedOnlyGovernor());
+        _;
     }
 
     /**
-     * @notice Send a transaction to L2 using gas parameters struct
-     * @param _inbox Address of the inbox contract
-     * @param _to Destination address on L2
-     * @param _user Address that will be credited as the sender
-     * @param _l1CallValue ETH value to send with the L1 transaction
-     * @param _l2CallValue ETH value to send with the L2 transaction
-     * @param _l2GasParams Gas parameters for the L2 transaction
-     * @param _data Calldata for the L2 transaction
-     * @return Sequence number of the retryable ticket
+     * @notice Initialize the contract
+     * @param controller_ The address of the Graph controller contract
      */
-    function sendTxToL2(
-        address _inbox,
-        address _to,
-        address _user,
-        uint256 _l1CallValue,
-        uint256 _l2CallValue,
-        L2GasParams memory _l2GasParams,
-        bytes memory _data
-    ) internal virtual returns (uint256) {
-        // alternative function entry point when struggling with the stack size
-        return
-            sendTxToL2(
-                _inbox,
-                _to,
-                _user,
-                _l1CallValue,
-                _l2CallValue,
-                _l2GasParams._maxSubmissionCost,
-                _l2GasParams._maxGas,
-                _l2GasParams._gasPriceBid,
-                _data
-            );
-    }
-
-    /**
-     * @notice Send a transaction to L2 with individual gas parameters
-     * @param _inbox Address of the inbox contract
-     * @param _to Destination address on L2
-     * @param _user Address that will be credited as the sender
-     * @param _l1CallValue ETH value to send with the L1 transaction
-     * @param _l2CallValue ETH value to send with the L2 transaction
-     * @param _maxSubmissionCost Maximum cost for submitting the transaction
-     * @param _maxGas Maximum gas for the L2 transaction
-     * @param _gasPriceBid Gas price bid for the L2 transaction
-     * @param _data Calldata for the L2 transaction
-     * @return Sequence number of the retryable ticket
-     */
-    function sendTxToL2(
-        address _inbox,
-        address _to,
-        address _user,
-        uint256 _l1CallValue,
-        uint256 _l2CallValue,
-        uint256 _maxSubmissionCost,
-        uint256 _maxGas,
-        uint256 _gasPriceBid,
-        bytes memory _data
-    ) internal virtual returns (uint256) {
-        uint256 seqNum = IInbox(_inbox).createRetryableTicket{ value: _l1CallValue }(
-            _to,
-            _l2CallValue,
-            _maxSubmissionCost,
-            _user,
-            _user,
-            _maxGas,
-            _gasPriceBid,
-            _data
-        );
-        emit TxToL2(_user, _to, seqNum, _data);
-        return seqNum;
-    }
-
-    /**
-     * @notice Get the bridge contract from an inbox
-     * @param _inbox Address of the inbox contract
-     * @return Bridge contract interface
-     */
-    function getBridge(address _inbox) internal view virtual returns (IBridge) {
-        return IInbox(_inbox).bridge();
-    }
-
-    /**
-     * @notice Get the L2 to L1 sender address from the outbox
-     * @dev the l2ToL1Sender behaves as the tx.origin, the msg.sender should be validated to protect against reentrancies
-     * @param _inbox Address of the inbox contract
-     * @return Address of the L2 to L1 sender
-     */
-    function getL2ToL1Sender(address _inbox) internal view virtual returns (address) {
-        IOutbox outbox = IOutbox(getBridge(_inbox).activeOutbox());
-        address l2ToL1Sender = outbox.l2ToL1Sender();
-
-        require(l2ToL1Sender != address(0), "NO_SENDER");
-        return l2ToL1Sender;
-    }
+    constructor(address controller_) GraphDirectory(controller_) {}
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -1171,6 +1015,162 @@ abstract contract GraphDirectory {
         address contractAddress = GRAPH_CONTROLLER.getContractProxy(keccak256(_contractName));
         require(contractAddress != address(0), GraphDirectoryInvalidZeroAddress(_contractName));
         return contractAddress;
+    }
+}
+
+// SPDX-License-Identifier: Apache-2.0
+
+/*
+ * Copyright 2020, Offchain Labs, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Originally copied from:
+ * https://github.com/OffchainLabs/arbitrum/tree/e3a6307ad8a2dc2cad35728a2a9908cfd8dd8ef9/packages/arb-bridge-peripherals
+ *
+ * MODIFIED from Offchain Labs' implementation:
+ * - Changed solidity version to 0.7.6 (pablo@edgeandnode.com)
+ *
+ */
+
+pragma solidity ^0.7.6;
+
+import { IInbox } from "@graphprotocol/interfaces/contracts/contracts/arbitrum/IInbox.sol";
+import { IOutbox } from "@graphprotocol/interfaces/contracts/contracts/arbitrum/IOutbox.sol";
+import { IBridge } from "@graphprotocol/interfaces/contracts/contracts/arbitrum/IBridge.sol";
+
+/**
+ * @title L1 Arbitrum Messenger
+ * @author Edge & Node
+ * @notice L1 utility contract to assist with L1 <=> L2 interactions
+ * @dev this is an abstract contract instead of library so the functions can be easily overridden when testing
+ */
+abstract contract L1ArbitrumMessenger {
+    /**
+     * @notice Emitted when a transaction is sent to L2
+     * @param _from Address sending the transaction
+     * @param _to Address receiving the transaction on L2
+     * @param _seqNum Sequence number of the retryable ticket
+     * @param _data Transaction data
+     */
+    event TxToL2(address indexed _from, address indexed _to, uint256 indexed _seqNum, bytes _data);
+
+    /**
+     * @dev Parameters for L2 gas configuration
+     * @param _maxSubmissionCost Maximum cost for submitting the transaction
+     * @param _maxGas Maximum gas for the L2 transaction
+     * @param _gasPriceBid Gas price bid for the L2 transaction
+     */
+    struct L2GasParams {
+        uint256 _maxSubmissionCost;
+        uint256 _maxGas;
+        uint256 _gasPriceBid;
+    }
+
+    /**
+     * @notice Send a transaction to L2 using gas parameters struct
+     * @param _inbox Address of the inbox contract
+     * @param _to Destination address on L2
+     * @param _user Address that will be credited as the sender
+     * @param _l1CallValue ETH value to send with the L1 transaction
+     * @param _l2CallValue ETH value to send with the L2 transaction
+     * @param _l2GasParams Gas parameters for the L2 transaction
+     * @param _data Calldata for the L2 transaction
+     * @return Sequence number of the retryable ticket
+     */
+    function sendTxToL2(
+        address _inbox,
+        address _to,
+        address _user,
+        uint256 _l1CallValue,
+        uint256 _l2CallValue,
+        L2GasParams memory _l2GasParams,
+        bytes memory _data
+    ) internal virtual returns (uint256) {
+        // alternative function entry point when struggling with the stack size
+        return
+            sendTxToL2(
+                _inbox,
+                _to,
+                _user,
+                _l1CallValue,
+                _l2CallValue,
+                _l2GasParams._maxSubmissionCost,
+                _l2GasParams._maxGas,
+                _l2GasParams._gasPriceBid,
+                _data
+            );
+    }
+
+    /**
+     * @notice Send a transaction to L2 with individual gas parameters
+     * @param _inbox Address of the inbox contract
+     * @param _to Destination address on L2
+     * @param _user Address that will be credited as the sender
+     * @param _l1CallValue ETH value to send with the L1 transaction
+     * @param _l2CallValue ETH value to send with the L2 transaction
+     * @param _maxSubmissionCost Maximum cost for submitting the transaction
+     * @param _maxGas Maximum gas for the L2 transaction
+     * @param _gasPriceBid Gas price bid for the L2 transaction
+     * @param _data Calldata for the L2 transaction
+     * @return Sequence number of the retryable ticket
+     */
+    function sendTxToL2(
+        address _inbox,
+        address _to,
+        address _user,
+        uint256 _l1CallValue,
+        uint256 _l2CallValue,
+        uint256 _maxSubmissionCost,
+        uint256 _maxGas,
+        uint256 _gasPriceBid,
+        bytes memory _data
+    ) internal virtual returns (uint256) {
+        uint256 seqNum = IInbox(_inbox).createRetryableTicket{ value: _l1CallValue }(
+            _to,
+            _l2CallValue,
+            _maxSubmissionCost,
+            _user,
+            _user,
+            _maxGas,
+            _gasPriceBid,
+            _data
+        );
+        emit TxToL2(_user, _to, seqNum, _data);
+        return seqNum;
+    }
+
+    /**
+     * @notice Get the bridge contract from an inbox
+     * @param _inbox Address of the inbox contract
+     * @return Bridge contract interface
+     */
+    function getBridge(address _inbox) internal view virtual returns (IBridge) {
+        return IInbox(_inbox).bridge();
+    }
+
+    /**
+     * @notice Get the L2 to L1 sender address from the outbox
+     * @dev the l2ToL1Sender behaves as the tx.origin, the msg.sender should be validated to protect against reentrancies
+     * @param _inbox Address of the inbox contract
+     * @return Address of the L2 to L1 sender
+     */
+    function getL2ToL1Sender(address _inbox) internal view virtual returns (address) {
+        IOutbox outbox = IOutbox(getBridge(_inbox).activeOutbox());
+        address l2ToL1Sender = outbox.l2ToL1Sender();
+
+        require(l2ToL1Sender != address(0), "NO_SENDER");
+        return l2ToL1Sender;
     }
 }
 
