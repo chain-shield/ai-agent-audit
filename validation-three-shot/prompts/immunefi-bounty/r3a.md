@@ -31,6 +31,8 @@ Generated Immunefi severity rubric:
 
 Relevant Immunefi feasibility standards to apply:
 - Feasibility limitations affect reward/payout separately from impact, unless a specific standard says downgrade/reclassification is appropriate.
+- Practical exploitability is not likelihood: do not downgrade/exclude solely because timing, state, capital, or probability is unfavorable.
+- A reportable bounty issue still needs a normal, supported, or demonstrably used attack route; unsupported routes, victim confusion/misuse, or social engineering are practical-route failures.
 - Chain rollbacks are not a valid downgrade reason.
 - Pre-impact monitoring or auto-blocking only matters if the project can prove 100% objective certainty of prevention; non-100% monitoring is not enough.
 - Flashloan / high-capital requirements are not automatically invalid; for flashloans, require enough current liquidity or expected liquidity within 12 months.
@@ -48,7 +50,7 @@ Decision values:
 - `Keep`: R3 impact/severity remains appropriate after feasibility review.
 - `Reclassify As Medium Griefing`: the bug is real but the profitable/high-impact framing should become Medium griefing/theft-of-gas because the attacker does not profit and mainly causes user/protocol damage.
 - `Needs Review`: feasibility is unresolved and should block automatic report generation until a human or PoC clarifies it.
-- `Exclude`: the attack is not realistically executable under Immunefi rules, requires privileged access, requires unsupported live testing, or otherwise fails a feasibility standard.
+- `Exclude`: the attack is not realistically executable under Immunefi rules, requires privileged access, requires unsupported live testing, depends on unsupported victim behavior or social engineering, lacks a credible practical attack path, or otherwise fails a feasibility standard.
 
 Feasibility categories:
 - `obviously-feasible`
@@ -59,6 +61,10 @@ Feasibility categories:
 - `capital-or-flashloan-unresolved`
 - `financial-risk-massively-outweighs-reward`
 - `medium-griefing`
+- `rare-but-real-state`
+- `unsupported-or-unused-route`
+- `victim-misuse-precondition`
+- `practical-route-unproven`
 - `privileged-access-required`
 - `delegated-authority`
 - `no-incremental-impact`
