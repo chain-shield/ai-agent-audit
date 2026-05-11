@@ -35,12 +35,13 @@ Never collapse these into one question. A real bug can still be `Low / QA`, and 
 2. A real bug is not automatically an H/M finding.
 3. A named safeguard only counts if it materially constrains the exact execution path at issue.
 4. Realistic timing, sequencing, stale-state windows, and ordinary market conditions do not automatically make an issue low likelihood.
-5. A workflow being owner-only, governance-triggered, or maintenance-triggered does not make a finding low by default if permissionless actors can still exploit the path once that workflow is used.
-6. Unsupported ERC20 or exotic token semantics are out of scope unless the benchmark docs explicitly say the protocol supports them.
-7. Unsupported integrations, future component failures, and deployment / setup mistakes are not current H/M code vulnerabilities by default.
-8. In raw validation, do not dedupe report findings against other report findings. Evaluate each finding on its own code path, bug existence, and H/M impact.
-9. Use `Needs Review` sparingly. It is for genuine unresolved ambiguity after tracing the code, not for severity indecision on an already-proven bug family.
-10. Delegated authority counts as trusted-role authority: malicious use of an intentionally granted capability is not a bug unless the report proves incremental unauthorized impact.
+5. Practical exploitability is different from likelihood: rare-but-real states can still be H/M, but findings need a credible attacker-controlled path from normal protocol state to the claimed impact.
+6. A workflow being owner-only, governance-triggered, or maintenance-triggered does not make a finding low by default if permissionless actors can still exploit the path once that workflow is used.
+7. Unsupported ERC20 or exotic token semantics are out of scope unless the benchmark docs explicitly say the protocol supports them.
+8. Unsupported integrations, future component failures, and deployment / setup mistakes are not current H/M code vulnerabilities by default.
+9. In raw validation, do not dedupe report findings against other report findings. Evaluate each finding on its own code path, bug existence, and H/M impact.
+10. Use `Needs Review` sparingly. It is for genuine unresolved ambiguity after tracing the code, not for severity indecision on an already-proven bug family.
+11. Delegated authority counts as trusted-role authority: malicious use of an intentionally granted capability is not a bug unless the report proves incremental unauthorized impact.
 
 ## Pre-Gate Sanity Check: Verify The Bug Exists
 
@@ -144,6 +145,13 @@ Do not downgrade merely because a safeguard exists by name. Downgrade or reject 
 
 For H/M, require a realistic path under current code, but do not require certainty or a public mempool race if the protocol flow naturally exposes the state.
 
+Practical attack path check:
+- identify who triggers the exploit and which normal in-scope route they use
+- distinguish rare timing/state/capital requirements from impossible or unsupported routes
+- do not reject merely because a state is rare, timing-sensitive, market-sensitive, high-capital, or requires waiting
+- reject or mark `Needs Review` if the harm requires social engineering, victim confusion, an unsupported UI/API route with no evidence of real use, or a victim action outside normal protocol expectations
+- require the claimed impact to follow from the exploit path itself, not just from an odd or surprising state transition
+
 Usually H/M-compatible:
 - permissionless or economically rational attacker actions
 - sandwich / timing opportunities around public settlement, mint, burn, claim, rebalance, bridge, or liquidation flows
@@ -157,6 +165,7 @@ Usually Low / QA or Invalid:
 - requires malicious use of delegated authority or has no incremental impact beyond an authorized same-actor path
 - requires an irrational attacker to lose material value only to grief
 - requires unsupported deployment choices
+- requires a victim to use a nonstandard or unsupported route with no evidence that real users or integrations use that route
 - requires a future integration not present in current code/scope
 
 ## Gate 6: Impact Classification

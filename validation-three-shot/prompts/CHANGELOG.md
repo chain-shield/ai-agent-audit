@@ -1,5 +1,13 @@
 # Validation Prompt Changelog
 
+## Practical attack path update on 2026-05-11
+
+- Added a profile-aware practical exploitability gate across Immunefi bounty, Code4rena bounty, and Code4rena contest prompts.
+- Explicitly separates exploitability from likelihood: rare, timing-sensitive, high-capital, or low-probability states are not rejected merely for being rare.
+- Bounty prompts now block or require review when impact depends on unsupported routes, victim confusion, social engineering, victim misuse, or no credible attacker-controlled route.
+- Code4rena contest prompts now preserve rare-but-real H/M findings while surfacing unsupported or impractical victim-path issues as `Needs Review` / judge-risk.
+- Tightened R9 judge simulation prompts so workers must produce profile-specific gate verdicts in both Markdown and JSON before recommending acceptance.
+
 ## Delegated authority trust-model update on 2026-05-08
 
 - Hardened bounty and validation prompts after an Immunefi trust-model rejection.
