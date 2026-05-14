@@ -501,16 +501,14 @@ impl ImmunefiBountyData {
         let mixed_asset_categories = self.has_non_smart_contract_assets();
         let mut resource_candidates = Vec::new();
         for link in &self.codebases {
-            if mixed_asset_categories && !resource_link_is_smart_contract_specific(link) {
+            let link_candidates = github_candidates_from_resource_link(link);
+            if mixed_asset_categories
+                && !resource_link_is_smart_contract_specific(link)
+                && !resource_link_is_generic_program_codebase(link, &link_candidates)
+            {
                 continue;
             }
-            resource_candidates.extend(github_codebase_urls_from_text(&link.url));
-            if let Some(description) = &link.description {
-                resource_candidates.extend(github_codebase_urls_from_text(description));
-            }
-            if let Some(title) = &link.title {
-                resource_candidates.extend(github_codebase_urls_from_text(title));
-            }
+            resource_candidates.extend(link_candidates);
         }
         for link in &self.documentations {
             if !documentation_link_is_smart_contract_codebase(link) {
@@ -793,6 +791,42 @@ fn resource_link_is_smart_contract_specific(link: &ImmunefiResourceLink) -> bool
     ]
     .iter()
     .any(|marker| haystack.contains(marker))
+}
+
+fn github_candidates_from_resource_link(link: &ImmunefiResourceLink) -> Vec<ResolvedGitCodebase> {
+    let mut candidates = github_codebase_urls_from_text(&link.url);
+    if let Some(description) = &link.description {
+        candidates.extend(github_codebase_urls_from_text(description));
+    }
+    if let Some(title) = &link.title {
+        candidates.extend(github_codebase_urls_from_text(title));
+    }
+    candidates
+}
+
+fn resource_link_is_generic_program_codebase(
+    link: &ImmunefiResourceLink,
+    candidates: &[ResolvedGitCodebase],
+) -> bool {
+    // Some Immunefi mixed-category programs label the only source repository as
+    // a generic "Program Codebase" even when the repo contains the in-scope
+    // contracts. Accept cloneable repo links with that exact program-codebase
+    // shape, while keeping explicit web/app resource repos filtered out.
+    if candidates.is_empty() {
+        return false;
+    }
+    let title = link
+        .title
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let description = link
+        .description
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    title.contains("codebase") && description.contains("program codebase")
 }
 
 fn documentation_link_is_smart_contract_codebase(link: &ImmunefiResourceLink) -> bool {
@@ -1402,6 +1436,34 @@ mod tests {
         let err = data.resolved_git_codebases().unwrap_err().to_string();
 
         assert!(err.contains("Specify `repo` manually"));
+    }
+
+    #[test]
+    fn mixed_immunefi_program_accepts_generic_program_codebase_repo() {
+        let urls =
+            normalize_immunefi_bounty_urls("https://immunefi.com/bug-bounty/ethena/information/")
+                .unwrap();
+        let html = r#"
+<script>self.__next_f.push([1,"{\"project\":\"Ethena\",\"programCodebases\":[{\"id\":113,\"url\":\"https://github.com/ethena-labs/bbp-public-assets?utm_source=immunefi\",\"title\":\"Ethena Codebase\",\"description\":\"Program Codebase\"}],\"assets\":[{\"id\":\"web\",\"url\":\"https://app.example\",\"type\":\"websites_and_applications\",\"description\":\"Web app\",\"isPrimacyOfImpact\":false},{\"id\":\"sc\",\"url\":\"https://etherscan.io/address/0x4c9EDD5852cd905f086C759E8383e09bff1E68B3\",\"type\":\"smart_contract\",\"description\":\"USDe.sol\",\"isPrimacyOfImpact\":false}],\"programImpacts\":[{\"id\":1,\"severity\":\"critical\",\"assetType\":\"smart_contract\",\"description\":\"Direct theft of funds\"}]}"]);</script>
+"#;
+
+        let data = parse_immunefi_bounty_data(
+            "https://immunefi.com/bug-bounty/ethena/information/",
+            urls,
+            vec![ImmunefiTabCapture {
+                kind: ImmunefiTabKind::Resources,
+                url: "https://immunefi.com/bug-bounty/ethena/resources/".to_string(),
+                html: html.to_string(),
+            }],
+        );
+
+        let repos = data.resolved_git_codebases().unwrap();
+
+        assert_eq!(repos.len(), 1);
+        assert_eq!(
+            repos[0].repo_url,
+            "https://github.com/ethena-labs/bbp-public-assets"
+        );
     }
 
     #[test]

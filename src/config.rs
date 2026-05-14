@@ -48,13 +48,13 @@ pub const SKIP_INVARIANT_RUNS: bool = false;
 // SKIP or RUN MAIN PATTERN RUNS
 pub const SKIP_ACTOR_PATTERN_RUNS: bool = false;
 // RUNS R1 (basic) and R2 (complex) patterns
-pub const R1_RUNS: usize = 10; // default: 10 , testing: 5
-pub const R2_RUNS: usize = 10; // default: 10 , testing: 5
+pub const R1_RUNS: usize = 5; // default: 10 , testing: 5
+pub const R2_RUNS: usize = 5; // default: 10 , testing: 5
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
-pub const INVARIANT_RUNS: usize = 3; // default: 3
-pub const ACTOR_RUNS: usize = 2; // default: 2
+pub const INVARIANT_RUNS: usize = 5; // default: 3
+pub const ACTOR_RUNS: usize = 5; // default: 2
 pub const MAX_PATTERNS_FOR_PROMPT: usize = 32; // too many patterns and performance drops
 
 pub const MAX_PATTERN_RUN_TOP: usize = 3; // 2 for large protocol, default: 3

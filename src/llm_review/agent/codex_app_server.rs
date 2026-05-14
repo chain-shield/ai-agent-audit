@@ -18,10 +18,10 @@ const MAX_PROMPT_ATTEMPTS: usize = 10;
 const INITIAL_RETRY_DELAY_MS: u64 = 1_000;
 const RATE_LIMIT_FALLBACK_WAIT_SECS: u64 = 5 * 60 * 60;
 const CODEX_BIN_ENV_VARS: &[&str] = &["AI_AGENT_AUDIT_CODEX_BIN", "CODEX_BIN"];
-// Keep the default pool conservative: each pooled Codex app-server session is a
-// separate long-lived subprocess, so large pools multiply memory usage fast when
-// users run multiple audits in parallel.
-const DEFAULT_CODEX_SESSION_POOL_SIZE: usize = 2;
+// Global cap for Codex app-server subprocesses across all tool profiles.
+// Each session is a long-lived subprocess, so this must remain a total process
+// cap rather than a per-profile cap.
+const DEFAULT_CODEX_SESSION_POOL_SIZE: usize = 10;
 const CODEX_SESSION_POOL_SIZE_ENV: &str = "AI_AGENT_AUDIT_CODEX_SESSION_POOL_SIZE";
 const CODEX_REQUEST_TIMEOUT_SECS: u64 = 30;
 const CODEX_TURN_EVENT_TIMEOUT_SECS: u64 = 10 * 60;
@@ -34,7 +34,15 @@ const PLATFORM_CODEX_FALLBACKS: &[&str] = &["/Applications/Codex.app/Contents/Re
 const PLATFORM_CODEX_FALLBACKS: &[&str] = &[];
 
 static CODEX_SESSION_POOL: OnceLock<CodexSessionPool> = OnceLock::new();
-static CODEX_APP_SERVER_ARGS: OnceLock<Vec<String>> = OnceLock::new();
+static CODEX_PROMPT_ONLY_APP_SERVER_ARGS: OnceLock<Vec<String>> = OnceLock::new();
+static CODEX_AUDIT_CONTEXT_APP_SERVER_ARGS: OnceLock<Vec<String>> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CodexToolProfile {
+    #[default]
+    PromptOnly,
+    AuditContextEscalation,
+}
 
 #[derive(Debug, Clone)]
 pub struct CodexAgentConfig {
@@ -43,6 +51,7 @@ pub struct CodexAgentConfig {
     pub context: Option<String>,
     pub reasoning_effort: Option<String>,
     pub service_tier: Option<String>,
+    pub tool_profile: CodexToolProfile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,7 +115,7 @@ impl CodexAgentConfig {
 
     fn prompt_once(&self, prompt: &str, output_schema: Option<Value>) -> PromptAttemptResult {
         let mut session = codex_session_pool()
-            .acquire()
+            .acquire(self.tool_profile)
             .map_err(PromptFailure::Fatal)?;
 
         if let Err(err) = session.session_mut().ensure_chatgpt_auth_cached() {
@@ -138,12 +147,12 @@ enum PromptFailure {
 type PromptAttemptResult = std::result::Result<String, PromptFailure>;
 
 pub fn ensure_chatgpt_auth() -> Result<()> {
-    let mut session = codex_session_pool().acquire()?;
+    let mut session = codex_session_pool().acquire(CodexToolProfile::PromptOnly)?;
     session.session_mut().ensure_chatgpt_auth_cached()
 }
 
 pub fn cached_chatgpt_account() -> Result<Option<ChatGptAccount>> {
-    let mut session = codex_session_pool().acquire()?;
+    let mut session = codex_session_pool().acquire(CodexToolProfile::PromptOnly)?;
     session.session_mut().cached_chatgpt_account()
 }
 
@@ -151,7 +160,7 @@ fn codex_session_pool() -> &'static CodexSessionPool {
     CODEX_SESSION_POOL.get_or_init(|| {
         let max_sessions = resolve_codex_session_pool_size();
         log::info!(
-            "Initializing Codex app-server session pool with capacity {}",
+            "Initializing global Codex app-server session pool with capacity {}",
             max_sessions
         );
         CodexSessionPool::new(max_sessions)
@@ -185,7 +194,8 @@ struct CodexSessionPool {
 }
 
 struct CodexSessionPoolState {
-    idle: Vec<CodexSession>,
+    idle_prompt_only: Vec<CodexSession>,
+    idle_audit_context: Vec<CodexSession>,
     total_sessions: usize,
 }
 
@@ -193,7 +203,8 @@ impl CodexSessionPool {
     fn new(max_sessions: usize) -> Self {
         Self {
             state: Mutex::new(CodexSessionPoolState {
-                idle: Vec::new(),
+                idle_prompt_only: Vec::new(),
+                idle_audit_context: Vec::new(),
                 total_sessions: 0,
             }),
             available: Condvar::new(),
@@ -201,16 +212,16 @@ impl CodexSessionPool {
         }
     }
 
-    fn acquire(&'static self) -> Result<PooledCodexSession> {
+    fn acquire(&'static self, profile: CodexToolProfile) -> Result<PooledCodexSession> {
         loop {
             let mut state = self
                 .state
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-            while let Some(mut session) = state.idle.pop() {
+            while let Some(mut session) = idle_sessions_for_profile(&mut state, profile).pop() {
                 if session.is_running() {
-                    return Ok(PooledCodexSession::new(self, session));
+                    return Ok(PooledCodexSession::new(self, profile, session));
                 }
                 state.total_sessions = state.total_sessions.saturating_sub(1);
             }
@@ -219,12 +230,27 @@ impl CodexSessionPool {
                 state.total_sessions += 1;
                 drop(state);
 
-                match CodexSession::start_initialized() {
-                    Ok(session) => return Ok(PooledCodexSession::new(self, session)),
-                    Err(err) => {
-                        self.release_failed_slot();
-                        return Err(err);
-                    }
+                return self.start_reserved_session(profile);
+            }
+
+            if let Some(evicted_profile) = eviction_candidate_for_profile(
+                profile,
+                state.idle_prompt_only.len(),
+                state.idle_audit_context.len(),
+            ) {
+                let evicted_session = idle_sessions_for_profile(&mut state, evicted_profile).pop();
+                if let Some(evicted_session) = evicted_session {
+                    state.total_sessions = state.total_sessions.saturating_sub(1);
+                    state.total_sessions += 1;
+                    log::info!(
+                        "Recycling idle Codex app-server session for profile {:?} to create {:?} session",
+                        evicted_profile,
+                        profile
+                    );
+                    drop(state);
+                    drop(evicted_session);
+
+                    return self.start_reserved_session(profile);
                 }
             }
 
@@ -236,12 +262,25 @@ impl CodexSessionPool {
         }
     }
 
-    fn return_session(&self, session: CodexSession) {
+    fn start_reserved_session(
+        &'static self,
+        profile: CodexToolProfile,
+    ) -> Result<PooledCodexSession> {
+        match CodexSession::start_initialized(profile) {
+            Ok(session) => Ok(PooledCodexSession::new(self, profile, session)),
+            Err(err) => {
+                self.release_failed_slot();
+                Err(err)
+            }
+        }
+    }
+
+    fn return_session(&self, profile: CodexToolProfile, session: CodexSession) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.idle.push(session);
+        idle_sessions_for_profile(&mut state, profile).push(session);
         self.available.notify_one();
     }
 
@@ -259,16 +298,52 @@ impl CodexSessionPool {
     }
 }
 
+fn eviction_candidate_for_profile(
+    requested_profile: CodexToolProfile,
+    prompt_only_idle_count: usize,
+    audit_context_idle_count: usize,
+) -> Option<CodexToolProfile> {
+    match requested_profile {
+        CodexToolProfile::PromptOnly
+            if prompt_only_idle_count == 0 && audit_context_idle_count > 0 =>
+        {
+            Some(CodexToolProfile::AuditContextEscalation)
+        }
+        CodexToolProfile::AuditContextEscalation
+            if audit_context_idle_count == 0 && prompt_only_idle_count > 0 =>
+        {
+            Some(CodexToolProfile::PromptOnly)
+        }
+        _ => None,
+    }
+}
+
+fn idle_sessions_for_profile(
+    state: &mut CodexSessionPoolState,
+    profile: CodexToolProfile,
+) -> &mut Vec<CodexSession> {
+    match profile {
+        CodexToolProfile::PromptOnly => &mut state.idle_prompt_only,
+        CodexToolProfile::AuditContextEscalation => &mut state.idle_audit_context,
+    }
+}
+
 struct PooledCodexSession {
     pool: &'static CodexSessionPool,
+    profile: CodexToolProfile,
     session: Option<CodexSession>,
     broken: bool,
 }
 
 impl PooledCodexSession {
-    fn new(pool: &'static CodexSessionPool, session: CodexSession) -> Self {
+    fn new(
+        pool: &'static CodexSessionPool,
+        profile: CodexToolProfile,
+        session: CodexSession,
+    ) -> Self {
         Self {
             pool,
+            profile,
             session: Some(session),
             broken: false,
         }
@@ -316,7 +391,7 @@ impl Drop for PooledCodexSession {
             return;
         }
 
-        self.pool.return_session(session);
+        self.pool.return_session(self.profile, session);
     }
 }
 
@@ -330,11 +405,11 @@ struct CodexSession {
 }
 
 impl CodexSession {
-    fn start() -> Result<Self> {
+    fn start(profile: CodexToolProfile) -> Result<Self> {
         let codex_cli = resolve_codex_cli_path()?;
         let mut command = Command::new(&codex_cli);
         command
-            .args(codex_app_server_args(&codex_cli))
+            .args(codex_app_server_args(&codex_cli, profile))
             .args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -368,8 +443,8 @@ impl CodexSession {
         })
     }
 
-    fn start_initialized() -> Result<Self> {
-        let mut session = Self::start()?;
+    fn start_initialized(profile: CodexToolProfile) -> Result<Self> {
+        let mut session = Self::start(profile)?;
         session.initialize()?;
         Ok(session)
     }
@@ -515,10 +590,7 @@ impl CodexSession {
         prompt: &str,
         output_schema: Option<Value>,
     ) -> PromptAttemptResult {
-        let developer_instructions = format!(
-            "{}\n\nDo not browse the web, run shell commands, inspect local files, or call tools. Answer only from the prompt content and return the requested final answer.",
-            config.preamble
-        );
+        let developer_instructions = developer_instructions_for_profile(config);
 
         let thread_params = build_thread_start_params(config, &developer_instructions);
 
@@ -884,23 +956,33 @@ fn is_runnable_file(path: &Path) -> bool {
     path.is_file()
 }
 
-fn codex_app_server_args(codex_cli: &Path) -> &'static [String] {
-    CODEX_APP_SERVER_ARGS
-        .get_or_init(|| resolve_codex_app_server_args(codex_cli))
-        .as_slice()
+fn codex_app_server_args(codex_cli: &Path, profile: CodexToolProfile) -> &'static [String] {
+    match profile {
+        CodexToolProfile::PromptOnly => CODEX_PROMPT_ONLY_APP_SERVER_ARGS
+            .get_or_init(|| resolve_codex_app_server_args(codex_cli, profile))
+            .as_slice(),
+        CodexToolProfile::AuditContextEscalation => CODEX_AUDIT_CONTEXT_APP_SERVER_ARGS
+            .get_or_init(|| resolve_codex_app_server_args(codex_cli, profile))
+            .as_slice(),
+    }
 }
 
-fn resolve_codex_app_server_args(codex_cli: &Path) -> Vec<String> {
+fn resolve_codex_app_server_args(codex_cli: &Path, profile: CodexToolProfile) -> Vec<String> {
     let mut args = vec![
         "--disable".to_string(),
         CODEX_DISABLE_PLUGINS_FEATURE.to_string(),
     ];
 
+    if profile == CodexToolProfile::AuditContextEscalation {
+        args.push("--search".to_string());
+    }
+
     match configured_mcp_server_names(codex_cli) {
         Ok(server_names) => {
             if server_names.is_empty() {
                 log::info!(
-                    "Starting Codex app-server with plugins disabled and no configured MCP servers"
+                    "Starting Codex app-server with profile {:?}, plugins disabled, and no configured MCP servers",
+                    profile
                 );
                 return args;
             }
@@ -912,7 +994,8 @@ fn resolve_codex_app_server_args(codex_cli: &Path) -> Vec<String> {
             }
 
             log::info!(
-                "Starting Codex app-server with plugins disabled and {} MCP server overrides",
+                "Starting Codex app-server with profile {:?}, plugins disabled, and {} MCP server overrides",
+                profile,
                 disabled_count
             );
         }
@@ -1058,6 +1141,19 @@ fn compose_input(prompt: &str, context: Option<&str>) -> String {
             format!("## Context\n\n{context}\n\n## Task\n\n{prompt}")
         }
         _ => prompt.to_string(),
+    }
+}
+
+fn developer_instructions_for_profile(config: &CodexAgentConfig) -> String {
+    match config.tool_profile {
+        CodexToolProfile::PromptOnly => format!(
+            "{}\n\nDo not browse the web, run shell commands, inspect local files, or call tools. Answer only from the prompt content and return the requested final answer.",
+            config.preamble
+        ),
+        CodexToolProfile::AuditContextEscalation => format!(
+            "{}\n\n## Context Escalation Policy\n\nDefault to the supplied code, scope, docs, and artifacts. If and only if a security decision is blocked by missing context that could materially change the result, you may inspect local files under the configured repository/source paths or `~/Desktop/Audit/...` using targeted searches, and you may use web search only for official project docs, bounty pages, GitHub source, or relevant standards/specs. Do not browse broadly. Do not expand audit scope. Do not use tools for summary or deduplication work. Cite any extra files or URLs relied on. If no extra context is needed, do not use tools.",
+            config.preamble
+        ),
     }
 }
 
@@ -1517,6 +1613,7 @@ mod tests {
             context: None,
             reasoning_effort: Some("xhigh".to_string()),
             service_tier: None,
+            tool_profile: CodexToolProfile::PromptOnly,
         };
 
         let params = build_thread_start_params(&config, "Developer instructions");
@@ -1529,6 +1626,111 @@ mod tests {
         assert_eq!(
             params.get("serviceName").and_then(Value::as_str),
             Some("ai-agent-audit")
+        );
+    }
+
+    #[test]
+    fn test_codex_prompt_only_profile_does_not_enable_search() {
+        let args = resolve_codex_app_server_args(
+            Path::new("/definitely/missing/codex"),
+            CodexToolProfile::PromptOnly,
+        );
+
+        assert!(
+            !args.iter().any(|arg| arg == "--search"),
+            "prompt-only Codex sessions must not expose native web search"
+        );
+        assert!(
+            args.windows(2).any(|pair| pair == ["--disable", "plugins"]),
+            "all Codex app-server sessions should keep plugins disabled"
+        );
+    }
+
+    #[test]
+    fn test_codex_audit_context_profile_enables_native_search_only() {
+        let args = resolve_codex_app_server_args(
+            Path::new("/definitely/missing/codex"),
+            CodexToolProfile::AuditContextEscalation,
+        );
+
+        assert!(
+            args.iter().any(|arg| arg == "--search"),
+            "audit-context Codex sessions should expose native web search"
+        );
+        assert!(
+            args.windows(2).any(|pair| pair == ["--disable", "plugins"]),
+            "audit-context sessions must still keep plugin/MCP fanout disabled"
+        );
+    }
+
+    #[test]
+    fn test_codex_session_pool_default_is_global_cap_of_ten() {
+        let pool = CodexSessionPool::new(DEFAULT_CODEX_SESSION_POOL_SIZE);
+
+        assert_eq!(DEFAULT_CODEX_SESSION_POOL_SIZE, 10);
+        assert_eq!(pool.max_sessions, 10);
+
+        let state = pool
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(
+            state.total_sessions, 0,
+            "total_sessions is shared across both tool profiles"
+        );
+        assert_eq!(state.idle_prompt_only.len(), 0);
+        assert_eq!(state.idle_audit_context.len(), 0);
+    }
+
+    #[test]
+    fn test_codex_pool_can_evict_idle_opposite_profile_when_globally_full() {
+        assert_eq!(
+            eviction_candidate_for_profile(CodexToolProfile::PromptOnly, 0, 10),
+            Some(CodexToolProfile::AuditContextEscalation),
+            "prompt-only requests must not wait forever behind idle audit-context sessions"
+        );
+        assert_eq!(
+            eviction_candidate_for_profile(CodexToolProfile::AuditContextEscalation, 10, 0),
+            Some(CodexToolProfile::PromptOnly),
+            "audit-context requests must not wait forever behind idle prompt-only sessions"
+        );
+    }
+
+    #[test]
+    fn test_codex_pool_does_not_evict_when_requested_profile_has_idle_session() {
+        assert_eq!(
+            eviction_candidate_for_profile(CodexToolProfile::PromptOnly, 3, 10),
+            None
+        );
+        assert_eq!(
+            eviction_candidate_for_profile(CodexToolProfile::AuditContextEscalation, 10, 3),
+            None
+        );
+    }
+
+    #[test]
+    fn test_developer_instructions_respect_tool_profile() {
+        let base = CodexAgentConfig {
+            model: "gpt-5.4".to_string(),
+            preamble: "Audit preamble".to_string(),
+            context: None,
+            reasoning_effort: Some("high".to_string()),
+            service_tier: None,
+            tool_profile: CodexToolProfile::PromptOnly,
+        };
+
+        let prompt_only = developer_instructions_for_profile(&base);
+        assert!(prompt_only.contains("Do not browse the web"));
+        assert!(prompt_only.contains("Answer only from the prompt content"));
+
+        let mut audit_context = base;
+        audit_context.tool_profile = CodexToolProfile::AuditContextEscalation;
+        let audit_context_instructions = developer_instructions_for_profile(&audit_context);
+        assert!(audit_context_instructions.contains("Context Escalation Policy"));
+        assert!(audit_context_instructions.contains("official project docs"));
+        assert!(
+            audit_context_instructions
+                .contains("Do not use tools for summary or deduplication work")
         );
     }
 

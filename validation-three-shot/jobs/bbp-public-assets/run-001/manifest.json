@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "mode": "gui-supervised",
+  "status": "completed",
+  "benchmark": "bbp-public-assets",
+  "run_id": "run-001",
+  "prompt_version": "v2",
+  "validation_profile": "immunefi-bounty",
+  "repo_name": "bbp-public-assets",
+  "repo_root": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit",
+  "config_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/jobs/bbp-public-assets/run-001/config.yaml",
+  "source_config_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/bbp-public-assets-config.yaml",
+  "job_dir": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/jobs/bbp-public-assets/run-001",
+  "source_root": "/Users/apmfree/Desktop/Audit/bbp-public-assets-f3e56d/bbp-public-assets",
+  "audit_root": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/bbp-public-assets",
+  "audit_report": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/bbp-public-assets/report/audit-report.md",
+  "context_docs": [
+    "audit-docs/bbp-public-assets/bbp-public-assets-docs.md",
+    "audit-docs/bbp-public-assets/bbp-public-assets-immunefi-bounty-rules.md",
+    "audit-docs/bbp-public-assets/bbp-public-assets-immunefi-severity-rubric.md",
+    "audit-docs/bbp-public-assets/bbp-public-assets-immunefi-poc-runtime.md",
+    "audit-docs/bbp-public-assets/bbp-public-assets-scope.md",
+    "audit-docs/bbp-public-assets/bbp-public-assets-scope.txt",
+    "{{SOURCE_ROOT}}/README.md"
+  ],
+  "expected_outputs": {
+    "r1_scope_screen": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/scope-screens/v2/bbp-public-assets-run-001.md",
+    "r2_token_screen": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/token-screens/v2/bbp-public-assets-run-001.md",
+    "r3_final_validation": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/stage3-runs/v2/bbp-public-assets-run-001.md",
+    "assembled_run": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/runs/v2/bbp-public-assets-run-001.md",
+    "submission_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/submission-candidates/v2/bbp-public-assets-run-001.md",
+    "results_markdown": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/results/v2/bbp-public-assets-run-001.md",
+    "results_json": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/results/v2/bbp-public-assets-run-001.json"
+  },
+  "supervisor_prompt": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/jobs/bbp-public-assets/run-001/supervisor.md",
+  "status_file": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/jobs/bbp-public-assets/run-001/status.md",
+  "events_file": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/jobs/bbp-public-assets/run-001/events.jsonl",
+  "ready_marker": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/jobs/bbp-public-assets/run-001/ready",
+  "poll_interval_minutes": 5,
+  "created_at": "2026-05-14T14:00:18Z",
+  "updated_at": "2026-05-14T16:19:04Z"
+}

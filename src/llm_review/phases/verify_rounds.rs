@@ -1,4 +1,5 @@
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
+use crate::llm_review::agent::codex_app_server::CodexToolProfile;
 use crate::llm_review::pattern_phases::generate_patterns::generate_content_plus_context_block;
 use crate::llm_review::phases::rounds::all_rounds::{AllRoundLegitAnalysis, VerifyAllRound};
 use crate::llm_review::phases::rounds::utils::generate_post_round_verify_json_requirement;
@@ -308,7 +309,8 @@ pub async fn run_round_validation(
         .with_model(OPENAI_MODEL)
         .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing, and Top Code4rena Judge.")
         .with_file_retrieval(false)
-        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
+        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
+        .with_codex_tool_profile(CodexToolProfile::AuditContextEscalation);
 
     let validation_agent = Arc::new(AgentFactory::create_openai_agent(&validation_config)?);
 

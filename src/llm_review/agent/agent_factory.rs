@@ -267,6 +267,8 @@ pub struct AgentConfig {
     pub anthropic_config: AnthropicConfig,
     /// Gemini-specific configuration (thinking level)
     pub gemini_config: GeminiConfig,
+    /// Codex app-server tool/search policy for OpenAI-backed agents.
+    pub codex_tool_profile: codex_app_server::CodexToolProfile,
 }
 
 impl AgentConfig {
@@ -286,6 +288,7 @@ impl AgentConfig {
             openai_config: OpenAIConfig::default(),
             anthropic_config: AnthropicConfig::default(),
             gemini_config: GeminiConfig::default(),
+            codex_tool_profile: codex_app_server::CodexToolProfile::PromptOnly,
         }
     }
 
@@ -340,6 +343,12 @@ impl AgentConfig {
     /// Enables or disables file picker tool.
     pub fn with_file_picker(mut self, enabled: bool) -> Self {
         self.enable_file_picker = enabled;
+        self
+    }
+
+    /// Sets the Codex app-server tool/search profile for OpenAI-backed agents.
+    pub fn with_codex_tool_profile(mut self, profile: codex_app_server::CodexToolProfile) -> Self {
+        self.codex_tool_profile = profile;
         self
     }
 
@@ -574,6 +583,7 @@ impl AgentFactory {
                     context: config.context.clone(),
                     reasoning_effort: config.openai_config.reasoning_effort.clone(),
                     service_tier,
+                    tool_profile: config.codex_tool_profile,
                 },
             },
             metadata,
@@ -907,6 +917,35 @@ mod tests {
         let _ = init_config();
 
         let _config = AgentConfig::new(None).with_gemini_thinking_level("invalid");
+    }
+
+    #[test]
+    fn test_agent_config_defaults_to_prompt_only_codex_profile() {
+        use crate::config::init_config;
+
+        let _ = init_config();
+
+        let config = AgentConfig::new(None);
+
+        assert_eq!(
+            config.codex_tool_profile,
+            codex_app_server::CodexToolProfile::PromptOnly
+        );
+    }
+
+    #[test]
+    fn test_agent_config_can_enable_audit_context_codex_profile() {
+        use crate::config::init_config;
+
+        let _ = init_config();
+
+        let config = AgentConfig::new(None)
+            .with_codex_tool_profile(codex_app_server::CodexToolProfile::AuditContextEscalation);
+
+        assert_eq!(
+            config.codex_tool_profile,
+            codex_app_server::CodexToolProfile::AuditContextEscalation
+        );
     }
 
     #[test]

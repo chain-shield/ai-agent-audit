@@ -13,7 +13,10 @@ use crate::llm_review::findings::findings::Finding;
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::llm_review::{agent::agent_enums::AIAgent, phases};
 use crate::llm_review::{
-    agent::agent_factory::{AgentConfig, AgentFactory},
+    agent::{
+        agent_factory::{AgentConfig, AgentFactory},
+        codex_app_server::CodexToolProfile,
+    },
     analysis::analysis_db::FindingsDb,
     findings::findings::Findings,
     pattern_phases,
@@ -223,7 +226,8 @@ pub async fn generate_ai_agents(
         .with_model(OPENAI_MODEL)
         .with_preamble(verify_preamble)
         .with_file_picker(false) // Disabled to avoid rate limits
-        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
+        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
+        .with_codex_tool_profile(CodexToolProfile::AuditContextEscalation);
 
     let ai_finding_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
     // let ai_pattern_verify_agent =
