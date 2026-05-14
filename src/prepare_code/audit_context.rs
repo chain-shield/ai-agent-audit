@@ -2851,6 +2851,7 @@ async fn generate_scope_txt(
     extracted.dedup_by(|a, b| a.path == b.path);
     extracted.retain(|entry| {
         !default_generated_scope_path_excludes(&entry.path)
+            && !default_dependency_scope_path_excludes(&entry.path)
             && !default_non_runtime_scope_path_excludes(&entry.path)
     });
     let existing_count = extracted.iter().filter(|entry| entry.exists).count();
@@ -4953,6 +4954,7 @@ fn solidity_definitions(
         let relative = relative_path.to_string_lossy().replace('\\', "/");
         if bounty_oos_excludes(&relative, excluded_folders)
             || default_generated_scope_path_excludes(&relative)
+            || default_dependency_scope_path_excludes(&relative)
             || default_non_runtime_scope_path_excludes(&relative)
         {
             continue;
@@ -5087,6 +5089,31 @@ fn default_generated_scope_path_excludes(relative: &str) -> bool {
     )
 }
 
+fn default_dependency_scope_path_excludes(relative: &str) -> bool {
+    let normalized = relative
+        .trim()
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    parts.windows(2).any(|window| {
+        window[0] == "lib"
+            && matches!(
+                window[1],
+                "forge-std"
+                    | "ds-test"
+                    | "openzeppelin-contracts"
+                    | "openzeppelin-contracts-upgradeable"
+                    | "solady"
+                    | "solmate"
+                    | "prb-test"
+                    | "erc4626-tests"
+                    | "halmos-cheatcodes"
+            )
+    })
+}
+
 fn default_non_runtime_scope_path_excludes(relative: &str) -> bool {
     path_has_any_component(
         relative,
@@ -5188,6 +5215,7 @@ fn scope_fallback_code_folders(cli: &Cli) -> Vec<String> {
 
 fn scope_fallback_excludes(relative: &str, cli: &Cli) -> bool {
     if default_generated_scope_path_excludes(relative)
+        || default_dependency_scope_path_excludes(relative)
         || default_non_runtime_scope_path_excludes(relative)
     {
         return true;
@@ -7142,6 +7170,24 @@ immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
             "contract SSVNetworkViews {}",
         )
         .unwrap();
+        fs::create_dir_all(
+            tmp.path()
+                .join("contracts/lib/openzeppelin-contracts/contracts"),
+        )
+        .unwrap();
+        fs::write(
+            tmp.path()
+                .join("contracts/lib/openzeppelin-contracts/contracts/SSVNetworkViews.sol"),
+            "contract SSVNetworkViews {}",
+        )
+        .unwrap();
+        fs::create_dir_all(tmp.path().join("contracts/contracts/lib/math")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("contracts/contracts/lib/math/InternalMath.sol"),
+            "contract SSVNetworkViewsHelper {}",
+        )
+        .unwrap();
         let definitions = solidity_definitions(tmp.path(), &[]);
         let asset = ExternalContractScopeAsset {
             label: "SSV Network View".to_string(),
@@ -7155,6 +7201,9 @@ immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
         let record = deterministic_external_asset_resolution(&asset, None, &definitions).unwrap();
 
         assert_eq!(record.paths, vec!["./contracts/SSVNetworkViews.sol"]);
+        assert!(definitions.iter().any(|definition| {
+            definition.path == "./contracts/contracts/lib/math/InternalMath.sol"
+        }));
     }
 
     #[test]

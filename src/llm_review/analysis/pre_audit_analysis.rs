@@ -4,6 +4,7 @@ use crate::{
         agent::{
             agent_enums::AIAgent,
             agent_factory::{AgentConfig, AgentFactory},
+            codex_app_server::CodexToolProfile,
         },
         pattern_phases,
         threat_models::{
@@ -32,7 +33,8 @@ pub fn generate_discovery_agent(repo: &RepoPaths, preamble: &str) -> Result<Arc<
     let base_config = AgentConfig::new(Some(repo.clone()))
         .with_model(model)
         .with_preamble(preamble)
-        .with_file_retrieval(false);
+        .with_file_retrieval(false)
+        .with_codex_tool_profile(CodexToolProfile::AuditContextEscalation);
 
     log::info!(
         "Initializing discovery agent with provider={} model={}",
@@ -167,7 +169,8 @@ pub fn generate_openai_agent(repo: &RepoPaths, _reasoning_effort: &str) -> Resul
         .with_model(OPENAI_MODEL)
         .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
         .with_file_retrieval(false)
-        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT);
+        .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
+        .with_codex_tool_profile(CodexToolProfile::AuditContextEscalation);
 
     let agent = Arc::new(AgentFactory::create_openai_agent(&config)?);
 

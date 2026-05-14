@@ -420,7 +420,8 @@ pub struct Cli {
     #[arg(long)]
     pub build_cmd: Option<String>,
 
-    /// Emit a Codex GUI-supervised validation job after report export
+    /// Control Codex GUI-supervised validation job emission after report export.
+    /// Defaults to GUI unless explicitly set to off.
     #[arg(long, value_enum)]
     #[serde(default)]
     pub validation_supervision: Option<ValidationSupervisionMode>,
@@ -573,7 +574,7 @@ impl Cli {
                         _ => None,
                     })
             })
-            .unwrap_or(ValidationSupervisionMode::Off)
+            .unwrap_or(ValidationSupervisionMode::Gui)
     }
 
     pub fn generate_build_command(&self) -> String {

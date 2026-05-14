@@ -73,7 +73,9 @@ Configuration:
 
 GUI-supervised validation:
 
-- Audit runs can opt into Codex GUI supervision with `--validation-supervision gui`, or `validation_supervision: gui` in the audit YAML config.
+- Audit runs emit Codex GUI supervision jobs by default after report export.
+- Disable job emission with `--validation-supervision off`, `validation_supervision: off` in the audit YAML config, or `AI_AGENT_AUDIT_VALIDATION_SUPERVISION=off`.
+- Explicit `--validation-supervision gui`, `validation_supervision: gui`, or `AI_AGENT_AUDIT_VALIDATION_SUPERVISION=gui` keep the default enabled behavior.
 - The audit app still only produces deterministic artifacts. It does not run R1-R9 directly.
 - After report export, the app writes a ready-marked job folder:
   - `validation-three-shot/jobs/<benchmark>/<run-id>/manifest.json`
