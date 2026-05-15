@@ -14,12 +14,15 @@ use crate::llm_review::phases::rounds::validate_round::{
 use crate::llm_review::utils::prompt_context::generate_prompt_for_multi_finding_issue_check;
 use crate::reporting::save_file;
 use crate::{
-    config::{OPENAI_MODEL, OPENAI_REASONING_EFFORT},
+    config::{AuditType, OPENAI_MODEL, OPENAI_REASONING_EFFORT},
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
         analysis::context_state::{generate_audit_scope, get_metadata_context},
-        findings::findings::{Finding, Findings},
+        findings::{
+            finding_enums::Severity,
+            findings::{Finding, Findings},
+        },
         utils::prompt_context::FindingReportType,
     },
     prepare_code::git_clone::RepoPaths,
@@ -155,7 +158,7 @@ pub async fn execute_rounds(
     let verify_findings_vec: Vec<Finding> = verified_findings
         .findings
         .into_iter()
-        .filter(|f| f.status.as_ref().is_some_and(|s| s.len() <= 1))
+        .filter(|f| should_retain_verified_finding(f, &repo.audit_type))
         .collect();
 
     info!(
@@ -180,6 +183,43 @@ pub fn tagged_findings(findings: &Findings) -> usize {
         .iter()
         .filter(|f| f.status.is_some())
         .count()
+}
+
+fn should_retain_verified_finding(finding: &Finding, audit_type: &AuditType) -> bool {
+    let statuses = finding.status.as_deref().unwrap_or_default();
+
+    if statuses.len() <= 1 {
+        return true;
+    }
+
+    if matches!(audit_type, AuditType::Client) {
+        return is_client_reportable_low_or_qa_finding(finding, statuses);
+    }
+
+    false
+}
+
+fn is_client_reportable_low_or_qa_finding(finding: &Finding, statuses: &[FindingStatus]) -> bool {
+    if statuses.iter().all(is_client_reportable_low_or_qa_status) {
+        return true;
+    }
+
+    matches!(finding.severity, Severity::Low | Severity::Info)
+        && !statuses.iter().any(is_hard_invalid_status)
+}
+
+fn is_client_reportable_low_or_qa_status(status: &FindingStatus) -> bool {
+    matches!(
+        status,
+        FindingStatus::Valid
+            | FindingStatus::NeedsMoreInfo
+            | FindingStatus::LowSeverityDueToLowImpact
+            | FindingStatus::LowSeverityDueToRareLikelihood
+    )
+}
+
+fn is_hard_invalid_status(status: &FindingStatus) -> bool {
+    !is_client_reportable_low_or_qa_status(status)
 }
 
 pub async fn run_all_round(
@@ -307,7 +347,7 @@ pub async fn run_round_validation(
     // custom agent for validation
     let validation_config = AgentConfig::new(Some(repo.clone()))
         .with_model(OPENAI_MODEL)
-        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing, and Top Code4rena Judge.")
+        .with_preamble(validation_preamble_for_audit_type(&repo.audit_type))
         .with_file_retrieval(false)
         .with_openai_reasoning_effort(OPENAI_REASONING_EFFORT)
         .with_codex_tool_profile(CodexToolProfile::AuditContextEscalation);
@@ -450,12 +490,31 @@ pub async fn run_round_validation(
     })
 }
 
+fn validation_preamble_for_audit_type(audit_type: &AuditType) -> &'static str {
+    match audit_type {
+        AuditType::Client => {
+            "You are a world-class expert at Solidity EVM smart contract auditing. Apply the audit scope and severity rubric."
+        }
+        _ => {
+            "You are a world-class expert at Solidity EVM smart contract auditing, and Top Code4rena Judge."
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn retained_status_count(statuses: &[FindingStatus]) -> bool {
         Some(statuses).is_some_and(|s| s.len() <= 1)
+    }
+
+    fn finding_with_statuses(severity: Severity, statuses: Vec<FindingStatus>) -> Finding {
+        Finding {
+            severity,
+            status: Some(statuses),
+            ..Finding::default()
+        }
     }
 
     #[test]
@@ -476,5 +535,50 @@ mod tests {
             FindingStatus::InvalidBugDoesNotExist,
             FindingStatus::InvalidNotExploitable,
         ]));
+    }
+
+    #[test]
+    fn client_retention_keeps_multiple_low_qa_labels() {
+        let finding = finding_with_statuses(
+            Severity::Low,
+            vec![
+                FindingStatus::LowSeverityDueToLowImpact,
+                FindingStatus::LowSeverityDueToRareLikelihood,
+            ],
+        );
+
+        assert!(should_retain_verified_finding(&finding, &AuditType::Client));
+    }
+
+    #[test]
+    fn default_retention_still_drops_multiple_low_qa_labels() {
+        let finding = finding_with_statuses(
+            Severity::Low,
+            vec![
+                FindingStatus::LowSeverityDueToLowImpact,
+                FindingStatus::LowSeverityDueToRareLikelihood,
+            ],
+        );
+
+        assert!(!should_retain_verified_finding(
+            &finding,
+            &AuditType::Code4rena
+        ));
+    }
+
+    #[test]
+    fn client_retention_drops_hard_invalid_low_finding_with_multiple_labels() {
+        let finding = finding_with_statuses(
+            Severity::Low,
+            vec![
+                FindingStatus::InvalidBugDoesNotExist,
+                FindingStatus::LowSeverityDueToLowImpact,
+            ],
+        );
+
+        assert!(!should_retain_verified_finding(
+            &finding,
+            &AuditType::Client
+        ));
     }
 }

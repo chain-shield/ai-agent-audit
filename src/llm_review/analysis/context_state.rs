@@ -13,7 +13,7 @@ use crate::{
         slither_ffi::{cache_key, get_all_files_src},
         summarize::{FileSummaryType, summarize_protocol, summarize_src_files},
     },
-    config::{SKIP_ACTOR_PATTERN_RUNS, SKIP_INVARIANT_RUNS},
+    config::{AuditType, SKIP_ACTOR_PATTERN_RUNS, SKIP_INVARIANT_RUNS},
     cost::cost_data::get_token_count,
     llm_review::{
         analysis::pre_audit_analysis,
@@ -188,27 +188,18 @@ pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String
 }
 
 pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
-    let key = cache_key(&repo.root, "audit_scope", None);
+    let key = format!(
+        "{}-{}",
+        cache_key(&repo.root, "audit_scope", None),
+        repo.audit_type
+    );
 
     // Return cached output if exists
     if let Some(cached) = METADATA_CONTEXT.lock().await.get(&key).cloned() {
         return Ok(cached);
     }
 
-    let mut audit_scope = "#r 
-
-        ------------ ## Privileged Roles ------------
-
-        All Privileged Roles are TRUSTED by default unless listed as untrusted below.
-
-        Errors and misuse committed by admin (or any other privileged role) are considered
-        **governance risk, NOT vulnerabilities**.  They will get marked as Low or Informational.
-
-        *Caveat*: If the admin can accidentally brick the protocol even while following spec (no malice or error) 
-        — that can rise to Medium. 
-        Example: a valid function like updateFee() can unintentionally revert all 
-        deposits if called with a certain boundary value, even though the admin followed expected usage.
-#".to_string();
+    let mut audit_scope = default_privileged_role_scope(&repo.audit_type).to_string();
 
     let protocol_specific_audit_scope = repo.extract_content_from_scope_file()?;
 
@@ -227,9 +218,46 @@ pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
     Ok(audit_scope)
 }
 
+fn default_privileged_role_scope(audit_type: &AuditType) -> &'static str {
+    match audit_type {
+        AuditType::Client => {
+            "#r
+
+        ------------ ## Privileged Roles ------------
+
+        Client audit default:
+        Do not automatically discard concrete findings only because they involve a
+        privileged role. Apply any explicit trust assumptions from client-provided scope.
+        Ignore generic centralization observations without a code-level issue.
+#"
+        }
+        _ => {
+            "#r 
+
+        ------------ ## Privileged Roles ------------
+
+        All Privileged Roles are TRUSTED by default unless listed as untrusted below.
+
+        Errors and misuse committed by admin (or any other privileged role) are considered
+        **governance risk, NOT vulnerabilities**.  They will get marked as Low or Informational.
+
+        *Caveat*: If the admin can accidentally brick the protocol even while following spec (no malice or error) 
+        — that can rise to Medium. 
+        Example: a valid function like updateFee() can unintentionally revert all 
+        deposits if called with a certain boundary value, even though the admin followed expected usage.
+#"
+        }
+    }
+}
+
 /// Generate cache key for multi-modal context (actors, invariants, etc.)
 fn generate_multimodal_key(contract: &str, repo: &RepoPaths) -> String {
-    format!("{}-{}", repo.root.to_string_lossy(), contract)
+    format!(
+        "{}-{}-{}",
+        repo.root.to_string_lossy(),
+        repo.audit_type,
+        contract
+    )
 }
 
 // generated orthogonal thread models: bad actors, invariants etc to add as supporting context for

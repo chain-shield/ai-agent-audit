@@ -5,7 +5,7 @@ use crate::{
         dynamic_prompts::findings_template::get_pre_json_requirement_for_multipattern,
         prompt_support::severity_rubics::{
             CANTINA_SEVERITY_RUBRIC, CODE4RENA_BOUNTY_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC,
-            SHERLOCK_SEVERITY_RUBRIC,
+            PRIVATE_CLIENT_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
         },
         threat_models::{
             pattern_category,
@@ -25,7 +25,8 @@ fn severity_rubric_for_repo(repo: &RepoPaths) -> Result<String> {
         AuditType::ImmunefiBugBounty => load_immunefi_severity_rubric(repo),
         AuditType::Sherlock => Ok(SHERLOCK_SEVERITY_RUBRIC.to_string()),
         AuditType::Cantina => Ok(CANTINA_SEVERITY_RUBRIC.to_string()),
-        _ => Ok(CODE4RENA_SEVERITY_RUBRIC.to_string()),
+        AuditType::Client => Ok(PRIVATE_CLIENT_SEVERITY_RUBRIC.to_string()),
+        AuditType::Code4rena => Ok(CODE4RENA_SEVERITY_RUBRIC.to_string()),
     }
 }
 
