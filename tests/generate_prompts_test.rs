@@ -41,6 +41,13 @@ fn mock_repo_paths() -> RepoPaths {
     }
 }
 
+fn mock_repo_paths_with_audit_type(audit_type: AuditType) -> RepoPaths {
+    RepoPaths {
+        audit_type,
+        ..mock_repo_paths()
+    }
+}
+
 fn sample_invariant_finding() -> InvariantFinding {
     InvariantFinding {
         id: None,
@@ -142,6 +149,36 @@ fn print_pattern_prompts() {
         &repo,
     );
     println!("\n===== Pattern Post-JSON Schema =====\n{}\n", post_schema);
+}
+
+#[test]
+fn client_pattern_prompt_uses_private_client_rubric() {
+    let category = PatternCategory::SignatureValidation;
+    let repo = mock_repo_paths_with_audit_type(AuditType::Client);
+    let cat_prompt =
+        findings_prompts::generate_pattern_category_to_findings_prompt(&category, &repo).unwrap();
+
+    assert!(cat_prompt.contains("PRIVATE_CLIENT"));
+    assert!(cat_prompt.contains("Use the generated audit scope"));
+    assert!(!cat_prompt.contains("Privileged roles are **not automatically trusted**"));
+    assert!(!cat_prompt.contains("Code4rena – Severity Classifications"));
+}
+
+#[test]
+fn client_finding_schema_uses_client_severity_set() {
+    let repo = mock_repo_paths_with_audit_type(AuditType::Client);
+    let issues = [
+        VulnerabilityPattern::Reentrancy,
+        VulnerabilityPattern::ExternalCallAfterStateChange,
+    ];
+    let schema = ft::get_json_requirement(&issues, "security vulnerability pattern", &repo);
+
+    assert!(schema.contains("High"));
+    assert!(schema.contains("Medium"));
+    assert!(schema.contains("Low"));
+    assert!(schema.contains("Info"));
+    assert!(!schema.contains("Critical"));
+    assert!(!schema.contains("Invalid"));
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use crate::config::{
-    OPENAI_MODEL, OPENAI_REASONING_EFFORT, SKIP_ACTOR_PATTERN_RUNS, SKIP_LIBRARIES,
+    AuditType, OPENAI_MODEL, OPENAI_REASONING_EFFORT, SKIP_ACTOR_PATTERN_RUNS, SKIP_LIBRARIES,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -214,12 +214,7 @@ pub async fn generate_ai_agents(
 ) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>)> {
     info!("setting up AI agents...");
 
-    // Enhanced preamble for verification agent
-    let verify_preamble = "
-
-    You are **SoliditySec-Verifier**, a Solidity EVM senior smart-contract auditor, and top Code4rena judge, specializing on
-    verifying reported findings, writing comprehensive reports of findings, and creating
-    rigorous PoC tests that validate the findings.";
+    let verify_preamble = verification_preamble_for_audit_type(&repo.audit_type);
 
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new(Some(repo.clone()))
@@ -237,7 +232,7 @@ pub async fn generate_ai_agents(
     // )?);
 
     // Enhanced preamble for discovery agents
-    let solidity_auditor_preamble = r#"
+    let mut solidity_auditor_preamble = r#"
 
     You are a world-class expert at smart contract auditing, renowned for finding the most complex and tricky vulnerabilities in EVM Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests. You are an expert at unearthing high value semantic, multi-step, cross-contract, and incentive-based attack paths.
 
@@ -324,7 +319,11 @@ pub async fn generate_ai_agents(
 
 	    **Mitigation:** domain-separate draws, use commit-reveal / VRF / include unique nonces per draw.
 
-    "#;
+    "#
+    .to_string();
+    if matches!(repo.audit_type, AuditType::Client) {
+        solidity_auditor_preamble.push_str(private_client_discovery_preamble());
+    }
     // let _discovery_config_claude = AgentConfig::new(Some(repo.clone()))
     //     .with_temperature(1.0)
     //     .with_model(CLAUDE_4_5_SONNET)
@@ -333,7 +332,7 @@ pub async fn generate_ai_agents(
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_file_retrieval(false);
 
-    let pattern_discovery_agent = generate_discovery_agent(repo, solidity_auditor_preamble)?;
+    let pattern_discovery_agent = generate_discovery_agent(repo, &solidity_auditor_preamble)?;
 
     // let pattern_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
     //     &pattern_discovery_config_claude,
@@ -345,6 +344,32 @@ pub async fn generate_ai_agents(
         ai_finding_verify_agent,
         pattern_discovery_agent,
     ))
+}
+
+fn verification_preamble_for_audit_type(audit_type: &AuditType) -> &'static str {
+    match audit_type {
+        AuditType::Client => {
+            r#"
+    You are **SoliditySec-Verifier**, a senior Solidity/EVM smart-contract audit verifier.
+    Apply the audit scope and severity rubric."#
+        }
+        _ => {
+            r#"
+    You are **SoliditySec-Verifier**, a Solidity EVM senior smart-contract auditor, and top Code4rena judge, specializing on
+    verifying reported findings, writing comprehensive reports of findings, and creating
+    rigorous PoC tests that validate the findings."#
+        }
+    }
+}
+
+fn private_client_discovery_preamble() -> &'static str {
+    r#"
+
+    ## CLIENT AUDIT MODE
+
+    Include useful Low/QA/Info findings; do not return an empty result only because no High
+    or Medium issue is present.
+"#
 }
 
 async fn process_combined_patterns(

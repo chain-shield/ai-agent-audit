@@ -146,22 +146,16 @@ If the issue is real but does not meet Critical or High bounty criteria, mark it
 
 pub const PRIVATE_CLIENT_SEVERITY_RUBRIC: &str = r#"
 
-# PRIVATE_CLIENT – Severity Classifications
+# PRIVATE_CLIENT - Severity Classifications
 
-This rubric defines how vulnerabilities are classified during a private audit engagement with PRIVATE_CLIENT.  
-Unlike competitive audit platforms (e.g., Code4rena), PRIVATE_CLIENT uses a **broader and more realistic threat model**, where governance and admin compromise **are valid attack surfaces** unless explicitly declared otherwise.
+This rubric defines how vulnerabilities are classified during a private audit engagement with PRIVATE_CLIENT.
+Use the generated audit scope for trust assumptions, excluded behavior, and client-specific rules.
 
 ---
 
 # Core Concepts
 
 **Assets** = user or protocol funds, NFTs, protocol value/ownership, positions, authorization rights, confidential data, and governance power.
-
-**Privileged Roles** = owner, admin, governor, guardian, multisig signers, upgrade executors, or any role with meaningful authority.
-
-**Threat Model**  
-Privileged roles are **not automatically trusted**. They are trusted **only if PRIVATE_CLIENT explicitly declares them trusted.**  
-Otherwise, admin compromise, governance capture, or malicious privileged actions are considered valid threats.
 
 ---
 
@@ -171,11 +165,9 @@ Otherwise, admin compromise, governance capture, or malicious privileged actions
 
 A finding is **High** if:
 
-- Assets, user positions, or protocol control/governance can be *stolen, frozen, seized, destroyed,* or *arbitrarily modified* through a valid attack path, including:
-  - **Malicious admin / governance actions** enabled by poor design (e.g., no timelock, upgrade without checks, unrestricted sweeping).
-  - **Admin error** (misconfig) that can cause catastrophic, irreversible loss.
-  - **Governance capture** due to arithmetic mistakes, low quorum, or unsafe voting logic.
-  - **Critical user-error pathways** that arise from unsafe contract design (not “stupid users,” but foreseeable normal actions causing catastrophic loss).
+- Assets, user positions, or protocol control/governance can be *stolen, frozen, seized, destroyed,* or *arbitrarily modified* through a valid attack path.
+- A foreseeable user path created by unsafe contract design can cause catastrophic, irreversible loss.
+- A control-flow or authorization flaw can cause systemic loss of funds or protocol control.
 
 High = direct or systemic loss of funds or control.
 
@@ -190,12 +182,12 @@ A finding is **Medium** if:
   - block core features,
   - cause partial asset loss,
   - inflict serious griefing or DoS,
-  - misconfigure governance,
+  - cause protocol-wide configuration failure,
   - or create meaningful economic risk.
 
 Includes:
 
-- Governance risks that can cause protocol-wide malfunction.
+- Control or governance logic bugs that can cause protocol-wide malfunction.
 - User-facing issues where a typical user may lose funds due to unclear/ambiguous parameterization enabled by contract design.
 - Loss of **unmatured yield** or long-tail exploit conditions.
 
@@ -209,9 +201,7 @@ A finding is **Low (QA)** if:
 
 - It has no meaningful asset risk.
 - It reflects minor state issues, UI/readability, spec mismatches, or stylistic problems.
-- It relates exclusively to **purely social risk**:
-  - “Admin could rug because they’re admin”
-  - “Token voters might act irrationally”
+- It is a generic centralization or social-risk observation with no code-level issue.
 - It requires clearly **unreasonable user behavior**.
 - It stems from external non-standard token behavior unless PRIVATE_CLIENT explicitly supports such tokens.
 - It concerns view-only functions or event cosmetics without functional impact.
@@ -234,25 +224,6 @@ Low = no material security or economic impact.
 - **Matured yield** (already-earned rewards) = High/Medium depending on conditions.
 - **Dust yield loss** = Low.
 - **Unmatured/in-motion yield** = capped at Medium.
-
----
-
-# Governance & Privileged Roles
-
-PRIVATE_CLIENT audits treat governance/privileged roles **as part of the attack surface** unless the client explicitly marks them as trusted.
-
-### Valid High / Medium Governance Findings
-- Missing or bypassable timelocks.
-- Upgrades that allow arbitrary logic replacement without safe delays.
-- Privilege escalation or unintended authority gain.
-- Ability for compromised admin key to drain or freeze funds due to missing safeguards.
-- Governance arithmetic bugs enabling vote manipulation or takeover.
-- Admin misconfiguration routes that can brick, drain, or disrupt protocol.
-
-### QA / Low Governance Findings
-- “Admin could rug because they are admin.”
-- “Governance token holders may vote poorly.”
-- Issues only reachable through *reckless* or *malicious* admin misuse **when admin is explicitly marked trusted**.
 
 ---
 

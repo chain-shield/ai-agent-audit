@@ -246,13 +246,11 @@ impl ValidateLegitAnalysis {
                     "\"is_really_governance_risk\": true | false".to_string(),
                 ),
                 FindingStatus::InvalidERC20EdgeCase => (
-                    "- finding requires non standard ERC20 token other than USDT"
-                        .to_string(),
+                    "- finding requires non standard ERC20 token other than USDT".to_string(),
                     "\"is_really_non_standard_token\": true | false".to_string(),
                 ),
                 FindingStatus::InvalidNotExploitable => (
-                    "- finding is not exploitable"
-                        .to_string(),
+                    "- finding is not exploitable".to_string(),
                     "\"is_really_not_exploitable\": true | false".to_string(),
                 ),
                 FindingStatus::InvalidFutureSpeculation => (
@@ -261,8 +259,7 @@ impl ValidateLegitAnalysis {
                     "\"is_really_future_speculation\": true | false".to_string(),
                 ),
                 FindingStatus::InvalidByDesign => (
-                    "- finding is actually by design, therefore not real vulnerability"
-                        .to_string(),
+                    "- finding is actually by design, therefore not real vulnerability".to_string(),
                     "\"is_bug_really_by_design\": true | false".to_string(),
                 ),
                 FindingStatus::InvalidSafeGuardInPlace => (
@@ -271,8 +268,7 @@ impl ValidateLegitAnalysis {
                     "\"is_there_really_safeguard_against_it\": true | false".to_string(),
                 ),
                 FindingStatus::LowSeverityDueToLowImpact => (
-                    "- finding is low impact, and therefore low severity"
-                        .to_string(),
+                    "- finding is low impact, and therefore low severity".to_string(),
                     "\"is_really_low_impact\": true | false".to_string(),
                 ),
                 FindingStatus::LowSeverityDueToRareLikelihood => (
@@ -282,7 +278,7 @@ impl ValidateLegitAnalysis {
                 ),
                 // Note: FindingStatus::Valid, InvalidOtherReason, and NeedsMoreInfo are deprecated
                 // and will not appear in validation (Valid findings are filtered out before validation)
-                _ => (String::new(), String::new())
+                _ => (String::new(), String::new()),
             };
 
             if !status.is_empty() {

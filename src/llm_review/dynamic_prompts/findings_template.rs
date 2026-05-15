@@ -97,6 +97,13 @@ where
         .filter(|s| *s != Severity::Critical)
         .collect();
     let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
+    let severity_enums_client = vec![
+        Severity::High,
+        Severity::Medium,
+        Severity::Low,
+        Severity::Info,
+    ];
+    let severity_enums_list_client = generate_enum_list(severity_enums_client.as_slice());
     let severity_enums_bounty = vec![Severity::Critical, Severity::High];
     let severity_enums_list_bounty = generate_enum_list(severity_enums_bounty.as_slice());
     let severity_enums_immunefi_bounty = vec![
@@ -113,7 +120,7 @@ where
         AuditType::ImmunefiBugBounty => severity_enums_list_immunefi_bounty,
         AuditType::Sherlock => severity_enums_list_standard,
         AuditType::Cantina => severity_enums_list_standard,
-        _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),
+        AuditType::Client => severity_enums_list_client,
     };
 
     format!(
