@@ -27,6 +27,7 @@ pub enum Severity {
     High,
     Medium,
     Low,
+    QA,
     #[default]
     Info,
     Invalid,
@@ -39,6 +40,7 @@ impl Severity {
             Severity::High => "H",
             Severity::Medium => "M",
             Severity::Low => "L",
+            Severity::QA => "QA",
             Severity::Info => "I",
             Severity::Invalid => "X",
         }

@@ -204,8 +204,10 @@ fn is_client_reportable_low_or_qa_finding(finding: &Finding, statuses: &[Finding
         return true;
     }
 
-    matches!(finding.severity, Severity::Low | Severity::Info)
-        && !statuses.iter().any(is_hard_invalid_status)
+    matches!(
+        finding.severity,
+        Severity::Low | Severity::QA | Severity::Info
+    ) && !statuses.iter().any(is_hard_invalid_status)
 }
 
 fn is_client_reportable_low_or_qa_status(status: &FindingStatus) -> bool {

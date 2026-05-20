@@ -19,11 +19,12 @@ use crate::{
 /// supporting both paid (full details) and free (limited) report versions with
 /// severity-based finding organization and protocol overviews.
 /// Severity levels for organizing findings in reports
-const SEVERITIES: [Severity; 5] = [
+const SEVERITIES: [Severity; 6] = [
     Severity::Critical,
     Severity::High,
     Severity::Medium,
     Severity::Low,
+    Severity::QA,
     Severity::Info,
 ];
 

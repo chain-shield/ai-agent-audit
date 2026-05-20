@@ -1,0 +1,91 @@
+# Private-client three-shot validation template.
+#
+# Goal: comprehensive remediation report with strong coverage and near-zero
+# false positives. Low likelihood is recorded for prioritization only; it does
+# not downgrade severity by itself.
+
+benchmark: private-client-example
+prompt_version: v2
+run_id: run-001
+validation_profile: private-client
+
+paths:
+  # Full path to the private client repository or workspace bundle.
+  source_root: /absolute/path/to/private-client/source-root
+  # Full path to this tool's output folder for the client audit.
+  audit_root: /absolute/path/to/ai-agent-audit-output-root
+  # Full path to the AI audit report containing findings in formats such as:
+  # ## [C-1]. Title, ## [H-1]. Title, ## [M-1]. Title, ## [L-1]. Title,
+  # ## [QA-1]. Title, or ## [I-1]. Title.
+  audit_report: /absolute/path/to/audit-report.md
+  # Optional local scoring truth file, if one exists.
+  # truth_file: /absolute/path/to/truth-file.md
+
+# Authoritative context files every private-client worker must read.
+# Supports exact paths and glob patterns. Use {{SOURCE_ROOT}} for paths under
+# paths.source_root and {{THREE_SHOT_ROOT}} for shared workflow artifacts.
+context_docs:
+  - "{{SOURCE_ROOT}}/README.md"
+  - "{{SOURCE_ROOT}}/*-scope.md"
+  - "{{SOURCE_ROOT}}/*-docs.md"
+  - "{{SOURCE_ROOT}}/v12-findings.md"
+  - "{{THREE_SHOT_ROOT}}/v12-checklist.md"
+
+private_client:
+  likelihood_policy: note_only_no_downgrade
+  poc_required_for: Critical, High, Medium
+  public_artifacts: false
+  judge_simulation: true
+
+workers:
+  default:
+    launcher: /Users/apmfree/codex-minimal-worker
+  r1:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r2:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r3:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r4:
+    model: gpt-5.4
+    reasoning_effort: high
+  r5:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r6:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r7:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r8:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  r9:
+    model: gpt-5.5
+    reasoning_effort: xhigh
+  scoring:
+    model: gpt-5.4
+    reasoning_effort: xhigh
+
+contest:
+  poc_instructions: Follow the private client repository README and existing test conventions. Critical, High, and Medium require a passing verified PoC before final report.
+  repo_layout: The client source may contain one repo or multiple packages under {{SOURCE_ROOT}}; identify the package that owns the vulnerable code path and place each PoC in that package's own test folder.
+  test_command_hints: Use the repo README and existing tests to determine the minimal repo-local command that runs the new PoC.
+
+rounds:
+  r1_scope_screen: true
+  r2_assumption_screen: true
+  r3_final_validation: true
+  r3a_feasibility_gate: false
+  r4_canonicalization: true
+  r4a_v12_sweep: false
+  r5_poc_generation: true
+  r6_poc_verification: true
+  r7_client_report_generation: true
+  r8_client_report_review: true
+  r9_private_client_judge_simulation: true
+  scoring: false

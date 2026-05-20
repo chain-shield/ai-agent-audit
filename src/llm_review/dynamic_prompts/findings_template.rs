@@ -11,7 +11,6 @@ use crate::{
     },
     prepare_code::git_clone::RepoPaths,
 };
-use strum::IntoEnumIterator;
 
 pub fn get_post_json_requirement_for_multipattern<T>(
     patterns: &[T],
@@ -93,14 +92,20 @@ where
         .collect();
     let issue_list = generate_enum_list(&vulnerabities);
     let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
-    let severity_enums_standard: Vec<Severity> = Severity::iter()
-        .filter(|s| *s != Severity::Critical)
-        .collect();
-    let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
-    let severity_enums_client = vec![
+    let severity_enums_standard = vec![
         Severity::High,
         Severity::Medium,
         Severity::Low,
+        Severity::Info,
+        Severity::Invalid,
+    ];
+    let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
+    let severity_enums_client = vec![
+        Severity::Critical,
+        Severity::High,
+        Severity::Medium,
+        Severity::Low,
+        Severity::QA,
         Severity::Info,
     ];
     let severity_enums_list_client = generate_enum_list(severity_enums_client.as_slice());
@@ -145,4 +150,51 @@ where
         }}
        "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AuditType;
+    use crate::llm_review::threat_models::patterns::VulnerabilityPattern;
+    use crate::prepare_code::git_clone::RepoPaths;
+
+    #[test]
+    fn client_json_requirement_allows_critical_and_qa_severities() {
+        let repo = RepoPaths {
+            github_url: "https://github.com/example/client".to_string(),
+            project_id: "client-abcdef".to_string(),
+            root: std::path::PathBuf::new(),
+            sol_files: Vec::new(),
+            test_files: Vec::new(),
+            script_files: Vec::new(),
+            config_files: Vec::new(),
+            lib_config_files: Vec::new(),
+            source_code_folders: Vec::new(),
+            docs: Vec::new(),
+            repo_name: "client".to_string(),
+            audit_scope: None,
+            excluded_folders: None,
+            scoped_files: None,
+            monorepo_folders: None,
+            commit_hash: "abcdef".to_string(),
+            audit_type: AuditType::Client,
+        };
+
+        let requirement = get_json_requirement(
+            &[VulnerabilityPattern::AccessControlOrAuthByPass],
+            "test pattern",
+            &repo,
+        );
+
+        assert!(
+            requirement.contains("Critical"),
+            "private-client findings must be allowed to emit Critical severity"
+        );
+        assert!(requirement.contains("High"));
+        assert!(requirement.contains("Medium"));
+        assert!(requirement.contains("Low"));
+        assert!(requirement.contains("QA"));
+        assert!(requirement.contains("Info"));
+    }
 }

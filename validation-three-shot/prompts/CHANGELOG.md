@@ -1,5 +1,13 @@
 # Validation Prompt Changelog
 
+## Private-client validation profile on 2026-05-20
+
+- Added `validation_profile: private-client` prompts for R1-R9.
+- Private-client mode keeps Critical/High/Medium/Low/QA/Informational findings, labels attack class and likelihood separately, and does not downgrade solely for low likelihood.
+- R6 is profile-aware: Critical/High/Medium require verified PoC, while Low/QA/Informational can proceed as reportable without PoC only when evidence is strong.
+- R7/R8 create bug-bounty-style reports for Critical/High/Medium and concise C4-style remediation notes for Low/QA/Informational.
+- R9 simulates a rigorous private-client technical review that rejects false positives but allows labeled governance, trusted-role, user-mistake, operational, and integration risks when useful for remediation.
+
 ## Practical attack path update on 2026-05-11
 
 - Added a profile-aware practical exploitability gate across Immunefi bounty, Code4rena bounty, and Code4rena contest prompts.

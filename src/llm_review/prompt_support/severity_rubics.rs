@@ -161,6 +161,20 @@ Use the generated audit scope for trust assumptions, excluded behavior, and clie
 
 # Severity Levels
 
+## Critical (4)
+
+A finding is **Critical** if:
+
+- A permissionless or realistically reachable attack can cause protocol-wide insolvency, total or near-total loss of user/protocol funds, permanent loss of protocol control, or irreversible destruction/freezing of core assets.
+- A governance, upgrade, bridge, accounting, or authorization flaw can let an attacker seize systemic control or bypass the protocol's core security boundary.
+- The exploit can create an existential failure mode for the protocol, even if the exact timing or prerequisite state is uncommon.
+
+Critical = existential or protocol-wide loss of funds, control, or core assets.
+
+Important: Low likelihood does not downgrade a Critical finding in private-client mode. Record low likelihood as a triage note, not as a severity reducer, when the impact is existential and the exploit path is concrete.
+
+---
+
 ## High (3)
 
 A finding is **High** if:
@@ -212,9 +226,16 @@ Low = no material security or economic impact.
 
 # Detailed Rules
 
+## Likelihood Policy
+
+- Do not downgrade a finding solely because it has low likelihood.
+- Use likelihood as a triage note that helps the client prioritize remediation, not as a severity reducer.
+- Severity is driven by worst credible impact, affected assets, permissions required, and whether the path is concrete in current code.
+
 ## Loss of Assets
 
-- **Real asset loss** → High or Medium based on exploit conditions.
+- **Protocol-wide or near-total real asset loss** → Critical.
+- **Material real asset loss** → High or Medium based on scale and blast radius.
 - **Dust-level discrepancies** or rounding errors → Low.
 
 ---

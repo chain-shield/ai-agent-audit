@@ -3,8 +3,8 @@
 
 Three-shot validation splits the full-report pass into:
 1. scope / known-issue screening
-2. unsupported-token screening, or bounty exploitability screening for bounty profiles
-3. full validation on the surviving findings, or severity/eligibility classification for bounty profiles
+2. profile-specific screening: unsupported-token, bounty exploitability, or private-client assumption triage
+3. full validation on the surviving findings, or severity/eligibility classification for bounty/private-client profiles
 3a. optional Immunefi feasibility-limitations gate on reportable candidates
 4. optional canonicalization cleanup on the surviving reportable candidates
 4a. optional second V12 overlap sweep on post-canonicalization candidates for competition runs
@@ -30,8 +30,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRUTH_ROOT = Path("/Users/apmfree/.ai-agent-audit-validation-truth")
 APPEND_ANCHOR = "<!-- APPEND FINDING BLOCKS ABOVE THIS LINE -->"
-REPORT_FINDING_RE = re.compile(r"^## \[([CHML]-\d+)\]\. (.+)$")
-RAW_FINDING_RE = re.compile(r"^### ([CHML]-\d+) / `([^`]+)`")
+FINDING_ID_PATTERN = r"(?:C|H|M|L|QA|I)-\d+"
+REPORT_FINDING_RE = re.compile(rf"^## \[({FINDING_ID_PATTERN})\]\. (.+)$")
+RAW_FINDING_RE = re.compile(rf"^### ({FINDING_ID_PATTERN}) / `([^`]+)`")
 ACTIVE_CONFIG: dict[str, object] = {}
 
 
@@ -43,6 +44,10 @@ class Finding:
     start_line: int
     end_line: int
     block: str
+
+
+def is_finding_id(value: str) -> bool:
+    return re.fullmatch(FINDING_ID_PATTERN, value) is not None
 
 
 THREE_SHOT_ROOT = REPO_ROOT / "validation-three-shot"
@@ -291,7 +296,7 @@ def finding_title_from_block(block: str) -> str:
     match = re.search(r"^- Finding Title:\s*(.+)$", block, re.MULTILINE)
     if match:
         return match.group(1).strip()
-    heading = re.search(r"^###\s+[CHML]-\d+\s*/\s*`[^`]+`\s*$", block, re.MULTILINE)
+    heading = re.search(rf"^###\s+{FINDING_ID_PATTERN}\s*/\s*`[^`]+`\s*$", block, re.MULTILINE)
     if heading:
         return heading.group(0).strip("# `")
     return "finding-report"
@@ -515,6 +520,10 @@ def is_bounty_profile(config: dict[str, object] | None = None) -> bool:
     return validation_profile(config) in {"code4rena-bounty", "immunefi-bounty"}
 
 
+def is_private_client_profile(config: dict[str, object] | None = None) -> bool:
+    return validation_profile(config) == "private-client"
+
+
 def is_immunefi_bounty_profile(config: dict[str, object] | None = None) -> bool:
     return validation_profile(config) == "immunefi-bounty"
 
@@ -534,11 +543,112 @@ def feasibility_gate_enabled(config: dict[str, object] | None = None) -> bool:
 
 
 def reportable_severities(config: dict[str, object] | None = None) -> set[str]:
+    if is_private_client_profile(config):
+        return {"Critical", "High", "Medium", "Low", "QA", "Informational", "Info"}
     if is_immunefi_bounty_profile(config):
         return {"Critical", "High", "Medium", "Low"}
     if is_bounty_profile(config):
         return {"Critical", "High"}
     return {"High", "Medium"}
+
+
+def profile_worker_type(stage: str, config: dict[str, object]) -> str:
+    profile = validation_profile(config)
+    if profile == "private-client":
+        suffix = {
+            "r7": "report-finding",
+            "r8": "report-review-finding",
+            "r9": "judge-simulation-finding",
+        }.get(stage, "worker")
+        return f"three-shot-{stage}-private-client-{suffix}"
+    if stage == "r7":
+        if is_immunefi_bounty_profile(config):
+            return "three-shot-r7-immunefi-report-finding"
+        if is_bounty_profile(config):
+            return "three-shot-r7-c4-bounty-report-finding"
+        return "three-shot-r7-c4-report-finding"
+    if stage == "r8":
+        if is_immunefi_bounty_profile(config):
+            return "three-shot-r8-immunefi-report-review-finding"
+        if is_bounty_profile(config):
+            return "three-shot-r8-c4-bounty-report-review-finding"
+        return "three-shot-r8-c4-report-review-finding"
+    if stage == "r9":
+        if is_immunefi_bounty_profile(config):
+            return "three-shot-r9-immunefi-judge-simulation-finding"
+        if is_bounty_profile(config):
+            return "three-shot-r9-c4-bounty-judge-simulation-finding"
+        return "three-shot-r9-c4-judge-simulation-finding"
+    return f"three-shot-{stage}-{profile}"
+
+
+def stage2_screen_label(config: dict[str, object] | None = None) -> str:
+    if is_bounty_profile(config):
+        return "bounty exploitability"
+    if is_private_client_profile(config):
+        return "assumption / client-triage"
+    return "unsupported token"
+
+
+def stage2_screen_title(config: dict[str, object] | None = None) -> str:
+    if is_bounty_profile(config):
+        return "Three-Shot Stage 2 Bounty Exploitability Screen"
+    if is_private_client_profile(config):
+        return "Three-Shot Stage 2 Assumption / Client-Triage Screen"
+    return "Three-Shot Stage 2 Unsupported-Token Screen"
+
+
+def stage2_worker_type(config: dict[str, object]) -> str:
+    if is_bounty_profile(config):
+        return "three-shot-r2-bounty-exploitability"
+    if is_private_client_profile(config):
+        return "three-shot-r2-private-client-assumption-screen"
+    return "three-shot-r2-token"
+
+
+def stage3_worker_type(config: dict[str, object]) -> str:
+    if is_private_client_profile(config):
+        return "three-shot-r3-private-client-validation"
+    if is_immunefi_bounty_profile(config):
+        return "three-shot-r3-immunefi-severity-validation"
+    if is_bounty_profile(config):
+        return "three-shot-r3-bounty-critical-high-validation"
+    return "three-shot-r3-final-validation"
+
+
+def report_review_input_scope(config: dict[str, object]) -> str:
+    if is_private_client_profile(config):
+        return "single_private_client_report"
+    if is_immunefi_bounty_profile(config):
+        return "single_immunefi_bounty_report"
+    if is_bounty_profile(config):
+        return "single_c4_bounty_report"
+    return "single_c4_report"
+
+
+def normalize_severity(value: str) -> str:
+    normalized = value.strip()
+    aliases = {
+        "Info": "Informational",
+        "Information": "Informational",
+        "Low / QA": "QA",
+        "Low/QA": "QA",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def severity_requires_verified_poc(severity: str, config: dict[str, object] | None = None) -> bool:
+    if not is_private_client_profile(config):
+        return True
+    return normalize_severity(severity) in {"Critical", "High", "Medium"}
+
+
+def severity_allows_reportable_without_poc(severity: str, config: dict[str, object] | None = None) -> bool:
+    return is_private_client_profile(config) and normalize_severity(severity) in {
+        "Low",
+        "QA",
+        "Informational",
+    }
 
 
 def resolve_run_args(args: argparse.Namespace) -> dict[str, object]:
@@ -874,7 +984,7 @@ def parse_truth_key(key_path: Path) -> dict[str, dict[str, str]]:
         if len(parts) < 5 or parts[0] in {"Finding", "---"}:
             continue
         fid = parts[0]
-        if not re.fullmatch(r"[CHML]-\d+", fid):
+        if not is_finding_id(fid):
             continue
         rows[fid] = {
             "finding_id": fid,
@@ -1137,7 +1247,7 @@ def init_finding_report_unit(
         return path
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = f"""# {finding_id} C4 Finding Report
+    content = f"""# {finding_id} Finding Report
 
 Status: In progress
 Benchmark: `{benchmark}`
@@ -1162,7 +1272,7 @@ def init_finding_report_review_unit(
         return path
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = f"""# {finding_id} C4 Finding Report Review
+    content = f"""# {finding_id} Finding Report Review
 
 Status: In progress
 Benchmark: `{benchmark}`
@@ -1215,7 +1325,7 @@ def parse_screen(path: Path) -> dict[str, dict[str, str]]:
             continue
         finding_cell = parts[0]
         fid = finding_cell.split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[CHML]-\d+", fid):
+        if not is_finding_id(fid):
             continue
         title = parts[1]
         decision = parts[2]
@@ -1250,7 +1360,7 @@ def parse_dedup_screen(path: Path) -> dict[str, dict[str, str]]:
         if parts[0] == "---" or len(parts) < 7:
             continue
         fid = parts[0].split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[CHML]-\d+", fid):
+        if not is_finding_id(fid):
             continue
         if header and len(parts) >= len(header):
             mapped = dict(zip(header, parts, strict=False))
@@ -1296,7 +1406,7 @@ def parse_feasibility_screen(path: Path) -> dict[str, dict[str, str]]:
         if parts[0] == "---":
             continue
         fid = parts[0].split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[CHML]-\d+", fid):
+        if not is_finding_id(fid):
             continue
         expected_columns = len(header) if header else 8
         if len(parts) < expected_columns:
@@ -1345,7 +1455,7 @@ def parse_v12_sweep_screen(path: Path) -> dict[str, dict[str, str]]:
         if parts[0] == "---" or len(parts) < 7:
             continue
         fid = parts[0].split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[CHML]-\d+", fid):
+        if not is_finding_id(fid):
             continue
         if header and len(parts) >= len(header):
             mapped = dict(zip(header, parts, strict=False))
@@ -1389,7 +1499,7 @@ def parse_poc_rows(path: Path) -> dict[str, dict[str, str]]:
         if parts[0] == "---" or len(parts) < 7:
             continue
         fid = parts[0].split(" / ", 1)[0].strip()
-        if not re.fullmatch(r"[CHML]-\d+", fid):
+        if not is_finding_id(fid):
             continue
         if header and len(parts) >= len(header):
             mapped = dict(zip(header, parts, strict=False))
@@ -1481,7 +1591,7 @@ def reportable_stage3_candidates(prompt_version: str, benchmark: str, run_id: st
             continue
         if block_field(block, "Decision") != "Valid":
             continue
-        if block_field(block, "Severity Assessment") not in severities:
+        if normalize_severity(block_field(block, "Severity Assessment")) not in severities:
             continue
         candidates.append((finding, block))
     return candidates
@@ -1502,7 +1612,7 @@ def dedup_candidates(prompt_version: str, benchmark: str, run_id: str) -> list[t
             continue
         if block_field(block, "Decision") != "Valid":
             continue
-        if block_field(block, "Severity Assessment") not in severities:
+        if normalize_severity(block_field(block, "Severity Assessment")) not in severities:
             continue
         candidates.append((findings_by_id[finding.fid], block))
     return candidates
@@ -1740,7 +1850,7 @@ def submission_candidate_blocks(prompt_version: str, benchmark: str, run_id: str
 
 
 def validate_finding_id(finding_id: str, blocks: dict[str, str]) -> str:
-    if not re.fullmatch(r"[CHML]-\d+", finding_id):
+    if not is_finding_id(finding_id):
         raise SystemExit(f"Invalid finding id: {finding_id}")
     if finding_id not in blocks:
         raise SystemExit(f"Finding {finding_id} is not present in the submission candidates file.")
@@ -1857,11 +1967,24 @@ def poc_review_status(prompt_version: str, benchmark: str, run_id: str, finding_
     return rows.get(finding_id, {}).get("status", "")
 
 
+def submission_candidate_severity(prompt_version: str, benchmark: str, run_id: str, finding_id: str) -> str:
+    block = submission_candidate_blocks(prompt_version, benchmark, run_id).get(finding_id, "")
+    return normalize_severity(block_field(block, "Severity Assessment"))
+
+
 def reportable_after_poc_review(prompt_version: str, benchmark: str, run_id: str, finding_id: str) -> bool:
-    return poc_review_status(prompt_version, benchmark, run_id, finding_id) in {
+    status = poc_review_status(prompt_version, benchmark, run_id, finding_id)
+    if status in {
         "Verified PoC",
         "Fixed And Verified PoC",
-    }
+    }:
+        return True
+
+    if status in {"Reportable Without PoC", "Evidence Only"}:
+        severity = submission_candidate_severity(prompt_version, benchmark, run_id, finding_id)
+        return severity_allows_reportable_without_poc(severity)
+
+    return False
 
 
 def report_unit_complete(prompt_version: str, benchmark: str, run_id: str, finding_id: str) -> bool:
@@ -1947,8 +2070,9 @@ def write_round7_input(
 ) -> Path:
     rows = require_poc_review_unit(prompt_version, benchmark, run_id, finding_id)
     row = rows[finding_id]
-    if row.get("status") not in {"Verified PoC", "Fixed And Verified PoC"}:
+    if not reportable_after_poc_review(prompt_version, benchmark, run_id, finding_id):
         raise SystemExit(f"Finding {finding_id} is not reportable after R6 status: {row.get('status')}")
+    severity = submission_candidate_severity(prompt_version, benchmark, run_id, finding_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(
         [
@@ -1959,6 +2083,7 @@ def write_round7_input(
             f"R6 JSON summary: `{poc_review_unit_json_path(prompt_version, benchmark, run_id, finding_id)}`",
             f"Final PoC test path: `{row.get('test_path', '-')}`",
             f"Verified test command: `{row.get('test_command', '-')}`",
+            f"PoC policy: `{'verified-poc-required' if severity_requires_verified_poc(severity) else 'reportable-without-poc-allowed'}`",
             "",
             "## Candidate",
             "",
@@ -2366,6 +2491,11 @@ def auto_token_code_evidence(source_root: Path) -> str:
             "Excluded during the stage 2 bounty exploitability screen using "
             f"{docs}, and the stage 1 scope screen."
         )
+    if is_private_client_profile():
+        return (
+            "Excluded during the stage 2 private-client assumption screen using "
+            f"{docs}, and the stage 1 scope screen."
+        )
     return (
         "Excluded during the stage 2 unsupported-token screen using "
         f"{docs}, and the stage 1 scope screen."
@@ -2452,13 +2582,13 @@ def assemble_run(prompt_version: str, benchmark: str, run_id: str) -> dict[str, 
             f"Benchmark source root: `{source_root}`",
             f"Validation prompt: `{validation_prompt_path(prompt_version)}`",
             f"Stage 1 scope screen: `{scope_screen_path(prompt_version, benchmark, run_id)}`",
-            f"Stage 2 {'bounty exploitability' if is_bounty_profile() else 'token'} screen: `{token_screen_path(prompt_version, benchmark, run_id)}`",
+            f"Stage 2 {stage2_screen_label()} screen: `{token_screen_path(prompt_version, benchmark, run_id)}`",
             f"Stage 3 final validation run: `{stage3_run_path(prompt_version, benchmark, run_id)}`",
             "",
             "## Assembly Summary",
             "",
             f"- Excluded at stage 1 (scope / known issue): `{scope_excluded}`",
-            f"- Excluded at stage 2 ({'bounty exploitability' if is_bounty_profile() else 'unsupported token'}): `{token_excluded}`",
+            f"- Excluded at stage 2 ({stage2_screen_label()}): `{token_excluded}`",
             f"- Fully validated at stage 3: `{stage3_kept}`",
             "",
             "## Per-Finding Validation",
@@ -2583,7 +2713,7 @@ def apply_dedup(prompt_version: str, benchmark: str, run_id: str) -> dict[str, o
             "",
             "## Canonicalization Summary",
             "",
-            f"- Candidate H/M findings before R4: `{len(kept) + len(dropped)}`",
+            f"- Candidate reportable findings before R4: `{len(kept) + len(dropped)}`",
             f"- Kept after R4 canonicalization: `{len(kept)}`",
             f"- Dropped by R4 cleanup: `{len(dropped)}`",
             f"- Dropped finding ids: `{', '.join(dropped) if dropped else '-'}`",
@@ -2599,7 +2729,7 @@ def apply_dedup(prompt_version: str, benchmark: str, run_id: str) -> dict[str, o
             "",
             "## Submission Candidates",
             "",
-            "\n\n".join(kept_blocks) if kept_blocks else "_No H/M candidates remain after dedup._",
+            "\n\n".join(kept_blocks) if kept_blocks else "_No reportable candidates remain after dedup._",
             "",
         ]
     )
@@ -2659,7 +2789,7 @@ def apply_v12_sweep(prompt_version: str, benchmark: str, run_id: str) -> dict[st
             "",
             "## Submission Candidates",
             "",
-            "\n\n".join(kept_blocks) if kept_blocks else "_No H/M candidates remain after the V12 sweep._",
+            "\n\n".join(kept_blocks) if kept_blocks else "_No reportable candidates remain after the V12 sweep._",
             "",
         ]
     )
@@ -2875,6 +3005,8 @@ def cmd_prepare_scope(args: argparse.Namespace) -> None:
         "stage_path": str(path),
         "worker_type": "three-shot-r1-bounty-scope"
         if is_bounty_profile(config)
+        else "three-shot-r1-private-client-scope"
+        if is_private_client_profile(config)
         else "three-shot-r1-scope",
         **worker_payload(config, "r1", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
         "worker_prompt_source": str(
@@ -2893,9 +3025,7 @@ def cmd_prepare_token(args: argparse.Namespace) -> None:
     input_findings = kept_after_scope(args.prompt_version, args.benchmark, args.run_id)
     path = init_screen(
         token_screen_path(args.prompt_version, args.benchmark, args.run_id),
-        "Three-Shot Stage 2 Bounty Exploitability Screen"
-        if is_bounty_profile(config)
-        else "Three-Shot Stage 2 Unsupported-Token Screen",
+        stage2_screen_title(config),
         args.benchmark,
         args.prompt_version,
     )
@@ -2906,9 +3036,7 @@ def cmd_prepare_token(args: argparse.Namespace) -> None:
         "run_id": args.run_id,
         "stage_path": str(path),
         "input_findings": len(input_findings),
-        "worker_type": "three-shot-r2-bounty-exploitability"
-        if is_bounty_profile(config)
-        else "three-shot-r2-token",
+        "worker_type": stage2_worker_type(config),
         **worker_payload(config, "r2", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
         "worker_prompt_source": str(
             prompt_template_path("r2.md", config)
@@ -2932,11 +3060,7 @@ def cmd_prepare_final(args: argparse.Namespace) -> None:
         "run_id": args.run_id,
         "stage_path": str(path),
         "input_findings": len(input_findings),
-        "worker_type": "three-shot-r3-immunefi-severity-validation"
-        if is_immunefi_bounty_profile(config)
-        else "three-shot-r3-bounty-critical-high-validation"
-        if is_bounty_profile(config)
-        else "three-shot-r3-final-validation",
+        "worker_type": stage3_worker_type(config),
         **worker_payload(config, "r3", STAGE_WORKER_MODEL, STAGE_WORKER_REASONING),
         "worker_prompt_source": str(
             prompt_template_path("r3.md", config)
@@ -3200,7 +3324,7 @@ def cmd_prepare_report(args: argparse.Namespace) -> None:
         summary = (
             "All R7 per-finding report units are complete."
             if phase == "complete"
-            else "No reportable R7 unit is available because some R6 units are incomplete or not verified."
+            else "No reportable R7 unit is available because some R6 units are incomplete or not profile-reportable."
         )
         payload = {
             "benchmark": args.benchmark,
@@ -3208,7 +3332,7 @@ def cmd_prepare_report(args: argparse.Namespace) -> None:
             "run_id": args.run_id,
             "worker_type": "none",
             "phase": phase,
-            "input_scope": "single_verified_poc_finding",
+            "input_scope": "single_poc_reviewed_reportable_finding",
             "total_submission_candidates": len(blocks),
             "reportable_findings": len(reportable),
             "completed_r6_findings": completed_r6,
@@ -3221,7 +3345,7 @@ def cmd_prepare_report(args: argparse.Namespace) -> None:
 
     finding_id = validate_finding_id(requested_finding, blocks)
     if not reportable_after_poc_review(args.prompt_version, args.benchmark, args.run_id, finding_id):
-        raise SystemExit(f"Finding {finding_id} is not reportable until R6 marks its PoC Verified or Fixed And Verified.")
+        raise SystemExit(f"Finding {finding_id} is not reportable until R6 marks it verified or profile-reportable without PoC.")
     input_path = write_round7_input(
         round7_input_path(args.prompt_version, args.benchmark, args.run_id, finding_id),
         args.prompt_version,
@@ -3246,16 +3370,12 @@ def cmd_prepare_report(args: argparse.Namespace) -> None:
         "json_path": str(finding_report_unit_json_path(args.prompt_version, args.benchmark, args.run_id, finding_id)),
         "single_finding_input_path": str(input_path),
         "source_candidates_path": str(submission_candidates_path(args.prompt_version, args.benchmark, args.run_id)),
-        "input_scope": "single_verified_poc_finding",
+        "input_scope": "single_poc_reviewed_reportable_finding",
         "input_findings": 1,
         "total_reportable_findings": len(reportable),
         "completed_findings": completed,
         "remaining_findings": len(reportable) - completed,
-        "worker_type": "three-shot-r7-immunefi-report-finding"
-        if is_immunefi_bounty_profile(config)
-        else "three-shot-r7-c4-bounty-report-finding"
-        if is_bounty_profile(config)
-        else "three-shot-r7-c4-report-finding",
+        "worker_type": profile_worker_type("r7", config),
         **worker_payload(config, "r7", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
         "worker_prompt_source": str(
             prompt_template_path("r7.md", config)
@@ -3314,7 +3434,7 @@ def cmd_prepare_report_review(args: argparse.Namespace) -> None:
             "run_id": args.run_id,
             "worker_type": "none",
             "phase": phase,
-            "input_scope": "single_c4_report",
+            "input_scope": report_review_input_scope(config),
             "reportable_findings": len(expected_reports),
             "reviewable_findings": len(reviewable),
             "completed_r6_findings": completed_r6,
@@ -3328,7 +3448,7 @@ def cmd_prepare_report_review(args: argparse.Namespace) -> None:
 
     finding_id = validate_finding_id(requested_finding, blocks)
     if not reportable_after_poc_review(args.prompt_version, args.benchmark, args.run_id, finding_id):
-        raise SystemExit(f"Finding {finding_id} is not reportable until R6 marks its PoC Verified or Fixed And Verified.")
+        raise SystemExit(f"Finding {finding_id} is not reportable until R6 marks it verified or profile-reportable without PoC.")
     if not report_unit_complete(args.prompt_version, args.benchmark, args.run_id, finding_id):
         raise SystemExit(f"R7 finding report for {finding_id} is incomplete; cannot prepare R8.")
     input_path = write_round8_input(
@@ -3355,16 +3475,12 @@ def cmd_prepare_report_review(args: argparse.Namespace) -> None:
         "json_path": str(finding_report_review_unit_json_path(args.prompt_version, args.benchmark, args.run_id, finding_id)),
         "single_finding_input_path": str(input_path),
         "source_candidates_path": str(submission_candidates_path(args.prompt_version, args.benchmark, args.run_id)),
-        "input_scope": "single_c4_report",
+        "input_scope": report_review_input_scope(config),
         "input_findings": 1,
         "total_reportable_findings": len(reviewable),
         "completed_findings": completed,
         "remaining_findings": len(reviewable) - completed,
-        "worker_type": "three-shot-r8-immunefi-report-review-finding"
-        if is_immunefi_bounty_profile(config)
-        else "three-shot-r8-c4-bounty-report-review-finding"
-        if is_bounty_profile(config)
-        else "three-shot-r8-c4-report-review-finding",
+        "worker_type": profile_worker_type("r8", config),
         **worker_payload(config, "r8", REPORT_WORKER_MODEL, REPORT_WORKER_REASONING),
         "worker_prompt_source": str(
             prompt_template_path("r8.md", config)
@@ -3448,7 +3564,7 @@ def cmd_prepare_judge(args: argparse.Namespace) -> None:
 
     finding_id = validate_finding_id(requested_finding, blocks)
     if not reportable_after_poc_review(args.prompt_version, args.benchmark, args.run_id, finding_id):
-        raise SystemExit(f"Finding {finding_id} is not judgeable until R6 marks its PoC Verified or Fixed And Verified.")
+        raise SystemExit(f"Finding {finding_id} is not judgeable until R6 marks it verified or profile-reportable without PoC.")
     if not report_unit_complete(args.prompt_version, args.benchmark, args.run_id, finding_id):
         raise SystemExit(f"R7 finding report for {finding_id} is incomplete; cannot prepare R9.")
     if not report_review_unit_complete(args.prompt_version, args.benchmark, args.run_id, finding_id):
@@ -3482,11 +3598,7 @@ def cmd_prepare_judge(args: argparse.Namespace) -> None:
         "total_judgeable_findings": len(judgeable),
         "completed_findings": completed,
         "remaining_findings": len(judgeable) - completed,
-        "worker_type": "three-shot-r9-immunefi-judge-simulation-finding"
-        if is_immunefi_bounty_profile(config)
-        else "three-shot-r9-c4-bounty-judge-simulation-finding"
-        if is_bounty_profile(config)
-        else "three-shot-r9-c4-judge-simulation-finding",
+        "worker_type": profile_worker_type("r9", config),
         **worker_payload(config, "r9", JUDGE_WORKER_MODEL, JUDGE_WORKER_REASONING),
         "worker_prompt_source": str(prompt_template_path("r9.md", config)),
         "requires_fresh_worker_context": True,
@@ -3747,7 +3859,7 @@ def main() -> None:
     prepare_scope.add_argument("--write-prompt")
     prepare_scope.set_defaults(func=cmd_prepare_scope)
 
-    prepare_token = subparsers.add_parser("prepare-token", help="Initialize stage 2 unsupported-token screening and emit the worker prompt.")
+    prepare_token = subparsers.add_parser("prepare-token", help="Initialize stage 2 profile-specific screening and emit the worker prompt.")
     add_run_args(prepare_token)
     prepare_token.add_argument("--include-prompt", action="store_true")
     prepare_token.add_argument("--write-prompt")
