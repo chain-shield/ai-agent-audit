@@ -1,5 +1,7 @@
 use crate::config::MAX_CODEX_TURNS_PER_SESSION;
 use anyhow::{Context, Result, anyhow, bail};
+use chrono::{DateTime, Days, Local, LocalResult, NaiveDateTime, NaiveTime, TimeZone};
+use regex::Regex;
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -17,6 +19,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const MAX_PROMPT_ATTEMPTS: usize = 10;
 const INITIAL_RETRY_DELAY_MS: u64 = 1_000;
 const RATE_LIMIT_FALLBACK_WAIT_SECS: u64 = 5 * 60 * 60;
+const CLOCK_ONLY_RETRY_PAST_GRACE_SECS: i64 = 5 * 60;
+const CLOCK_ONLY_RETRY_MAX_NEXT_DAY_SECS: i64 = 12 * 60 * 60;
 const CODEX_BIN_ENV_VARS: &[&str] = &["AI_AGENT_AUDIT_CODEX_BIN", "CODEX_BIN"];
 // Global cap for Codex app-server subprocesses across all tool profiles.
 // Each session is a long-lived subprocess, so this must remain a total process
@@ -1171,8 +1175,8 @@ fn classify_error(err: anyhow::Error) -> PromptFailure {
     let message = err.to_string();
     if is_rate_limit_message(&message) {
         return PromptFailure::RateLimited {
+            reset_at: parse_rate_limit_reset_at_from_message(&message),
             message,
-            reset_at: None,
         };
     }
 
@@ -1203,10 +1207,17 @@ fn classify_turn_error(error: Value, session: &mut CodexSession) -> PromptFailur
         })
         .unwrap_or_default();
 
-    if codex_error.contains("usageLimitExceeded") || is_rate_limit_message(&message) {
+    if is_rate_limit_message(&message) {
         return PromptFailure::RateLimited {
+            reset_at: choose_earliest_future_reset(
+                [
+                    parse_rate_limit_reset_at_from_message(&message),
+                    session.get_rate_limit_reset_at(),
+                ]
+                .into_iter()
+                .flatten(),
+            ),
             message,
-            reset_at: session.get_rate_limit_reset_at(),
         };
     }
 
@@ -1273,7 +1284,7 @@ fn extract_reset_at(response: &Value) -> Option<u64> {
         }
     }
 
-    reset_candidates.into_iter().max()
+    choose_earliest_future_reset(reset_candidates)
 }
 
 fn sanitize_schema_for_codex(schema: &mut Value) {
@@ -1470,8 +1481,81 @@ fn compute_rate_limit_wait_secs(reset_at: Option<u64>) -> u64 {
         .as_secs();
 
     match reset_at {
-        Some(reset_at) if reset_at > now => (reset_at - now) + 5,
+        Some(reset_at) if reset_at > now => (reset_at - now) + 1,
         _ => RATE_LIMIT_FALLBACK_WAIT_SECS,
+    }
+}
+
+fn choose_earliest_future_reset<I>(reset_candidates: I) -> Option<u64>
+where
+    I: IntoIterator<Item = u64>,
+{
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let candidates = reset_candidates.into_iter().collect::<Vec<_>>();
+
+    candidates
+        .iter()
+        .copied()
+        .filter(|reset_at| *reset_at > now)
+        .min()
+        .or_else(|| candidates.into_iter().min())
+}
+
+fn parse_rate_limit_reset_at_from_message(message: &str) -> Option<u64> {
+    parse_rate_limit_reset_at_from_message_at(message, Local::now())
+}
+
+fn parse_rate_limit_reset_at_from_message_at(message: &str, now: DateTime<Local>) -> Option<u64> {
+    let re = Regex::new(r"(?i)try again at\s+(\d{1,2}):(\d{2})\s*(AM|PM)").ok()?;
+    let captures = re.captures(message)?;
+    let mut hour = captures.get(1)?.as_str().parse::<u32>().ok()?;
+    let minute = captures.get(2)?.as_str().parse::<u32>().ok()?;
+    let meridiem = captures.get(3)?.as_str().to_ascii_uppercase();
+
+    if hour == 0 || hour > 12 {
+        return None;
+    }
+    if meridiem == "AM" {
+        if hour == 12 {
+            hour = 0;
+        }
+    } else if meridiem == "PM" {
+        if hour != 12 {
+            hour += 12;
+        }
+    } else {
+        return None;
+    }
+
+    let time = NaiveTime::from_hms_opt(hour, minute, 0)?;
+    let date = now.date_naive();
+    let now_timestamp = now.timestamp();
+    let mut candidate = local_datetime_to_unix(date.and_time(time))?;
+    if candidate <= now_timestamp {
+        let seconds_past = now_timestamp - candidate;
+        if seconds_past <= CLOCK_ONLY_RETRY_PAST_GRACE_SECS {
+            candidate = now_timestamp + 1;
+        } else {
+            let next_day = date.checked_add_days(Days::new(1))?;
+            let next_day_candidate = local_datetime_to_unix(next_day.and_time(time))?;
+            if next_day_candidate - now_timestamp > CLOCK_ONLY_RETRY_MAX_NEXT_DAY_SECS {
+                return None;
+            }
+            candidate = next_day_candidate;
+        }
+    }
+
+    u64::try_from(candidate).ok()
+}
+
+fn local_datetime_to_unix(datetime: NaiveDateTime) -> Option<i64> {
+    match Local.from_local_datetime(&datetime) {
+        LocalResult::Single(value) => Some(value.timestamp()),
+        LocalResult::Ambiguous(earliest, _) => Some(earliest.timestamp()),
+        LocalResult::None => None,
     }
 }
 
@@ -1747,6 +1831,160 @@ mod tests {
         assert!(
             matches!(classify_error(err), PromptFailure::Retryable(_)),
             "silent-turn timeouts should be treated as retryable"
+        );
+    }
+
+    #[test]
+    fn test_extract_reset_at_prefers_earliest_future_rate_limit_window() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let short_reset = now + 20 * 60;
+        let long_reset = now + 7 * 24 * 60 * 60;
+        let response = json!({
+            "rateLimitsByLimitId": {
+                "short-window": {
+                    "primary": {
+                        "usedPercent": 100,
+                        "resetsAt": short_reset
+                    }
+                },
+                "long-window": {
+                    "primary": {
+                        "usedPercent": 100,
+                        "resetsAt": long_reset
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            extract_reset_at(&response),
+            Some(short_reset),
+            "rate-limit retry should wake after the first usable reset, not the longest reset"
+        );
+    }
+
+    #[test]
+    fn test_compute_rate_limit_wait_secs_adds_one_second_after_reset() {
+        let reset_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            + 20;
+
+        let wait_secs = compute_rate_limit_wait_secs(Some(reset_at));
+
+        assert!(
+            (20..=21).contains(&wait_secs),
+            "expected a one-second safety buffer after reset, got {wait_secs}s"
+        );
+    }
+
+    #[test]
+    fn test_parse_rate_limit_retry_time_from_message() {
+        let now = Local::now();
+        let retry_at = now + chrono::Duration::minutes(3);
+        let retry_label = retry_at.format("%-I:%M %p");
+        let message =
+            format!("You've hit your usage limit. Visit settings or try again at {retry_label}.");
+
+        let parsed =
+            parse_rate_limit_reset_at_from_message_at(&message, now).expect("retry time parses");
+
+        assert!(
+            parsed > u64::try_from(now.timestamp()).unwrap(),
+            "parsed retry timestamp should be in the future"
+        );
+        assert!(
+            parsed <= u64::try_from((now + chrono::Duration::minutes(4)).timestamp()).unwrap(),
+            "parsed retry timestamp should match the same-day retry time"
+        );
+    }
+
+    #[test]
+    fn test_parse_visible_usage_limit_message_without_codex_error_info() {
+        let now = local_datetime_to_unix(
+            Local::now()
+                .date_naive()
+                .and_hms_opt(19, 29, 59)
+                .expect("valid local test time"),
+        )
+        .and_then(|timestamp| Local.timestamp_opt(timestamp, 0).single())
+        .expect("local timestamp should round-trip");
+        let message = "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:49 PM.";
+
+        assert!(is_rate_limit_message(message));
+        let reset_at =
+            parse_rate_limit_reset_at_from_message_at(message, now).expect("retry time parses");
+        let wait_secs = u64::try_from(reset_at as i64 - now.timestamp()).unwrap();
+
+        assert_eq!(
+            wait_secs, 1_141,
+            "visible usage-limit messages should retry one second after the same-day reset, not after a longer account window"
+        );
+    }
+
+    #[test]
+    fn test_parse_clock_only_retry_time_uses_grace_for_just_past_reset() {
+        let now = local_datetime_to_unix(
+            Local::now()
+                .date_naive()
+                .and_hms_opt(19, 49, 5)
+                .expect("valid local test time"),
+        )
+        .and_then(|timestamp| Local.timestamp_opt(timestamp, 0).single())
+        .expect("local timestamp should round-trip");
+        let message = "You've hit your usage limit. Visit settings or try again at 7:49 PM.";
+
+        let reset_at =
+            parse_rate_limit_reset_at_from_message_at(message, now).expect("retry time parses");
+        let wait_secs = u64::try_from(reset_at as i64 - now.timestamp()).unwrap();
+
+        assert_eq!(
+            wait_secs, 1,
+            "a clock-only reset that is just in the past should retry immediately instead of rolling to tomorrow"
+        );
+    }
+
+    #[test]
+    fn test_parse_clock_only_retry_time_allows_near_midnight_next_day_reset() {
+        let now = local_datetime_to_unix(
+            Local::now()
+                .date_naive()
+                .and_hms_opt(23, 59, 0)
+                .expect("valid local test time"),
+        )
+        .and_then(|timestamp| Local.timestamp_opt(timestamp, 0).single())
+        .expect("local timestamp should round-trip");
+        let message = "You've hit your usage limit. Visit settings or try again at 12:30 AM.";
+
+        let reset_at =
+            parse_rate_limit_reset_at_from_message_at(message, now).expect("retry time parses");
+        let wait_secs = u64::try_from(reset_at as i64 - now.timestamp()).unwrap();
+
+        assert!(
+            (30 * 60..=31 * 60).contains(&wait_secs),
+            "legitimate cross-midnight reset should still parse, got {wait_secs}s"
+        );
+    }
+
+    #[test]
+    fn test_parse_clock_only_retry_time_ignores_stale_past_time() {
+        let now = local_datetime_to_unix(
+            Local::now()
+                .date_naive()
+                .and_hms_opt(20, 30, 0)
+                .expect("valid local test time"),
+        )
+        .and_then(|timestamp| Local.timestamp_opt(timestamp, 0).single())
+        .expect("local timestamp should round-trip");
+        let message = "You've hit your usage limit. Visit settings or try again at 7:49 PM.";
+
+        assert!(
+            parse_rate_limit_reset_at_from_message_at(message, now).is_none(),
+            "stale clock-only reset times should fall back instead of causing a near-24h sleep"
         );
     }
 

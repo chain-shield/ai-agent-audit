@@ -43,7 +43,7 @@ pub struct Finding {
     pub impact: Option<String>, // Impact of Issue
     pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker
     pub proof_of_code: Option<String>, // Write Foundry Unit test to prove issue exists
-    #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
+    #[schemars(description = "Severity level: Critical, High, Medium, Low, QA, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,
     pub status: Option<Vec<FindingStatus>>,

@@ -32,6 +32,16 @@ For `validation_profile: immunefi-bounty`, the controller uses Immunefi-specific
 4. round 4 dedup/group, PoC creation, PoC validation, report creation, and final review stay
 5. round 4a V12 sweep is disabled for bounties
 
+For `validation_profile: private-client`, the controller uses client-remediation prompts:
+
+1. round 1 excludes only true out-of-engagement code, vendor/third-party code, accepted known issues, exact prior duplicates, impossible targets, or scope/doc contradictions
+2. round 2 classifies assumptions such as permissionless, governance risk, trusted-role risk, user-mistake risk, operational risk, and integration risk without automatically dropping useful client findings
+3. round 3 validates bug existence, impact, source evidence, severity, attack class, and likelihood; likelihood is recorded as triage context and does not downgrade severity by itself
+4. round 4 drops only exact duplicate-equivalent findings and otherwise groups related findings for report planning
+5. round 5 and round 6 enforce the private-client PoC policy: Critical/High/Medium require verified PoC, while Low/QA/Informational can proceed without PoC only when evidence is strong and R6 explicitly marks them reportable without PoC
+6. round 7 and round 8 create/review client reports: Critical/High/Medium use bug-bounty style, while Low/QA/Informational use concise C4-style remediation notes
+7. round 9 remains a rigorous private-client judge simulation that can reject false positives or downgrade overstated impact, but cannot downgrade solely for low likelihood
+
 Recommended worker split:
 
 - all R1-R9 workers must be launched with the configured minimal Codex worker launcher, currently `/Users/apmfree/codex-minimal-worker`, so plugin MCP servers are not loaded into every parallel worker while normal local file access and native Codex web search remain available. Web search here means the native `--search` flag only; it must not re-enable browser, GitHub, or other MCP servers.
@@ -54,6 +64,7 @@ Each validation round should be run by a separate spawned minimal Codex worker w
 Configuration:
 
 - `validation-three-shot/config.yaml` is the default production config.
+- `validation-three-shot/private-client-config.yaml` is the private-client template for comprehensive remediation reports.
 - Change `benchmark`, `run_id`, `paths.source_root`, `paths.audit_root`, and `paths.audit_report` there for a new contest.
 - `paths.source_root` is the full path to the contest source/workspace bundle. It is not assumed to live under `~/Desktop/Audit/<benchmark>`.
 - `paths.audit_root` is the full path to this tool's output folder for the benchmark. If `paths.audit_report` is omitted, the workflow reads `report/audit-report.md` under `paths.audit_root`.
@@ -95,6 +106,7 @@ Editable round prompts:
 - `validation-three-shot/prompts/code4rena/r1.md` through `r9.md`
 - `validation-three-shot/prompts/code4rena-bounty/r1.md` through `r9.md`
 - `validation-three-shot/prompts/immunefi-bounty/r1.md` through `r9.md`, plus optional `r3a.md`
+- `validation-three-shot/prompts/private-client/r1.md` through `r9.md`
 - `validation-three-shot/prompts/default/r1.md` through `r9.md`
 - `validation-three-shot/prompts/validation-v2.md`
 - `validation-three-shot/prompts/<profile>/score.md`
