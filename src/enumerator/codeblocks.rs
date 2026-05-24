@@ -1,6 +1,5 @@
 use crate::build_brain::graph_db::SmartContractFunction;
-use crate::build_brain::inheritance_map::{self, resolve_contract_file};
-use crate::build_brain::summarize_db::get_file_summary_from_db;
+use crate::build_brain::inheritance_map;
 use crate::config::{CODEBLOCK_DB, app_db_path};
 use crate::cost::cost_data::get_token_count;
 /// Intelligent code slicing for focused AI analysis.
@@ -18,7 +17,6 @@ use crate::enumerator::parse_solidity::{
 use crate::enumerator::utils::{
     SolFileType, get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
 };
-use crate::llm_review::contract::contract_category::ContractCategory;
 use crate::llm_review::contract::contract_file_map::{
     get_file_from_contract, get_file_from_lib_contract,
 };
@@ -834,13 +832,10 @@ pub async fn generate_codeblock_from_codebase(
             );
         }
 
-        let contract_category =
-            extract_contract_category_from_contract(&main_contract, repo).await?;
         let codeblock = MarkdownCodeblock {
             id: Uuid::new_v4().to_string(),
             project_id: repo.project_id.clone(),
             contract: main_contract.clone(),
-            contract_category: contract_category.unwrap_or_default(),
             tokens: final_token_count, // Use actual token count, not BFS token count
             content: markdown_codeblock_for_llm,
         };
@@ -852,33 +847,6 @@ pub async fn generate_codeblock_from_codebase(
     }
 
     Ok(())
-}
-
-pub async fn extract_contract_category_from_contract(
-    contract: &str,
-    repo: &RepoPaths,
-) -> Result<Option<ContractCategory>> {
-    // Try Standard (source) files first
-    let file_path = match resolve_contract_file(contract, SolFileType::Standard, repo).await? {
-        Some(f) => f,
-        None => match resolve_contract_file(contract, SolFileType::LibFolder, repo).await? {
-            Some(f) => f,
-            None => return Ok(None),
-        },
-    };
-
-    // Convert absolute path to relative path (same format as stored in database)
-    // Database stores paths like: "2025-11-sequence/src/TrailsRouterShim.sol"
-    let filename = file_path
-        .strip_prefix(&repo.root)
-        .unwrap_or(&file_path)
-        .to_string_lossy()
-        .to_string();
-
-    let contract_category =
-        get_file_summary_from_db(&filename, repo)?.and_then(|f| f.contract_category);
-
-    Ok(contract_category)
 }
 
 pub async fn get_contract_file_content(

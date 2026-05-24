@@ -34,7 +34,7 @@ pub async fn save_codeblocks_locally(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     let output_dir = Path::new(&repo.repo_name);
 
-    for (contract, (codeblock, contract_category)) in contracts {
+    for (contract, codeblock) in contracts {
         // check contract in inscope!
         let (is_contract_in_scope, contract_type_option) =
             contract_scope_and_type(&contract, repo).await?;
@@ -46,10 +46,7 @@ pub async fn save_codeblocks_locally(
         }
 
         let token_count = get_token_count(&codeblock);
-        let filename = format!(
-            "{}-{}-{}-size-{}.md",
-            contract_type, contract, contract_category, token_count
-        );
+        let filename = format!("{}-{}-size-{}.md", contract_type, contract, token_count);
         let full_path = output_dir.join(filename);
         save_file_locally(&codeblock, &full_path)?;
     }

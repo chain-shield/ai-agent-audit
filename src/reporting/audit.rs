@@ -69,13 +69,6 @@ pub async fn generated_audit_report(
     // generated report
     audit_report.push_str(&report_title);
     audit_report.push_str(&subtitle);
-    // audit_report.push_str("## Protocol Overview \n\n");
-
-    // log::info!("generate summary of protocol");
-    // let protocol_overview = summarize::summarize_protocol(repo, None).await?;
-    //
-    // audit_report.push_str(&protocol_overview);
-
     let summary = match report_type {
         ReportType::Severity => get_finding_summary(findings),
         ReportType::Pattern => get_finding_summary_by_pattern(findings, ReportDataType::Summary),

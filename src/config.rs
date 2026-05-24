@@ -35,8 +35,6 @@ pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
 pub const OPENAI_MODEL: &str = "gpt-5.5";
 pub const OPENAI_REASONING_EFFORT: &str = "high";
-pub const OPENAI_SUMMARY_MODEL: &str = "gpt-5.4";
-pub const OPENAI_SUMMARY_REASONING_EFFORT: &str = "low";
 pub const OPENAI_DEDUP_MODEL: &str = "gpt-5.4";
 pub const OPENAI_DEDUP_REASONING_EFFORT: &str = "low";
 pub const DISCOVERY_PROVIDER: &str = "openai";
@@ -74,10 +72,6 @@ pub const MAX_CONCURRENTS_REVIEW: usize = 2;
 pub const MAX_CONCURRENTS_POC: usize = 1;
 pub const MAX_CONCURRENTS_GENERAL: usize = 20;
 
-/// File summarization fanout. Keep this low because Codex-backed summary jobs
-/// can retain large prompt/context strings and become memory-heavy.
-pub const SUMMARY_MAX_PARALLEL: usize = 50;
-
 /// Recycle pooled Codex app-server sessions after a small number of completed
 /// turns so helper subprocesses cannot accumulate unboundedly in one process.
 pub const MAX_CODEX_TURNS_PER_SESSION: usize = 10;
@@ -88,7 +82,6 @@ pub const DEFAULT_WORKSPACE_ROOT: &str = "~/Desktop/Audit";
 /// Default local directory for SQLite caches and analysis state.
 pub const DEFAULT_APP_DATA_DIR: &str = ".ai-agent-audit";
 pub const REPO_DATA_DB: &str = "repo_data.db";
-pub const SUMMARY_DB: &str = "summary.db";
 pub const SEMANTIC_DB: &str = "semantic.db";
 pub const CODEBLOCK_DB: &str = "codeblock.db";
 pub const FINDINGS_DB: &str = "findings.db";
@@ -451,7 +444,6 @@ mod tests {
     fn test_default_config() {
         let config = AuditConfig::default();
         assert_eq!(OPENAI_MODEL, "gpt-5.5");
-        assert_eq!(OPENAI_SUMMARY_MODEL, "gpt-5.4");
         assert_eq!(OPENAI_DEDUP_MODEL, "gpt-5.4");
         assert_eq!(config.max_depth, MAX_DEPTH);
         assert_eq!(config.token_budget, TOKEN_BUDGET);
