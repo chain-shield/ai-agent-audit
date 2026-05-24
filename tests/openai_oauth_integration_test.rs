@@ -1,13 +1,11 @@
-use ai_agent_audit::build_brain::summarize::FileSummary;
 use ai_agent_audit::config::{
-    OPENAI_MODEL, OPENAI_REASONING_EFFORT, OPENAI_SUMMARY_MODEL, OPENAI_SUMMARY_REASONING_EFFORT,
+    OPENAI_DEDUP_MODEL, OPENAI_DEDUP_REASONING_EFFORT, OPENAI_MODEL, OPENAI_REASONING_EFFORT,
     init_config,
 };
 use ai_agent_audit::llm_review::agent::{
     agent_factory::{AgentConfig, AgentFactory, ensure_codex_chatgpt_auth, init_llm_clients},
     codex_app_server::cached_chatgpt_account,
 };
-use ai_agent_audit::llm_review::contract::contract_category::ContractCategory;
 use ai_agent_audit::llm_review::findings::findings::PrivilegeLevel;
 use ai_agent_audit::llm_review::threat_models::{
     actors::{Actors, RoleType},
@@ -28,6 +26,11 @@ struct SimpleOAuthResponse {
     id: Option<String>,
     answer: u32,
     confidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct SummaryOnlyResponse {
+    summary: String,
 }
 
 fn ensure_oauth_runtime_initialized() {
@@ -249,26 +252,24 @@ async fn test_openai_codex_low_effort_summary_style_extract_still_works() {
     ensure_oauth_runtime_initialized();
 
     let agent_config = AgentConfig::new(None)
-        .with_model(OPENAI_SUMMARY_MODEL)
+        .with_model(OPENAI_DEDUP_MODEL)
         .with_preamble("You are a precise summarization test assistant.")
-        .with_openai_reasoning_effort(OPENAI_SUMMARY_REASONING_EFFORT);
+        .with_openai_reasoning_effort(OPENAI_DEDUP_REASONING_EFFORT);
 
     let agent =
         AgentFactory::create_openai_agent(&agent_config).expect("should create OpenAI agent");
 
     let summary_prompt = r#"
-Return valid JSON for the `FileSummary` schema.
+Return valid JSON for the `SummaryOnlyResponse` schema.
 Use:
 - summary: "Vault contract that accepts ERC20 deposits, mints proportional shares, and lets an admin pause withdrawals."
-- contract_category: "VaultShareBased"
 "#;
 
-    let summary: FileSummary = agent
+    let summary: SummaryOnlyResponse = agent
         .extract_with_retry(summary_prompt)
         .await
         .expect("low-effort summary extraction should succeed through ChatGPT OAuth");
 
-    assert_eq!(summary.contract_category, ContractCategory::VaultShareBased);
     assert!(
         summary.summary.contains("Vault contract"),
         "summary text should deserialize correctly"

@@ -1,0 +1,238 @@
+benchmark: "2026-01-olas"
+audit_type: "Code4rena"
+status: "phase_1_manifest"
+description: "Initial local benchmark manifest for the Olas Code4rena audit."
+
+source:
+  repo_url: "https://github.com/code-423n4/2026-01-olas"
+  commit_hash: "f8ad8df420d54fdd5143c387cbfe46cc58578fea"
+  source_root: "/Users/apmfree/Desktop/Audit/2026-01-olas-f8ad8d/2026-01-olas"
+  audit_root: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/2026-01-olas"
+  audit_report: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/2026-01-olas/report/audit-report.md"
+  three_shot_config: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/2026-01-olas-config.yaml"
+
+context:
+  docs:
+    - "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/audit-docs/2026-01-olas/2026-01-olas-docs.md"
+    - "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/audit-docs/2026-01-olas/2026-01-olas-scope.md"
+  c4_checklist: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/v12-checklist.md"
+
+ground_truth:
+  accepted_roots_file: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/C4_APPROVED_FINDINGS.md"
+  rejected_references_file: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/C4_REJECTED_FINDINGS_KEY.md"
+  rejected_corpus_file: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/C4_LOW_QA_INVALID_FINDINGS.md"
+  snapshots_dir: "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/c4_snaps"
+
+metrics:
+  accepted_high_count: 11
+  accepted_medium_count: 12
+  accepted_total_hm_count: 23
+
+evaluation:
+  primary_metric: "unique accepted H/M roots matched in final report"
+  secondary_metrics:
+    - "H/M precision"
+    - "false positive survival rate"
+    - "false negative stage attribution"
+    - "dedup cluster purity"
+    - "verification false reject rate"
+  initial_terminal_labels:
+    - "matched_true_positive"
+    - "unmatched_false_positive"
+    - "context_missing_scope"
+    - "context_missing_graph"
+    - "context_missing_token_budget"
+    - "context_present_discovery_miss"
+    - "discovery_extraction_error"
+    - "dedup_overmerge"
+    - "dedup_undermerge"
+    - "verification_false_reject"
+    - "validation_false_accept"
+    - "severity_false_downgrade"
+    - "report_omission"
+
+accepted_roots:
+  - id: "F-3"
+    severity: "High"
+    title: "Variable overwrite in checkPoolAndGetCenterPrice creates dead-code deviation check"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-3"
+    root_contracts: ["LiquidityManagerCore"]
+    root_functions: ["checkPoolAndGetCenterPrice"]
+    expected_pattern_family: "oracle-price-validation"
+    notes: "TWAP deviation check compares TWAP against itself, leaving V3 POL operations unprotected."
+  - id: "F-6"
+    severity: "High"
+    title: "Incorrect TWAP calculation in BalancerPriceOracle"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-6"
+    root_contracts: ["BalancerPriceOracle"]
+    root_functions: ["updatePrice"]
+    expected_pattern_family: "oracle-twap"
+    notes: "TWAP formula does not properly accumulate price over time."
+  - id: "F-8"
+    severity: "High"
+    title: "Insolvency via cross-service reentrancy in StakingBase._withdraw"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-8"
+    root_contracts: ["StakingBase"]
+    root_functions: ["_withdraw"]
+    expected_pattern_family: "reentrancy-cei"
+    notes: "Global balance update occurs after external transfer loop."
+  - id: "F-215"
+    severity: "High"
+    title: "Missing maximum bond signature parameter"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-215"
+    root_contracts: ["ServiceManager"]
+    root_functions: ["registerAgentsWithSignature", "getRegisterAgentsHash"]
+    expected_pattern_family: "signature-validation"
+    notes: "Signed message lacks maximum acceptable bond bound."
+  - id: "F-123"
+    severity: "High"
+    title: "Service owner can steal protocol tokens by exploiting reentrancy in create"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-123"
+    root_contracts: ["ServiceManager"]
+    root_functions: ["create"]
+    expected_pattern_family: "reentrancy-cei"
+    notes: "External registry create occurs before token utility record is finalized."
+  - id: "F-397"
+    severity: "High"
+    title: "Token callback reentrancy"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-397"
+    root_contracts: ["StakingBase"]
+    root_functions: ["_claim", "_withdraw", "_transfer"]
+    expected_pattern_family: "token-callback-reentrancy"
+    notes: "Virtual transfer path can allow callback/reentry before balances are persisted."
+  - id: "F-4"
+    severity: "High"
+    title: "Balancer oracle uses vault balances as price and can be steered by anyone"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-4"
+    root_contracts: ["BalancerPriceOracle"]
+    root_functions: ["getPrice"]
+    expected_pattern_family: "oracle-spot-price"
+    notes: "Reads raw Balancer Vault balances as a spot price."
+  - id: "F-204"
+    severity: "High"
+    title: "Critical logic inversion in price guard allows flash-loan manipulation"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-204"
+    root_contracts: ["LiquidityManagerCore"]
+    root_functions: ["checkPoolAndGetCenterPrice"]
+    expected_pattern_family: "oracle-price-validation"
+    notes: "Price guard logic fails open for manipulated Uniswap V3 pool prices."
+  - id: "F-461"
+    severity: "High"
+    title: "cumulativePrice is corrupted when price updates are rejected"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-461"
+    root_contracts: ["BalancerPriceOracle"]
+    root_functions: ["updatePrice"]
+    expected_pattern_family: "oracle-state-update-ordering"
+    notes: "State is updated before slippage validation, corrupting TWAP on rejected updates."
+  - id: "F-2"
+    severity: "High"
+    title: "Broken TWAP validation allows spot-price manipulation"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-2"
+    root_contracts: ["UniswapPriceOracle"]
+    root_functions: ["validatePrice"]
+    expected_pattern_family: "oracle-twap"
+    notes: "Validation collapses to current spot price instead of a real Uniswap V2 TWAP."
+  - id: "F-166"
+    severity: "High"
+    title: "Missing deadline parameter in register signatures"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-166"
+    root_contracts: ["ServiceManager"]
+    root_functions: ["registerAgentsWithSignature", "getRegisterAgentsHash"]
+    expected_pattern_family: "signature-validation"
+    notes: "Signed registration messages do not expire."
+  - id: "F-104"
+    severity: "Medium"
+    title: "Uniswap oracle validatePrice can be griefed per block via sync"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-104"
+    root_contracts: ["UniswapPriceOracle"]
+    root_functions: ["validatePrice"]
+    expected_pattern_family: "oracle-dos"
+    notes: "Permissionless sync can force same-block validation failure."
+  - id: "F-211"
+    severity: "Medium"
+    title: "changeRanges silently fails when price is out of tick range"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-211"
+    root_contracts: ["LiquidityManagerCore"]
+    root_functions: ["changeRanges"]
+    expected_pattern_family: "amm-liquidity-management"
+    notes: "Out-of-range LP collection can send all liquidity to treasury instead of redeploying."
+  - id: "F-432"
+    severity: "Medium"
+    title: "No slippage protection on Uniswap swap"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-432"
+    root_contracts: ["BuyBackBurnerUniswap", "BuyBackBurner"]
+    root_functions: ["_performSwap", "_buyOLAS"]
+    expected_pattern_family: "slippage-missing"
+    notes: "Swap sets amountOutMinimum to zero."
+  - id: "F-469"
+    severity: "Medium"
+    title: "Balancer oracle deadlock from cumulative price weight"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-469"
+    root_contracts: ["BalancerPriceOracle"]
+    root_functions: ["updatePrice"]
+    expected_pattern_family: "oracle-deadlock"
+    notes: "Ever-growing cumulative weight can cause permanent rejection of updates."
+  - id: "F-362"
+    severity: "Medium"
+    title: "checkpoint does not correct effectiveBond downward at inflation-decrease year boundaries"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-362"
+    root_contracts: ["StakingBase"]
+    root_functions: ["checkpoint"]
+    expected_pattern_family: "accounting-invariant"
+    notes: "Effective bond is pre-credited but not corrected downward when actual inflation allocation is lower."
+  - id: "F-374"
+    severity: "Medium"
+    title: "Services can earn undeserved rewards by manipulating checkpoint timing during reward droughts"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-374"
+    root_contracts: ["StakingBase"]
+    root_functions: ["checkpoint", "_calculateStakingRewards"]
+    expected_pattern_family: "staking-reward-accounting"
+    notes: "Activity timestamp is not updated when rewards are unavailable."
+  - id: "F-206"
+    severity: "Medium"
+    title: "BalancerPriceOracle validatePrice uses stale TWAP"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-206"
+    root_contracts: ["BalancerPriceOracle"]
+    root_functions: ["validatePrice"]
+    expected_pattern_family: "oracle-staleness"
+    notes: "View validation reads stale snapshot without refreshing the oracle state."
+  - id: "F-329"
+    severity: "Medium"
+    title: "Incorrect proportional reward splits when an operator has been slashed"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-329"
+    root_contracts: ["StakingBase"]
+    root_functions: ["_getRewardReceiversAndAmounts"]
+    expected_pattern_family: "staking-reward-accounting"
+    notes: "Proportional rewards assume equal bonds and ignore slashed/unequal bond amounts."
+  - id: "F-67"
+    severity: "Medium"
+    title: "Arbitrum retryable-ticket refund/value not verified enables timelock ETH exfiltration"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-67"
+    root_contracts: ["GuardCM", "ProcessBridgedDataArbitrum"]
+    root_functions: ["checkTransaction", "_verifyBridgedData", "_verifyData"]
+    expected_pattern_family: "cross-chain-message-validation"
+    notes: "Allowlist checks omit retryable ticket value/refund parameters."
+  - id: "F-280"
+    severity: "Medium"
+    title: "Malicious user can prevent buying back OLAS token via Slipstream"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-280"
+    root_contracts: ["BuyBackBurner", "BuyBackBurnerBalancer", "BuyBackBurnerUniswap"]
+    root_functions: ["buyBack", "_buyOLAS", "_performSwap"]
+    expected_pattern_family: "dos-external-call"
+    notes: "Buyback flow can be DoS-ed through the Slipstream swap path."
+  - id: "F-126"
+    severity: "Medium"
+    title: "Price cumulative last is used inverted in Uniswap Oracle"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-126"
+    root_contracts: ["UniswapPriceOracle"]
+    root_functions: ["validatePrice"]
+    expected_pattern_family: "oracle-price-direction"
+    notes: "price0/price1 cumulative selection is inverted relative to intended quote direction."
+  - id: "F-175"
+    severity: "Medium"
+    title: "DoS in liquidity migration due to unit mismatch in UniswapPriceOracle"
+    source_url: "https://code4rena.com/audits/2026-01-olas/submissions/F-175"
+    root_contracts: ["UniswapPriceOracle", "LiquidityManagerETH"]
+    root_functions: ["validatePrice", "convertToV3"]
+    expected_pattern_family: "oracle-units-precision"
+    notes: "Derivation uses 1e16 precision but compares against raw percentage slippage."

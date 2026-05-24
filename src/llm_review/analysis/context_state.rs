@@ -9,10 +9,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    build_brain::{
-        slither_ffi::{cache_key, get_all_files_src},
-        summarize::{FileSummaryType, summarize_protocol, summarize_src_files},
-    },
+    build_brain::slither_ffi::{cache_key, get_all_files_src},
     config::{AuditType, SKIP_ACTOR_PATTERN_RUNS, SKIP_INVARIANT_RUNS},
     cost::cost_data::get_token_count,
     llm_review::{
@@ -86,44 +83,11 @@ pub fn get_context_key(repo: &RepoPaths) -> String {
 /// * `repo` - Repository paths and metadata
 /// * `semantics_path` - Path to semantic analysis database
 pub async fn generate_and_save_metadata_context(repo: &RepoPaths) -> anyhow::Result<()> {
-    let mut metadata = String::new();
-
-    // full context
     let full_context = generate_context_for_code_review(repo).await?;
-
-    let summaries = summarize_src_files(repo).await?;
-
-    // NOTE: adding file summaries to full context ONLY to create protocol_summary
-    // final metadata DOES NOT CONTAIN file summaries, because its too many tokens, and we no
-    // longer need it for audit context
-    let mut full_context_plus_summaries = full_context.clone();
-    full_context_plus_summaries.push_str(
-        "\n ===================== ## SUMMARY OF SOURCE CODE FILES ===================== \n\n",
-    );
-    for summary in summaries {
-        let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
-        if file_type == FileSummaryType::Source {
-            full_context_plus_summaries.push_str(&format!("### Summary of {}\n", summary.filename));
-            full_context_plus_summaries.push_str(&summary.summary);
-            full_context_plus_summaries.push('\n');
-        }
-    }
-
-    let protocol_summary = summarize_protocol(repo, Some(&full_context_plus_summaries)).await?;
-
-    metadata.push_str(&format!(
-        "\n ------------ ## PROTOCOL OVERVIEW ------------ \n\n{}\n\n",
-        protocol_summary
-    ));
 
     let metadata_context = Arc::clone(&METADATA_CONTEXT);
     let mut metadata_cache = metadata_context.lock().await;
-
-    // saving full context
-    metadata_cache.insert(
-        get_context_key(repo),
-        format!("{}{}", metadata, full_context),
-    );
+    metadata_cache.insert(get_context_key(repo), full_context);
 
     Ok(())
 }
@@ -156,7 +120,6 @@ pub async fn generate_context_for_code_review(repo: &RepoPaths) -> Result<String
     full_prompt_context.push_str(&src_file_list);
     full_prompt_context.push_str("\n\n");
 
-    // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = repo.extract_content_from_docs()?;
     // adding FULL DOCS not doc_summaries
     full_prompt_context.push_str("\n ------------ ## DOCUMENTATION: ------------ \n\n ");

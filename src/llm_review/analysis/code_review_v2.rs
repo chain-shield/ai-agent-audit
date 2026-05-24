@@ -93,7 +93,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
     let mut contract_handles = Vec::new();
 
-    for (contract, (codeblock, _)) in contracts.into_iter() {
+    for (contract, codeblock) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
         if let Some(scoped_contracts) = &custom_scoped_contracts

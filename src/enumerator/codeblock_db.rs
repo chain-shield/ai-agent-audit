@@ -10,9 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    llm_review::contract::contract_category::ContractCategory, prepare_code::git_clone::RepoPaths,
-};
+use crate::prepare_code::git_clone::RepoPaths;
 
 /// Represents a contextual markdown code block for AI analysis.
 ///
@@ -25,7 +23,6 @@ pub struct MarkdownCodeblock {
     /// Contract name (e.g., "PuppyRaffle")
     pub project_id: String,
     pub contract: String,
-    pub contract_category: ContractCategory,
     /// Token count for LLM context window management
     pub tokens: usize,
     /// Markdown content with code, IR, and storage information
@@ -80,7 +77,6 @@ impl CodeBlocksDb {
                 id      TEXT PRIMARY KEY,  -- sha256(body)
                 project_id TEXT,
                 contract TEXT,
-                contract_category TEXT,
                 tokens  INTEGER,
                 content TEXT
                 );
@@ -92,13 +88,6 @@ impl CodeBlocksDb {
                     ON codeblocks(project_id, contract);
                "#,
         )?;
-
-        // Migration: Add contract_category column if it doesn't exist (for existing databases)
-        // This will fail silently if the column already exists
-        let _ = conn.execute(
-            "ALTER TABLE codeblocks ADD COLUMN contract_category TEXT",
-            [],
-        );
 
         Ok(db)
     }
@@ -154,21 +143,14 @@ impl CodeBlocksDb {
 
         // Insert new codeblock
         conn.execute(
-            r#"INSERT INTO codeblocks VALUES (?1,?2,?3,?4,?5,?6)
+            r#"INSERT INTO codeblocks (id, project_id, contract, tokens, content)
+                  VALUES (?1,?2,?3,?4,?5)
                   ON CONFLICT(project_id, contract) DO UPDATE SET
                     id      = excluded.id,
                     tokens  = excluded.tokens,
-                    content = excluded.content,
-                    contract_category = excluded.contract_category
+                    content = excluded.content
                     "#,
-            params![
-                c.id,
-                c.project_id,
-                c.contract,
-                c.contract_category.to_string(),
-                c.tokens as i64,
-                c.content
-            ],
+            params![c.id, c.project_id, c.contract, c.tokens as i64, c.content],
         )?;
         Ok(())
     }
@@ -177,30 +159,23 @@ impl CodeBlocksDb {
     ///
     /// # Returns
     /// * `rusqlite::Result<HashMap<String, String>>` - HashMap mapping contract names to their content
-    pub fn get_all_contracts(
-        &self,
-        repo: &RepoPaths,
-    ) -> anyhow::Result<HashMap<String, (String, ContractCategory)>> {
+    pub fn get_all_contracts(&self, repo: &RepoPaths) -> anyhow::Result<HashMap<String, String>> {
         let conn = Connection::open(&self.path)?;
 
-        let mut stmt = conn.prepare(
-            "SELECT contract, contract_category, content FROM codeblocks WHERE project_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT contract, content FROM codeblocks WHERE project_id = ?1")?;
 
         let rows = stmt.query_map([&repo.project_id.clone()], |row| {
             Ok((
                 row.get::<_, String>(0)?, // contract
-                row.get::<_, String>(1)?, // contract_category
-                row.get::<_, String>(2)?, // content
+                row.get::<_, String>(1)?, // content
             ))
         })?;
 
         let mut contracts = HashMap::new();
         for row in rows {
-            let (contract, contract_category_str, content) = row?;
-            let contract_category: ContractCategory = contract_category_str.parse()?;
-
-            contracts.insert(contract, (content, contract_category));
+            let (contract, content) = row?;
+            contracts.insert(contract, content);
         }
 
         Ok(contracts)

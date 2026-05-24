@@ -26,9 +26,6 @@ pub mod build_brain {
     pub mod parsers;
     /// Slither static analyzer interface
     pub mod slither_ffi;
-    /// Protocol and file summarization
-    pub mod summarize;
-    pub mod summarize_db;
 }
 
 /// Repository preparation and building
@@ -88,7 +85,6 @@ pub mod llm_review {
     }
     pub mod contract {
 
-        pub mod contract_category;
         pub mod contract_file_map;
     }
     pub mod agent {

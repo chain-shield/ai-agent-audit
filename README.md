@@ -9,7 +9,7 @@ This repository is being released as a GitHub-first public beta. It is meant to 
 - Public beta.
 - Solidity and EVM-focused.
 - Repository source, docs, and derived context are sent to third-party LLM providers you configure.
-- The current default audit pipeline uses ChatGPT/Codex OAuth for OpenAI access and runs the active review flow on `gpt-5.5`. Summary and deduplication helpers use `gpt-5.4` with low reasoning.
+- The current default audit pipeline uses ChatGPT/Codex OAuth for OpenAI access and runs the active review flow on `gpt-5.5`. Deduplication helpers use `gpt-5.4` with low reasoning.
 - Startup performs a one-time ChatGPT sign-in if needed and reuses the cached session on later runs until the token expires.
 - `OPENAI_API_KEY` remains legacy-only and is not used by the default OpenAI path.
 - `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_AI_API_KEY`, and `DEEPSEEK_API_KEY` are still supported by the agent layer, but they are not required by the default review path.
@@ -217,7 +217,7 @@ Outputs are written relative to the current working directory. The main output f
   One file per finding when a detailed competition-style report was generated for that finding. Filenames are sanitized and truncated.
 - `<repo_name>/metadata-<unique_repo_hash>.md`
   Saved metadata context used during analysis.
-- `<repo_name>/<ContractType>-<Contract>-<Category>-size-<tokens>.md`
+- `<repo_name>/<ContractType>-<Contract>-size-<tokens>.md`
   Exported codeblocks for in-scope contracts.
 
 ### Local SQLite State
@@ -225,7 +225,6 @@ Outputs are written relative to the current working directory. The main output f
 By default, the tool stores local state under `.ai-agent-audit/`:
 
 - `.ai-agent-audit/semantic.db`
-- `.ai-agent-audit/summary.db`
 - `.ai-agent-audit/codeblock.db`
 - `.ai-agent-audit/findings.db`
 - `.ai-agent-audit/repo_data.db`
@@ -238,7 +237,7 @@ The analysis system combines several sources of context:
 
 - Pattern libraries covering access control, reentrancy, accounting and invariant drift, oracle and AMM behavior, governance and timelocks, upgradeability, bridging, token standards, marketplace flows, and more.
 - Invariant analysis across arithmetic, balance, permission, temporal, referential, and state-machine categories.
-- Contract categorization and actor-oriented prompt context.
+- Actor-oriented prompt context for threat modeling each reviewed contract.
 - Contest-aware severity handling for `Code4rena`, `Sherlock`, and `Cantina`, bounty-specific Critical/High handling for `Code4renaBounty`, plus a more open-ended `Client` mode.
 
 The exact prompts and pattern catalogs continue to evolve, so the README intentionally describes this at the capability level instead of freezing brittle counts.
@@ -290,7 +289,7 @@ src/
   config.rs               environment/config loading and constants
   cli_args/               clap/YAML argument parsing
   prepare_code/           repo cloning, generated context, filtering, native builds, repo metadata
-  build_brain/            Slither enrichment, summaries, graph DB
+  build_brain/            Slither enrichment and graph DB
   enumerator/             codeblock generation, Solidity parsing, interface indexing
   llm_review/             prompt generation, agent setup, findings, review phases
   reporting/              audit reports, finding reports, exported artifacts
