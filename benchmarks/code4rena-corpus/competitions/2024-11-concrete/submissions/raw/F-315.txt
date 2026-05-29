@@ -1,0 +1,263 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-315
+Low
+Primary
+S-1114
+Incorrect Zero-Deposit Utilization Rate Calculation Leading to False Protocol Health Metrics
+NexusAudits
+31
+Sufficient
+383d ago
+Summary
+
+A bug exists in the calculateUtilization function of the EasyMathV2 library related to incorrect handling of the edge case where total deposits are zero but borrowing exists. The current implementation returns 0% utilization in this case, when it should return 100% utilization (full utilization).
+
+The root cause is in the initial validation:
+
+if (_totalDeposits == 0 || _totalBorrowAmount == 0) return 0;
+
+This logic error has serious implications for lending protocols using this library:
+
+Underreported utilization rates leading to incorrect interest rate calculations
+Potential economic exploits where high-risk states appear safe
+Misleading protocol health indicators
+Inaccurate risk metrics for protocol monitoring
+False signals for liquidation triggers
+Recommended mitigation steps
+
+The calculateUtilization function should be updated to properly handle the zero deposits case:
+
+function calculateUtilization(
+    uint256 _dp,
+    uint256 _totalDeposits,
+    uint256 _totalBorrowAmount
+) internal pure returns (uint256 utilization) {
+    // If no deposits, return full utilization if there are borrows
+    if (_totalDeposits == 0) {
+        return _totalBorrowAmount > 0 ? _dp : 0;
+    }
+    
+    // If no borrows, utilization is 0
+    if (_totalBorrowAmount == 0) {
+        return 0;
+    }
+    
+    // Normal case: calculate utilization percentage
+    utilization = _totalBorrowAmount * _dp;
+    unchecked {
+        utilization /= _totalDeposits;
+    }
+    
+    // Cap at 100%
+    if (utilization > _dp) {
+        utilization = _dp;
+    }
+    
+    return utilization;
+}
+
+This fix ensures proper utilization calculation in all scenarios while maintaining gas efficiency through unchecked math where safe.
+
+Links to affected code
+EasyMathV2.sol#L127
+Opens in a new window
+Submissions touching same files
+EasyMathV2.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1114.
+Valid high
+Edited: Feb 22
+cheatc0d3
+OP
+
+Hi, I believe this is a valid High severity issue due to several critical factors:
+
+The calculateUtilization() function has a fundamental flaw in its edge case handling that can lead to direct economic impact. Specifically, when a protocol has outstanding borrows but zero deposits, the function returns 0% utilization instead of the correct 100%. Here's why this is High severity:
+
+Direct Fund Loss Path:
+Interest rates are commonly calculated as baseRate + utilization * multiplier
+When utilization incorrectly returns 0% instead of 100%, interest rates will be severely underpriced
+This allows borrowers to get loans at the minimum interest rate during maximum risk conditions
+The protocol and lenders lose direct economic value through missed interest
+Clearly Exploitable:
+// Example exploit path
+1. Wait for deposits to drop very low
+2. Make large borrows to clear out remaining deposits 
+3. Continue borrowing with no deposits - system shows 0% utilization
+4. Get minimum interest rate loans in a max risk scenario
+No Special Requirements:
+No privileged access needed
+No complex requirements or assumptions
+Just standard borrowing functionality
+Core System Impact:
+Utilization is a critical economic parameter
+It affects interest rates, risk metrics, liquidations
+Incorrect reporting creates systemic risk
+
+This isn't just a theoretical issue - it affects core economic calculations that directly determine cost of borrowing and protocol revenue. The impact is quantifiable (missed interest revenue) and has a clear exploitation path requiring no special privileges.
+
+0xStalin
+01/08/2025
+
+Can you explain how this "edge case" can be achieved?
+
+A bug exists in the calculateUtilization function of the EasyMathV2 library related to incorrect handling of the edge case where total deposits are zero but borrowing exists. The current implementation returns 0% utilization in this case, when it should return 100% utilization (full utilization).
+
+How is it possible to have borrowings when there are no deposits? Where will the borrowers borrow from?
+
+cheatc0d3
+OP
+01/08/2025
+
+How is it possible to have borrowings when there are no deposits? Where will the borrowers borrow from?
+
+The function as it stands is broken.
+
+There's another unreported bug masking a possible edge case which when fixed makes the edge case valid
+
+First Issue - Current Design Bug:
+The comment states totalDeposits includes borrowed amounts
+This is fundamentally incorrect accounting
+totalDeposits should only track actual deposits
+Borrowed amounts should only be in totalBorrowAmount
+After This Is Fixed:
+totalDeposits would only track real deposits
+This could also be the case if this comment is not implemented in code
+During a flash loan:
+All deposits could be borrowed
+Leading to totalDeposits = 0
+But totalBorrowAmount > 0
+Then The Edge Case Becomes Valid:
+function calculateUtilization(
+    uint256 _dp,
+    uint256 _totalDeposits,
+    uint256 _totalBorrowAmount
+) internal pure returns (uint256 utilization) {
+    if (_totalDeposits == 0 || _totalBorrowAmount == 0) return 0;
+    // ...
+}
+
+Would incorrectly return 0% utilization when it should be 100% in flash loan scenarios.
+
+So it's a chain of issues:
+
+Fix the incorrect accounting in totalDeposits
+Which then makes the flash loan edge case in calculateUtilization() a real issue
+Which then requires fixing the utilization calculation
+
+Either way the function should be fixed to prevent such edge cases from passing.
+
+0xStalin
+01/08/2025
+
+None of what you are saying is true. Anywhere it is mentioned that totalDeposits track borrows, all the opposite, it explicitly states that totalDeposits are the current deposits for assets
+
+The comment states totalDeposits includes borrowed amounts
+
+Moreover, calculateUtilization() is an internal function that is never called by the files in scope.
+
+cheatc0d3
+OP
+01/08/2025
+
+None of what you are saying is true. Anywhere it is mentioned that totalDeposits track borrows, all the opposite, it explicitly states that totalDeposits are the current deposits for assets
+
+See here: https://github.com/code-423n4/2024-11-concrete/blob/d2950ec68fdc391c10989d98748e79d1a0017f69/src/strategies/Silo/IBaseSiloV1.sol#L16
+
+Moreover, calculateUtilization() is an internal function that is never called by the files in scope.
+
+EasyMathV2 file is in scope.
+
+a_kalout
+01/08/2025
+
+calculateUtilization is not used in any function, so there's no impact.
+
+cheatc0d3
+OP
+01/08/2025
+
+calculateUtilization is in a file in scope. The impact as it stands is incorrect utilization calculations. When function is used the impact compounds.
+
+/// @notice Calculates fraction between borrowed and deposited amount of tokens denominated in percentage
+
+calculateUtilization is not used in any function, so there's no impact
+
+I believe this is an oversight by dev, the fact that calculateUtilization function is not used in SiloV1Strategy is another bug by itself that deserves its own report as depositors aren't protected from over-utilization risks.
+
+0xStalin
+01/08/2025
+
+We have two different comments for the purpose of the totalDeposits.
+One directly from the Contract, and, another from the Interface. Both comments contradict each other, therefore none of the two should be taken as a source of truth, but, the comment that makes more sense is the one from the contract, which states totalDeposits are the current deposits for assets. Nevertheless, that's all I have to contribute to this submission, I will let the judge take it from here, there is enough evidence this submission could be at most a qa/informative for the discrepancy in the comments.
+
+cheatc0d3
+OP
+01/09/2025
+
+but, the comment that makes more sense is the one from the contract
+
+If this is the case then it supports the validity of this edge case without the masking of incorrect totaldeposits. Furthermore this contract is a library meant to be used in Silo strategy.
+
+0xStalin
+01/09/2025
+
+mmh, I may have used the wrong word, instead of contract should've been library.
+
+on the library, the comment for totalDeposits is: current total deposits for assets
+on the interface, the comment for totalDeposits is: It also includes token amount that has been borrowed.
+
+IMHO, a library is more relevant than an interface because the library's code is what gets actually executed, the interface is simply a wrapper that enables calls.
+
+cheatc0d3
+OP
+01/10/2025
+
+You are actually making my point and your comments are contradictory. The comment discrepancy is just further insight I added into comments section not the bug I reported. Anyways like you said let's leave this to the judge to determine validity.
+
+Showing 10 of 11 replies
+View more
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Insufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

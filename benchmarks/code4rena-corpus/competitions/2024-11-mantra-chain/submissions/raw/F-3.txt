@@ -1,0 +1,156 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-3
+Low
+Primary
+S-181
+The tax module parameters can never be updated using governance proposals
+0xAlix2
+82
+Sufficient
+383d ago
+Finding description and impact
+
+The tax module is responsible for managing and allocating taxes within the blockchain network. At the start of each block, AllocateMcaTax is called which transfers a part of the fee collector balance to a specified address, called McaAddress.
+
+func (k Keeper) AllocateMcaTax(ctx context.Context, mcaTax math.LegacyDec, mcaAddress sdk.AccAddress) error {
+	// ...
+
+	// transfer allocated mca tax to the specified account
+	err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, k.feeCollectorName, mcaAddress, mcaTaxAllocation)
+	if err != nil {
+		return err
+	}
+
+	// ...
+}
+
+The protocol allows updating the parameters of the tax module through governance proposals, according to the docs:
+
+The tax module parameters can be updated through governance proposals. This allows for dynamic adjustment of the tax system without requiring a chain upgrade.
+
+When proposals are executed, after being voted on and reaching some approval state, the governance's module account automatically executes the proposed transaction, from Cosmos SDK docs:
+
+The messages are executed by the governance ModuleAccount itself.
+
+On the other hand of this, we have the UpdateParams function in x/tax/keeper/msg_update_params.go that is responsible for the parameters updating logic:
+
+func (k msgServer) UpdateParams(ctx context.Context, req *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+	// ...
+
+	if req.Authority != params.McaAddress {
+		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid sender; expected mcaAddress %s, got %s", params.McaAddress, req.Authority)
+	}
+
+	// ...
+}
+
+The issue in the above code snippet is that the authority is being checked against the McaAddress, which is invalid. When a proposal is executed, the authority will be set to the governance module account, https://docs.cosmos.network/main/build/modules/gov#writing-a-module-that-uses-governance. While McaAddress is just a user's address that is meant to receive tax from the fee collector, and shouldn't be set to the gov's module account, simply because the funds are sent to it as an account here.
+
+This blocks tax module updates from governance proposals, as any proposal execution will fail with ErrInvalidSigner.
+
+Recommended mitigation steps
+
+The governance's module account address should be passed to the keeper's constructor, and then validating the Authority against that gov's module address instead of validating it against UpdateParams, similar to what's done in UpdateParams in the token factory module.
+
+Links to affected code
+msg_update_params.go#L22-L24
+Opens in a new window
+Submissions touching same files
+msg_update_params.go
+Comments for the judge
+4
+You are viewing comments for the primary submission, S-181.
+seeking re-evaluation
+Edited: Feb 22
+a_kalout
+OP
+
+According to the contest docs,
+
+The tax module parameters can be updated through governance proposals. This allows for dynamic adjustment of the tax system without requiring a chain upgrade.
+
+is one of the features listed in the Mantra Chain. Thus, it can be assumed that any issues related to any misbehaviors are valid, and their severity should be evaluated accordingly. There is also no hint that the documentation is wrong.
+
+Looks L. McaAddress is configurable and can be set to the governance module address -> misconfiguration
+
+I don't think that makes sense because, in that case, any tax sent to the McaAddress will require a governance proposal to withdraw these funds. I see that as a misconfiguration rather than the contrary.
+
+I would appreciate a re-evaluation of this. thanks!
+
+3docSec
+02/15/2025
+
+I think this comment clarifies that the McaAddress is the authority that changes parameters:
+
+will update docs to reflect that the mca address is configurable by current recipient of mca tax
+
+also the choice is quite clearly intentional if you look at the error message from the code you pasted:
+
+errorsmod.Wrapf(types.ErrInvalidSigner, "invalid sender; expected mcaAddress %s, got %s", params.McaAddress, req.Authority)
+
+The sponsor says it's intended behavior, the code confirms it, so it's the docs that are wrong here
+
+Judging comment
+Edited: Feb 22
+3docSec
+
+Leaving as QA - discrepancy with the docs
+
+Not Valid
+Edited: Feb 22
+mantra_lance
+
+Wrong documentation, will update docs to reflect that the mca address is configurable by current recipient of mca tax
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks L. McaAddress is configurable and can be set to the governance module address -> misconfiguration
+
+Timeline
+Submitted
+Created: 505d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

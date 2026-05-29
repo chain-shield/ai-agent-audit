@@ -1,0 +1,153 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-446
+Low
+Primary
+S-416
+It is not possible to buy a quoteToken through LamboVEthRouter
+crmx_lom
+00
+Sufficient
+383d ago
+Finding description and impact
+
+When the VirtualToken::underlyingToken is not ETH but an ERC20 token, the user cannot buy a quoteToken using the LamboVEthRouter.
+The buy of the token takes place in the _buyQuote function of the LamboVEthRouter contract.
+
+function _buyQuote(address quoteToken, uint256 amountXIn, uint256 minReturn)
+        internal
+        returns (uint256 amountYOut)
+    {
+@>      require(msg.value >= amountXIn, "Insufficient msg.value");
+
+        // handle fee
+        uint256 fee = (amountXIn * feeRate) / feeDenominator;
+        amountXIn = amountXIn - fee;
+@>      (bool success,) = payable(owner()).call{value: fee}("");
+        require(success, "Transfer to Owner failed");
+        
+        ...
+
+}
+
+The function contains a check
+
+require(msg.value >= amountXIn, "Insufficient msg.value");
+
+while msg.value is only meaningful in ETH transactions, which causes the function to not work properly.
+Also, the transfer of the fee can only be ETH
+
+(bool success, ) = payable(owner()).call{value: fee}("");
+Proof of Concept
+pragma solidity ^0.8.20;
+
+import {Test, console} from "forge-std/Test.sol";
+import {VirtualToken} from "../src/VirtualToken.sol";
+import {LamboFactory} from "../src/LamboFactory.sol";
+import {LamboToken} from "../src/LamboToken.sol";
+import {LamboVEthRouter} from "../src/LamboVEthRouter.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract UnderlyingTokenTest is Test {
+    VirtualToken public vETH;
+    LamboFactory public factory;
+    LamboVEthRouter public lamboRouter;
+    LamboToken public lamboTokenV2;
+
+    address public multiSigAdmin = makeAddr("multiSigAdmin");
+    address USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+
+    function setUp() public {
+        // ankr eth mainnet
+        vm.createSelectFork("https://rpc.ankr.com/eth");
+
+        lamboTokenV2 = new LamboToken();
+
+        vm.startPrank(multiSigAdmin);
+        vETH = new VirtualToken("vETH", "vETH", USDC);
+        factory = new LamboFactory(address(lamboTokenV2));
+        vm.stopPrank();
+
+        lamboRouter = new LamboVEthRouter(address(vETH), multiSigAdmin);
+
+        vm.startPrank(multiSigAdmin);
+        vETH.updateFactory(address(factory), true);
+        vETH.addToWhiteList(address(lamboRouter));
+        factory.addVTokenWhiteList(address(vETH));
+        vm.stopPrank();
+    }
+
+    function test_ERC20CreateLaunchPadWithInitalBuy() public {
+        address user = makeAddr("lamboUser");
+        uint256 amount = 100 * 10 ** Token(USDC).decimals();
+        deal(USDC, user, amount);
+
+        vm.startPrank(user);
+        Token(USDC).approve(address(vETH), amount);
+
+        vm.expectRevert(bytes("Insufficient msg.value"));
+        (address quoteToken, address pool, uint256 amountYOut) =
+            lamboRouter.createLaunchPadAndInitialBuy(address(factory), "LamboToken", "LAMBO", amount, amount);
+        
+        vm.stopPrank();
+    }
+}
+
+interface Token is IERC20{
+    function decimals() external view returns (uint8);
+}
+
+
+When the underlyingToken is not ETH but an ERC20 token, the user cannot use the createLaunchPadAndInitialBuy and buyQuote functions for buy a quoteToken because they use the _buyQuote function.
+
+Recommended mitigation steps
+
+Handle buy according to the underlying Token type.
+
+Links to affected code
+LamboVEthRouter.sol#L148
+Opens in a new window
+Submissions touching same files
+LamboVEthRouter.sol
+Timeline
+Submitted
+Created: 532d ago
+High
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

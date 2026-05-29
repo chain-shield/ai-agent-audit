@@ -1,0 +1,119 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-52
+Low
+Primary
+S-1086
+Admin Can Prevent Users from Unlisting Their Vestings by Arbitrarily Increasing `penaltyFee`
+y51r
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The setPenaltyFee function in the contract allows the admin to update the penaltyFee value. This fee is charged to users when they attempt to unlist their vestings before the minimum listing duration has elapsed. However, the function does not enforce an upper bound on the penaltyFee, allowing the admin to set it to an excessively high value.
+
+This issue creates a Denial of Service (DoS) scenario for users attempting to unlist their vestings before the minimum listing duration. Specifically:
+
+High Penalty Fee Enforcement: If the admin sets an unreasonably high penaltyFee, users will be unable to meet the requirement to pay the fee, preventing them from unlisting their vestings.
+Exploitation of Control: The admin could intentionally block all unlisting actions, effectively trapping users in their listings.
+Trust and Governance Concerns: Such unchecked power could harm the protocol’s reputation and reduce user trust.
+Proof of Concept
+
+Steps to Reproduce
+
+Deploy the contract and initialize the penaltyFee to a reasonable value (e.g., 1 ether).
+A user lists a vesting plan on the marketplace.
+The admin sets an excessively high penaltyFee using setPenaltyFee (e.g., 10,000,000 ether).
+The user attempts to unlist their vesting before the minimum duration has elapsed.
+The transaction fails with the error: "SS_Marketplace: Penalty fee required for early unlisting".
+Recommended mitigation steps
+
+To address this issue, introduce an upper bound on the penaltyFee parameter in the setPenaltyFee function to prevent excessively high values.
+
+Links to affected code
+SecondSwap_MarketplaceSetting.sol#L206-L210
+Opens in a new window
+SecondSwap_Marketplace.sol#L349-L354
+Opens in a new window
+Submissions touching same files
+SecondSwap_MarketplaceSetting.sol
+SecondSwap_Marketplace.sol
+View full submission
+Duplicates
+8
+S-517
+Admin can mistakenly override token issuer's maxSellPercent and reset buyer/seller fees
+zzebra83
+54
+S-1102
+Admin Can Prevent Users from Unlisting Their Vestings by Increasing `minListingDuration` After Listings Are Created
+y51r
+00
+S-723
+Centralization issue
+aristsalapatas
+00
+S-366
+SecondSwap_VestingDeployer::transferVesting - malicious token owner can steal tokens from other marketplace users
+rspadi
+00
+S-234
+User can face unannounced loss of capital if the admin changes the penalty fee to a very high amount just before the user unlists early
+0xGondar
+00
+S-222
+Lack Of Safeguards For Admin-Controlled Fee Collector Address
+Olami978355
+00
+S-64
+Harmfull Interaction Between penaltyFee and minListingDuration
+vesko210
+00
+S-52
+There is no maximum limit on setPenaltyFee() function in SecondSwap_MarketplaceSetting.sol contract
+AshishLach
+00
+Timeline
+Submitted
+Created: 522d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

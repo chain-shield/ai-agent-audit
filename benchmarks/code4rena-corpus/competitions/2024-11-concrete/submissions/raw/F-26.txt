@@ -1,0 +1,153 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-26
+Low
+Primary
+S-325
+Missing Dust Share Validation in Redeem Allows Dust Share Redemptions
+Prosperity
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The ConcreteMultiStrategyVault contract has inconsistent validation for dust shares in its redeem and withdraw functions. While the withdraw() function properly validates against dust shares with
+
+ (shares <= DUST) revert ZeroAmount()
+
+the redeem() function only checks for zero amounts with
+
+(shares_ == 0) revert ZeroAmount()
+
+This inconsistency allows users to redeem dust shares that should be restricted and incure loss on users as they loss their shares without getting any assets from the vault.
+
+Impact
+Call redeem() directly with any shares > 0 but <= DUST
+Users can burn dust shares by directly calling redeem(), incurring loss for users
+Bypass paying fee on multiple calls when share amount is equivalent amount with the withdrawal fee.
+POC
+function test_withdrawCausingDOSAttacks() public {
+        uint256 userADepositAmount = 1_000_000e6;
+        uint256 userBDepositAmount = 1_000_000e6;
+        
+        (ConcreteMultiStrategyVault newVault, Strategy[] memory initialStrats) = _createNewVault(false);
+
+        // Mint and deposit for all users
+        asset.mint(userA, userADepositAmount);
+        asset.mint(userB, userBDepositAmount);
+
+        vm.startPrank(userA);
+        asset.approve(address(newVault), userADepositAmount);
+        newVault.deposit(userADepositAmount, userA);
+        vm.stopPrank();
+
+        // Other users deposit
+        vm.startPrank(userB);
+        asset.approve(address(newVault), userBDepositAmount);
+        newVault.deposit(userBDepositAmount, userB);
+        vm.stopPrank();
+
+        // User A attempts to withdraw their full amount
+        uint256 userAAssetBalance = asset.balanceOf(userA);
+        assertEq(userAAssetBalance, 0, "User A asset balance before withdraw");
+        assertEq(newVault.balanceOf(userA), 1000000000000000000000, "User A vault balance before withdrawal not correct");
+
+        uint256 dustAmount = 1e8;
+        vm.startPrank(userA);
+        newVault.redeem(dustAmount, userA, userA);
+        vm.stopPrank();
+        // user did not receive any asset
+        assertEq(asset.balanceOf(userA), 0, "User A asset balance after withdraw did not change");
+        // user incure loss as their share balance reduces
+        assertLt(newVault.balanceOf(userA), 1000000000000000000000, "User A vault balance before withdrawal reduced");
+    }
+Recommended mitigation steps
+function redeem(
+    uint256 shares_,
+    address receiver_,
+    address owner_
+) public override nonReentrant whenNotPaused returns (uint256 assets) {
+    if (receiver_ == address(0)) revert InvalidRecipient();
+    // Add dust validation
+    if (shares_ <= DUST) revert ZeroAmount();
+    
+    // Rest of the function...
+}
+Links to affected code
+ConcreteMultiStrategyVault.sol#L351-L365
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L396
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-325.
+0xnev-validator-comment-S-325
+Edited: Feb 22
+0xnev
+
+QA is likely more appropriate, the impacted shares are dust amounts considering all share decimals are scaled by by 9 + underlying asset decimals, so the percentage fees bypassed would be even smaller. It would take a significant amount of mistaken transactions to cause a significant loss.
+
+Duplicates
+4
+S-818
+Missing Dust Check On Redeem
+EPSec
+88
+S-1060
+Lack of dust check in redeem could enable malicious user to gas grief owner with multiple dust withdrawals
+silver_eth
+37
+S-1059
+Lack of dust check in redeem could enable malicious user to gas grief owner with multiple dust withdrawals
+silver_eth
+37
+S-567
+Bypass of the Withdrawal fee when user calls the redeem function
+Bigsam
+29
+Timeline
+Submitted
+Created: 546d ago
+High
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

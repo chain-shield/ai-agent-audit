@@ -1,0 +1,95 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-23
+Low
+Primary
+S-425
+Token price update tx can be arbitrage by MEV
+kutugu
+58
+Sufficient
+383d ago
+Finding description and impact
+
+Each token price update will set it to the latest token price. When the token price fluctuates violently, there may be multiple updated txs in the same period; even if the token price is stable, there may be multiple updated txs due to the presence of multiple updaters.
+When the prices of these txs are inconsistent, it creates an opportunity for MEV arbitrage. The tx sent later can be overwritten by the tx sent earlier. They can choose to execute the tx with the highest token price to save fees.
+Even more extreme, if the updated tx stays in the mempool due to low gasPrice, it may also be arbitraged by the MEV.
+
+Proof of Concept
+
+The general arbitrage process is as follows:
+
+The token price is initially 1000.
+The token price rises to 1200, and the updater initiates an update tx1.
+In less than 10 seconds, the token price drops to 800, and the updater initiates an update tx2.
+The arbitrager picks tx1, cross-chain tx into a bundle to save fees.
+Recommended mitigation steps
+
+Price update functions should add timestamps and only allow the latest price update.
+
+Links to affected code
+FeeQuoter.sol#L459
+Opens in a new window
+FeeQuoter.sol#L468
+Opens in a new window
+Submissions touching same files
+FeeQuoter.sol
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-425.
+Low
+Edited: Feb 22
+LSDan
+
+https://docs.code4rena.com/roles/judges/how-to-judge-a-contest#notes-on-judging
+
+Unlikely to happen
+Edited: Feb 22
+0xA5DF
+
+It's unlikely for an early update to still be queued while a new one is published
+
+Timeline
+Submitted
+Created: 547d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

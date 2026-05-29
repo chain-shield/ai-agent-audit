@@ -1,0 +1,129 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-291
+Low
+Primary
+S-1159
+Strategies claim rewards during harvest even when `rewardsData` is empty
+Maroutis
+37
+Sufficient
+383d ago
+Finding description and impact
+
+In the ConcreteMultiStrategyVault contract, the harvestRewards function iterates over all strategies and calls their harvestRewards method, passing in rewardsData for each. However, except for the MorphoStrategy, other strategies proceed to claim rewards even when rewardsData is empty. This behavior can lead to unintended or premature claiming of rewards, which might not be optimal for maximizing returns. By claiming rewards when not necessary, the overall rewards for users can be reduced, especially if those rewards would have been more beneficial if left to accumulate or reinvested within the strategy.
+
+Impact
+Premature claiming of rewards can lead to suboptimal yield, as rewards might be better left accruing within the strategy.
+Only the MorphoStrategy checks if rewardsData is empty before claiming, leading to inconsistent strategy behaviors.
+Proof of Concept
+
+In the ConcreteMultiStrategyVault contract's harvestRewards function, The function loops over all strategies and calls harvestRewards on each one. rewardsData may be empty ("") if no specific data is provided for a strategy.
+
+The MorphoStrategy checks if data.length != 0 before attempting to claim rewards.
+
+function _getRewardsToStrategy(bytes memory data) internal override {
+    if (data.length != 0) {
+        MorphoV1Helper.claimRewardsAndSend(address(0), data, 1, false);
+    }
+}
+
+The AaveV3Strategy for example does not check if rewardsData is empty; it proceeds to claim rewards regardless :
+
+function _getRewardsToStrategy(bytes memory) internal override {
+    if (address(aaveIncentives) == address(0)) return;
+
+    address;
+    _assets[0] = address(aToken);
+
+    try aaveIncentives.claimAllRewards(_assets, address(this)) {} catch {}
+}
+Recommended mitigation steps
+
+Consider modifying the _getRewardsToStrategy function in each strategy to check if rewardsData is not empty before claiming rewards.
+
+Links to affected code
+AaveV3Strategy.sol#L116-L123
+Opens in a new window
+RadiantV2Strategy.sol#L129-L136
+Opens in a new window
+SiloV1Strategy.sol#L177-L186
+Opens in a new window
+CompoundV3Strategy.sol#L101-L103
+Opens in a new window
+Submissions touching same files
+AaveV3Strategy.sol
+RadiantV2Strategy.sol
+SiloV1Strategy.sol
+CompoundV3Strategy.sol
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-1159.
+Design issue due to missing check in strategy reward claiming
+Edited: Feb 22
+Maroutis
+OP
+
+I still believe that there is a design issue in the rewards harvesting. By forcing every strategy to claim rewards, whenever the harvestRewards is called and even with no extra data, small amounts are collected too frequently.
+
+In some protocols, unclaimed rewards can keep compounding and earn more over time, so claiming them early could reduce overall returns.
+
+The fact that the owner can control when the Morpho strategy can claim the rewards but not for the other strategies, shows some inconsistency between the implementations.
+
+This will ultimately lead to suboptimal yields generation for users.
+
+Picodes
+01/17/2025
+
+@Maroutis thanks for your comment. The functionality is behaving as intended, although your comment is right. However, the fact that it costs too much gas and is suboptimal doesn't constitute a valid medium finding. I've downgraded to Low as this is a valid design suggestion
+
+0xnev-validator-comment-S-1159
+Edited: Feb 22
+0xnev
+
+This data is not required as an input parameter for all the other strategies when harvesting rewards, so likely no issues here
+
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

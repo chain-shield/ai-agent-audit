@@ -1,373 +1,387 @@
-# Proposal: AI Agent Audit Performance Deep Dive
+# AI Agent Audit Performance Deep Dive Plan
 
-## Executive Summary
+## Purpose
 
-This proposal lays out a focused deep dive into AI Agent Audit with one goal: identify the smallest set of code and prompt changes that can materially improve the app's ability to discover unique valid High and Medium Solidity/EVM findings.
+This plan turns the performance deep dive into an audit-style research program for AI Agent Audit. The goal is not runtime speed. Performance means the app's ability to discover, deduplicate, validate, prove, and report unique valid High/Medium Solidity/EVM findings.
 
-For this work, "performance" does not mean runtime speed. It means audit performance:
+The north star is simple:
 
-- More unique High/Medium true positives in complex Solidity protocols.
-- Better root-cause deduplication, triage, and validation.
-- Fewer false positives that survive to the final report.
-- Fewer true positives lost during deduplication or verification.
+- Maximize unique accepted H/M true positives in complex protocols.
+- Minimize false positives that survive to report-ready or judge-sim accepted output.
+- Preserve true positives through Rust discovery, Rust verification, global dedup, three-shot validation, PoC generation, report review, and judge simulation.
+- Favor small code, prompt, config, schema, and orchestration changes over broad rewrites.
 
-The research posture should be ruthless: ignore algorithm ideas that are merely interesting. A change is worth pursuing only if it can plausibly move accepted unique H/M output, precision, or validation quality by a large amount while keeping the refactor small.
+A proposed change is worth pursuing only if controlled benchmark evidence shows that it materially improves unique H/M recall, precision, dedup quality, validation quality, PoC/report readiness, or stage survival.
 
-## Why This Matters
+## Benchmark Definition
 
-The current strategic benchmark is Code4rena-grade performance. Code4rena is useful because it gives external judging, unique finding grouping, High/Medium severity decisions, and public reports. Code4rena also defines "signal" as an accuracy metric: valid High/Medium findings divided by High/Medium submissions. That maps well to this app's core product question: can AI Agent Audit generate more valid H/M findings without flooding judges, clients, or the founder with junk?
+The benchmark endpoint is the full product flow:
 
-The repo already contains useful seed assets:
+1. Code4rena contest repository and scope/docs ingestion.
+2. Rust discovery and verification.
+3. Rust global dedup and report export.
+4. GUI-supervised three-shot validation.
+5. R5/R6 PoC creation and verification.
+6. R7/R8 finding report creation and review.
+7. R9 judge simulation.
+8. Corpus-backed scoring against archived Code4rena accepted and rejected primary findings.
 
-- `C4_APPROVED_FINDINGS.md`
-- `C4_REJECTED_FINDINGS_KEY.md`
-- `C4_LOW_QA_INVALID_FINDINGS.md`
-- `c4_snaps/`
-- Historical run outputs for `2025-11-megapot`, `2025-12-panoptic`, `2026-01-olas`, `2026-03-intuition`, and `2026-04-monetrix`
+Rust report generation alone is not the endpoint. A finding is only fully successful when it survives to a report-ready or judge-accepted three-shot artifact and maps to a unique accepted C4 H/M root.
 
-These make it possible to build a local benchmark loop before running expensive new audits.
+## Source Of Truth
 
-## Current Algorithm To Understand
+The local Code4rena corpus is the primary ground truth:
 
-The first workstream is a deep map of how the app works today, not just at module level but at "where can a valid finding be created or killed?" level.
+```text
+benchmarks/code4rena-corpus/competitions/<slug>/
+  final_findings.json
+  final_report.html
+  accepted_findings.md
+  rejected_primaries.md
+  ground_truth/
+    accepted/*.md
+    rejected/*.md
+  submissions/
+    primaries.jsonl
+    rejected_primaries.jsonl
+```
 
-Current pipeline, as implemented:
+Accepted H/M roots come from `final_findings.json` and `ground_truth/accepted/*.md`. False-positive references come from `submissions/rejected_primaries.jsonl` and `ground_truth/rejected/*.md`, including invalid, low/QA, duplicate, and otherwise non-accepted primaries.
 
-1. Repository preparation: clone, build, scope/docs generation, config normalization.
-2. Static analysis: Slither-derived call graph, function metadata, IR, storage/function summaries.
-3. Codeblock generation: per-contract slices using call graph BFS, inheritance, imports, token budget, and fallback traversal.
-4. Metadata context: protocol-level docs/scope context.
-5. Per-contract multimodal context: actor discovery plus invariant discovery.
-6. Pattern discovery: direct finding generation from selected pattern categories, currently focused through `R1` and `R2` pattern libraries with actor and invariant variants.
-7. Local per-contract deduplication.
-8. Verification: universal invalidity checks over bug existence, safeguards, scope, by-design behavior, exploitability, user error, privileged actor assumptions, and future speculation.
-9. Downgrade validation: second pass that challenges invalid/low labels.
-10. Global deduplication and report generation.
+Each benchmark run should write scorecards next to the run artifacts:
 
-Key files to study:
+```text
+benchmarks/code4rena-<slug>/runs/<project-id>/<run-id>/
+  run_manifest.json
+  raw_candidates.jsonl
+  dedup_clusters.jsonl
+  verification_decisions.jsonl
+  finding_lifecycle.jsonl
+  final_candidates.jsonl
+  benchmark_score.json
+  benchmark_score.md
+```
 
-- `src/main.rs`
-- `src/prepare_code/git_clone.rs`
-- `src/prepare_code/audit_context.rs`
-- `src/build_brain/enrichment.rs`
-- `src/enumerator/codeblocks.rs`
-- `src/llm_review/analysis/code_review_v2.rs`
-- `src/llm_review/analysis/pre_audit_analysis.rs`
-- `src/llm_review/pattern_phases/generate_direct_findings.rs`
-- `src/llm_review/phases/verify_rounds.rs`
-- `src/llm_review/findings/findings.rs`
-- `src/llm_review/threat_models/pattern_category.rs`
+Cross-run comparisons should be written under:
 
-The deep dive should produce a "finding lifecycle" diagram showing every gate where a true bug can be missed, hallucinated, duplicated, downgraded, or discarded.
+```text
+benchmarks/code4rena-<slug>/comparisons/<comparison-id>/
+  benchmark_compare.json
+  benchmark_compare.md
+```
 
-## Research Questions
+## Scoring Tool
 
-The deep dive should answer these questions with evidence:
+Use the corpus-aware scorer:
 
-1. Context quality: For each accepted C4 finding, did the relevant contract/codeblock contain enough source, neighboring functions, docs, and cross-contract context for an LLM to find it?
-2. Hypothesis generation: If the context was present, did discovery fail because the prompt did not ask the right question, the pattern category was missing, the run count was too low, or the model did not explore deeply enough?
-3. Actor/invariant value: Do actor and invariant prompts increase unique valid H/M discovery, or do they mostly add noisy candidates?
-4. Dedup behavior: Does dedup correctly merge duplicate reports by root cause without merging distinct H/M issues in the same contract/function?
-5. Verification behavior: Which true positives are killed by safeguards, scope, governance-risk, unsupported-token, user-error, speculation, or insufficient-impact logic?
-6. Severity behavior: Are true H/M issues downgraded to Low/QA because the verifier lacks contest-specific impact reasoning?
-7. Benchmark leakage: Can we separate retrospective C4 benchmark runs from live, no-leakage evaluations?
-8. Small-change leverage: Which improvements can be made as config, prompt, scoring, telemetry, or shallow orchestration changes rather than a rewrite?
+```bash
+python3 scripts/score_code4rena_benchmark.py score \
+  --slug 2025-11-megapot \
+  --run-dir benchmarks/code4rena-2025-11-megapot/runs/2025-11-megapot-538649/megapot-clean-r1r2-10-inv3-actor2-001 \
+  --three-shot-run-id run-001 \
+  --prompt-version v2
+```
 
-## Benchmark Plan
+Compare runs:
 
-### Tier 0: Local Olas Replay
+```bash
+python3 scripts/score_code4rena_benchmark.py compare \
+  --score benchmarks/code4rena-2025-11-megapot/runs/<project-id>/<baseline-run>/benchmark_score.json \
+  --score benchmarks/code4rena-2025-11-megapot/runs/<project-id>/<experiment-run>/benchmark_score.json \
+  --out-dir benchmarks/code4rena-2025-11-megapot/comparisons/<comparison-id>
+```
 
-Use `2026-01-olas` as the first benchmark because the repo already has approved findings, rejected mappings, snapshots, and prior app output.
+The scorer performs deterministic local matching. It does not call an LLM. It uses weighted title/body/source-evidence similarity to match app candidates to accepted roots and rejected primaries. Ambiguous or low-confidence matches should be reviewed manually before making product claims.
 
-Tasks:
+## Primary Metrics
 
-- Create a canonical accepted root-cause set from `C4_APPROVED_FINDINGS.md`.
-- Create a representative rejected/invalid set from `C4_REJECTED_FINDINGS_KEY.md`.
-- Parse the app's generated reports into normalized candidate findings.
-- Match candidates to accepted roots by contract, function, title, impact, and description similarity, with manual adjudication for ambiguous cases.
-- Label every missed approved finding by failure stage: context missing, discovery miss, dedup over-merge, verification false reject, severity downgrade, report omission.
+Core output metrics:
 
-### Tier 1: Historical Local Runs
+- Accepted H/M total: number of unique accepted C4 H/M roots in the benchmark.
+- Rust final accepted-root recall: accepted roots found in `final_candidates.jsonl`.
+- Report-ready accepted-root recall: accepted roots that reach R8-ready report output.
+- Judge-accepted end-to-end recall: accepted roots that reach R9 accepted output.
+- Final-stage precision: unique accepted roots represented in final-stage candidates divided by final-stage candidates.
+- Judge-stage precision: unique accepted roots represented in R9 candidates divided by R9 candidates.
+- Final-stage false positives: report-ready or judge-stage candidates that do not match accepted roots.
+- Matched rejected-primary FPs: final-stage candidates that match rejected/low/duplicate/invalid C4 primaries.
+- Unadjudicated final-stage candidates: final-stage candidates that match neither accepted nor rejected corpus references above threshold.
 
-Extend the harness to existing local outputs:
+Stage survival metrics:
 
-- `2025-11-megapot`
-- `2025-12-panoptic`
-- `2026-03-intuition`
-- `2026-04-monetrix`
-
-Use these to check whether improvements generalize beyond Olas.
-
-### Tier 2: Public Code4rena Reports
-
-Select 3 to 5 finalized public C4 contests with:
-
-- Complex Solidity/EVM codebases.
-- Published H/M findings.
-- Available audit repos and scopes.
-- Enough findings to avoid noisy single-bug benchmarks.
-
-Run retrospective audits only after public results are finalized. Tag any known AI/V12 findings as known issues so the metric does not confuse "found by app" with "award eligible in live contest."
-
-### Tier 3: Live No-Leakage Evaluation
-
-After Tier 0-2 improvements are selected, run one live or freshly finalized contest under no-leakage rules:
-
-- Freeze prompts/config before results are known.
-- Do not ingest public report data.
-- Log all candidates and validation outcomes.
-- Compare after final judging.
-
-## Metrics
-
-Primary metrics:
-
-- Unique H/M true positives: count of accepted unique High/Medium root causes matched by the app.
-- H/M recall: accepted H/M roots found divided by accepted H/M roots in benchmark.
-- H/M precision: valid H/M candidates divided by all final H/M candidates.
-- False positive survival rate: invalid/low/QA candidates that survive validation as H/M.
-- False negative stage attribution: where accepted findings were lost.
+- Discovery recall.
+- Rust dedup-kept recall.
+- Rust post-verification recall.
+- Rust final recall.
+- Three-shot R3 recall.
+- Three-shot submission-candidate recall.
+- PoC-created recall.
+- PoC-verified recall.
+- Report-created recall.
+- Report-ready recall.
+- Judge-accepted recall.
 
 Dedup metrics:
 
-- Cluster purity: all findings in a dedup cluster share the same root cause.
-- Over-merge rate: distinct accepted roots incorrectly collapsed.
-- Under-merge rate: duplicate reports kept as separate findings.
-- Root-cause stability: same issue receives stable canonical ID across runs.
+- Under-merge groups: multiple final-stage candidates map to the same accepted root.
+- Over-merge suspects: accepted roots present in raw discovery but absent after dedup/finalization.
+- Cluster purity review: dedup clusters should group one root cause, not merely one contract/function neighborhood.
 
-Validation metrics:
+Loss-stage labels:
 
-- False reject rate: accepted H/M killed or downgraded by verification.
-- False accept rate: rejected/invalid findings retained as reportable H/M.
-- Status alignment: verifier status matches judge-style invalid basis.
-- Judge-readiness: report contains location, exploit path, impact, and sufficient proof.
+- `context_or_discovery_miss`
+- `dedup_or_rust_verification_loss`
+- `rust_verification_loss`
+- `rust_final_report_omission`
+- `three_shot_validation_loss`
+- `three_shot_canonicalization_or_v12_loss`
+- `poc_creation_loss`
+- `poc_verification_loss`
+- `report_creation_loss`
+- `report_review_loss`
+- `judge_simulation_reject_or_missing`
+- `survived_end_to_end`
 
-Suggested north-star metric:
+## Phase 1: Algorithm Trace
+
+Status: complete.
+
+Deliverables:
+
+- Map the pipeline from repo prep through final report production.
+- Identify every gate where a real finding can be created, merged, downgraded, discarded, or fail to become a professional report.
+- Document the Rust and three-shot stages as one product pipeline.
+
+Key files:
+
+- `src/prepare_code/git_clone.rs`
+- `src/prepare_code/audit_context.rs`
+- `src/enumerator/codeblocks.rs`
+- `src/llm_review/analysis/code_review_v2.rs`
+- `src/llm_review/findings/findings.rs`
+- `src/llm_review/phases/verify_rounds.rs`
+- `src/reporting/three_shot_config.rs`
+- `src/reporting/validation_supervision.rs`
+- `scripts/three_shot_round.py`
+
+## Phase 2: Instrumentation And Scoring Harness
+
+Status: in progress.
+
+Implemented:
+
+- Rust benchmark telemetry for run config, codeblocks, raw candidates, dedup clusters, verification decisions, lifecycle records, and final candidates.
+- Code4rena context auto-generation from contest repositories.
+- Three-shot job emission and R1-R9 artifact capture.
+- Corpus-aware benchmark scorer in `scripts/score_code4rena_benchmark.py`.
+- Per-run `benchmark_score.json` and `benchmark_score.md`.
+- Cross-run `benchmark_compare.json` and `benchmark_compare.md`.
+
+Remaining hardening:
+
+- Tune deterministic matching thresholds across several contests.
+- Add optional manual adjudication overrides for ambiguous matches.
+- Add confidence labels to scorecards.
+- Add CI smoke tests for scorer parsing and scorecard rendering.
+
+Exit criteria:
+
+- Every benchmark run can be scored from archived artifacts without hand-built truth tables.
+- The scorecard identifies accepted roots found/missed, final-stage FPs, rejected-primary matches, and failure-stage counts.
+
+## Phase 3: Megapot Baseline
+
+Use `2025-11-megapot` as the first clean small benchmark because it has a compact Solidity scope and complete Code4rena corpus artifacts.
+
+Current clean-run config:
 
 ```text
-validated_unique_hm_score =
-  unique_HM_true_positives
-  * precision_weight
-  * dedup_quality_weight
+R1_RUNS = 10
+R2_RUNS = 10
+INVARIANT_RUNS = 3
+ACTOR_RUNS = 2
+benchmark run id = megapot-clean-r1r2-10-inv3-actor2-001
+three-shot run id = run-001
 ```
 
-This avoids optimizing for raw candidate volume. The app should not get credit for finding 20 variants of the same root cause or for keeping many speculative H/M candidates alive.
+Current scorecard:
 
-## Low-Refactor Research Tracks
+```text
+benchmarks/code4rena-2025-11-megapot/runs/2025-11-megapot-538649/megapot-clean-r1r2-10-inv3-actor2-001/benchmark_score.md
+```
 
-### Track A: Instrument First
+Initial baseline signal:
 
-Add structured run artifacts before changing algorithms:
+- 11 accepted H/M C4 roots in ground truth.
+- 8 accepted roots survived to judge-accepted output.
+- 5 final-stage candidates were not matched to accepted roots.
+- 4 final-stage candidates matched rejected/duplicate/low C4 primary references.
+- Main losses: two discovery/context misses and one three-shot canonicalization/V12-stage loss.
 
-- Candidate finding JSON after discovery.
-- Dedup clusters and pairwise duplicate decisions.
-- Verification inputs, statuses, and final retain/drop decision.
-- Codeblock manifest per contract: included contracts, depth, token count, source files.
-- Per-finding lifecycle record from raw candidate to final report.
+This baseline should be treated as a working scorer output, not a public claim, until threshold tuning and manual adjudication are complete.
 
-Expected leverage: high. Without this, every improvement is guesswork.
+## Phase 4: Failure Analysis
 
-Refactor size: small. Mostly additive logging/serialization around existing data structures.
+Status: in progress.
 
-### Track B: Context Recall Audit
+Implemented:
 
-For each accepted C4 finding, answer: "Could the current codeblock have found this?"
+- `scripts/score_code4rena_benchmark.py analyze` writes per-run `failure_analysis.json` and `failure_analysis.md`.
+- Accepted-root analysis records context coverage, raw discovery presence, Rust dedup/verification/export survival, three-shot survival, PoC/report/judge survival, loss stage, and next analysis focus.
+- Final-stage FP analysis records rejected-primary matches, rejection category, expected removal gate, and whether the issue looks like a duplicate variant, severity overstatement, true FP, or unadjudicated candidate.
 
-Minimal implementation:
+For each accepted root:
 
-- Build a small script/harness that maps approved findings to contract/function/file names.
-- Check whether the relevant files/functions appear in generated codeblocks.
-- Classify misses as scope extraction, Slither graph, BFS depth, import fallback, inheritance/interface, token budget, docs/scope, or category selection problems.
+1. Determine whether relevant scoped files and docs were present in generated context.
+2. Determine whether a matching raw candidate appeared.
+3. Determine whether the root survived per-contract dedup.
+4. Determine whether Rust verification retained or downgraded it.
+5. Determine whether global dedup/report export retained it.
+6. Determine whether R1/R2/R3 three-shot validation retained it.
+7. Determine whether R4/R4a canonicalization/V12 sweep retained it.
+8. Determine whether R5/R6 produced and verified a PoC.
+9. Determine whether R7/R8 produced a ready report.
+10. Determine whether R9 judge simulation accepted it.
 
-Expected leverage: very high if many misses are context failures. No prompt can recover a bug whose critical code path is absent.
+For each final-stage FP:
 
-Refactor size: small to medium. Likely config and codeblock assembly improvements, not pipeline rewrite.
+1. Match against rejected primaries where possible.
+2. Record rejection category: invalid, low/QA, duplicate, out-of-scope, insufficient, trusted-role, known issue, or unadjudicated.
+3. Identify the stage that should have removed or merged it.
+4. Identify whether the issue is a true FP, duplicate variant, severity overstatement, or potentially novel.
 
-### Track C: Failure-Stage Replay
+Megapot baseline Phase 4 output:
 
-Replay accepted findings through the pipeline as "known candidates" to test downstream gates:
+```text
+benchmarks/code4rena-2025-11-megapot/runs/2025-11-megapot-538649/megapot-clean-r1r2-10-inv3-actor2-001/failure_analysis.md
+```
 
-- Feed approved findings directly into dedup.
-- Feed approved findings directly into verification.
-- Compare which accepted findings are killed and why.
+Initial bottleneck read:
 
-Expected leverage: high. This isolates validation false negatives from discovery misses.
+- Two accepted roots had all referenced source files in context but no raw matching candidate, which points to discovery gaps rather than scope extraction gaps.
+- One accepted root survived Rust final export but did not survive three-shot canonicalization/V12 retention.
+- Four final-stage FPs currently map to rejected duplicate primaries, which points to dedup/canonicalization quality as a high-leverage improvement area.
 
-Refactor size: small. Add a benchmark-only harness, not production logic.
+## Whitepaper Evidence Preservation
 
-### Track D: Dedup Upgrade Without Rewriting Discovery
+Every benchmark used for future public claims must have a local evidence pack.
+Evidence packs are not summaries; they preserve the underlying data needed to
+recalculate and audit the claim.
 
-Current dedup mostly buckets by `contract-function` and uses title/description similarity plus LLM pairwise checks. That can miss cross-function duplicates and can over-collapse distinct bugs in the same function.
+Implemented:
 
-Research options:
+- `scripts/score_code4rena_benchmark.py archive-evidence` copies benchmark telemetry, scorecards, failure analysis, Code4rena ground truth, generated audit context, three-shot artifacts, and comparison outputs into `benchmarks/whitepaper-data/<slug>/<run-id>/`.
+- `evidence_manifest.json` and `evidence_manifest.md` record source paths, archive paths, byte sizes, artifact categories, and SHA-256 hashes.
 
-- Add canonical root-cause fingerprints: affected state, violated invariant, attacker action, profit/loss path.
-- Dedup by semantic root cause before title similarity.
-- Preserve alternates as evidence under one canonical finding instead of dropping them entirely.
-- Keep "possible distinct root cause" clusters when confidence is low.
+Megapot baseline evidence pack:
 
-Expected leverage: medium to high. Better dedup improves signal and prevents valid variants from being thrown away.
+```text
+benchmarks/whitepaper-data/2025-11-megapot/megapot-clean-r1r2-10-inv3-actor2-001/evidence_manifest.md
+```
 
-Refactor size: small to medium. Mostly schema and prompt changes around dedup.
+Whitepaper rules:
 
-### Track E: Verification False-Reject Reduction
+- Do not cite any benchmark number unless its scorecard, failure analysis, corpus ground truth, and validation artifacts are present in an evidence pack.
+- Low-confidence matches and unadjudicated candidates must be manually reviewed before they become external claims.
+- Preserve before/after evidence packs for every experiment, not only the winning run.
 
-The verifier is intentionally strict. The key question is whether it is too strict against valid H/M findings.
+## Phase 5: High-Leverage Experiment Tracks
 
-Research options:
+Only run experiments that target measured bottlenecks.
 
-- Split verification into "hard invalid" and "needs evidence" instead of binary drop.
-- Add contest-specific exception handling for issues commonly misclassified as governance, user error, unsupported-token, or speculation.
-- Make verifier cite exact code/docs evidence for each invalidating claim.
-- Add a final "appeal" pass only for findings that match high-value exploit shapes but were downgraded.
+Track A: Context Recall
 
-Expected leverage: very high if accepted C4 findings are currently killed during verification.
+- Check accepted roots against codeblock manifests.
+- Fix scope/docs extraction, imported dependency inclusion, call graph depth, inheritance/interface expansion, or token-budget behavior only where accepted roots lacked context.
 
-Refactor size: small. Mostly prompt/schema/status changes and retention policy.
+Track B: Discovery Coverage
 
-### Track F: Pattern Coverage And Scheduling
+- Map missed accepted roots to pattern families.
+- Add or reschedule pattern categories only when a missing family has benchmark support.
+- Avoid increasing run counts unless unique TP per candidate improves.
 
-Current discovery focuses on combined `R1` and `R2` categories, with actors and invariants as context. The full pattern library is larger than what is actively scheduled.
+Track C: Dedup
 
-Research options:
+- Add root-cause fingerprints: violated invariant, affected state, attacker action, loss path, contract/function path.
+- Preserve evidence variants under a canonical finding instead of losing them.
+- Treat low-confidence same-area findings as separate until validation, not automatic drops.
 
-- Measure which accepted findings map to active vs inactive pattern categories.
-- Add a lightweight protocol classifier to select niche category prompts per contract.
-- Use accepted-miss analysis to update pattern category mappings.
-- Avoid increasing raw run count unless it improves unique TP per candidate.
+Track D: Rust Verification
 
-Expected leverage: high if accepted findings map to omitted categories.
+- Split hard-invalid labels from evidence-needed labels.
+- Track accepted roots killed by governance-risk, user-error, unsupported-token, scope, safeguards, speculation, and severity gates.
+- Add appeal or retention behavior only for benchmark-proven false rejects.
 
-Refactor size: small. Mostly config/category scheduling changes.
+Track E: Three-Shot Validation
 
-### Track G: Reportability And PoC Readiness
+- Reduce false rejects in R1-R4a without letting rejected primaries survive.
+- Treat PoC/report gaps as repairable when the bug is otherwise valid.
+- Tighten R9 acceptance when C4 rejected-primary analogs exist.
 
-Code4rena expects H/M submissions to have strong proof, and Solidity/EVM contests often require runnable PoCs unless an exception applies. Discovery quality should be measured partly by whether the finding can become a judge-ready report.
+Track F: Reportability
 
-Research options:
+- Score reports for source location, exploit path, impact, proof, and mitigation.
+- Distinguish technically valid findings from submission-ready/client-ready findings.
 
-- Add "proof gap" tags during validation.
-- Separate "valid-looking issue" from "submission-ready H/M."
-- For high-value candidates, require a concrete exploit path and minimal test strategy before final H/M retention.
+## Phase 6: Cross-Benchmark Validation
 
-Expected leverage: medium. This may not find more bugs, but should improve signal and reduce rejected submissions.
+After one Megapot-improving patch is proposed, validate across at least three additional contests selected from the archived corpus.
 
-Refactor size: small to medium.
+Recommended benchmark mix:
 
-## Proposed Phases
+- One small EVM contest with 5-15 accepted H/M roots.
+- One medium DeFi contest with 15-30 accepted H/M roots.
+- One large contest where dedup pressure is high.
+- One contest with many rejected primaries to stress FP filtering.
 
-### Phase 1: Algorithm Trace And Benchmark Design
+Run the same scoring command for every run and compare:
 
-Duration: 2 to 3 days.
+- Baseline vs experiment.
+- Recall delta.
+- Precision delta.
+- Matched rejected-primary FP delta.
+- Dedup under-merge delta.
+- Loss-stage movement.
 
-Deliverables:
+Keep only changes that improve at least one primary metric without materially harming precision or report readiness.
 
-- Finding lifecycle diagram.
-- Module-level algorithm notes.
-- Benchmark schema for accepted, rejected, candidate, match, and lifecycle records.
-- Initial Olas benchmark manifest.
+## Phase 7: Live Or Fresh No-Leakage Evaluation
 
-Exit criteria:
+For a live or freshly finalized contest:
 
-- We can explain how a finding moves through the app.
-- We know where to instrument without large refactors.
+- Freeze prompts, config, and scorer thresholds before results are known.
+- Do not ingest final report, submissions, V12 findings, or public discussion until after the run is complete.
+- Preserve run manifests, context docs, Rust telemetry, three-shot prompts, worker outputs, PoCs, reports, reviews, judge simulations, and scorecards.
+- After public judging, import ground truth and score once.
 
-### Phase 2: Instrumentation And Olas Baseline
+This is the only evidence suitable for strong external claims.
 
-Duration: 3 to 5 days.
+## Guardrails
 
-Deliverables:
+Do not:
 
-- Structured JSON artifacts for discovery, dedup, verification, and final findings.
-- Olas baseline report with TP, FP, FN, dedup, and validation metrics.
-- Failure-stage attribution for every approved Olas H/M finding.
+- Optimize raw candidate count.
+- Treat retrospective public findings as live performance.
+- Count duplicate variants as multiple wins.
+- Count Rust-only findings as product-complete.
+- Treat judge simulation as a replacement for C4 ground truth.
+- Land broad rewrites without per-stage benchmark evidence.
+- Add expensive LLM rounds unless unique TP per final candidate improves.
 
-Exit criteria:
+## Definition Of 10x
 
-- We know whether the largest performance loss is context, discovery, dedup, validation, or severity/reportability.
+Use two definitions:
 
-### Phase 3: High-Leverage Experiments
+1. Absolute output: roughly 10x more accepted unique H/M roots per complex protocol at comparable review effort.
+2. Signal-adjusted output: a large increase in unique accepted H/M roots while preserving or improving final precision, rejected-primary filtering, dedup quality, PoC readiness, and report readiness.
 
-Duration: 1 to 2 weeks.
-
-Run only experiments that target the top failure stages from Phase 2.
-
-Likely experiments:
-
-- Codeblock inclusion fixes if accepted bugs lack context.
-- Pattern scheduling changes if accepted bugs map to missing categories.
-- Verification retention changes if accepted bugs are falsely killed.
-- Dedup root-cause fingerprinting if distinct issues are merged or duplicates survive.
-
-Exit criteria:
-
-- Each experiment has before/after metrics on Olas and at least one additional historical benchmark.
-- Keep only changes that materially improve unique H/M TP, precision, or false-reject rate.
-
-### Phase 4: Cross-Benchmark Validation
-
-Duration: 3 to 5 days.
-
-Deliverables:
-
-- Results across 3 to 5 benchmarks.
-- Recommended production patch set.
-- "Do not pursue" list of ideas that did not move the needle.
-
-Exit criteria:
-
-- Improvements are not Olas-specific.
-- Refactor scope is still small enough to land safely.
-
-### Phase 5: Live Or Fresh Contest Evaluation
-
-Duration: one contest cycle or one freshly finalized contest.
-
-Deliverables:
-
-- No-leakage run config and logs.
-- Post-judging comparison.
-- Updated performance scorecard.
-
-Exit criteria:
-
-- Evidence that improvements transfer to a realistic contest workflow.
-
-## Definition Of A 10x Improvement
-
-Because benchmark baselines may vary by protocol, use two definitions:
-
-1. Absolute output: roughly 10x more accepted unique H/M findings per complex protocol at comparable human review time.
-2. Signal-adjusted output: a large increase in unique H/M true positives while preserving or improving H/M precision and dedup quality.
-
-A change that creates many more candidates but lowers precision is not a 10x improvement. A change that finds one extra valid Medium while doubling false positives is probably not worth it. A change that recovers several accepted H/M findings by fixing one pipeline failure mode is exactly the kind of change this project should hunt.
-
-## What Not To Do
-
-Avoid:
-
-- A broad rewrite of the whole audit pipeline.
-- Adding many more LLM rounds without proof of unique TP gain.
-- Optimizing for raw finding count.
-- Prompt churn without benchmark artifacts.
-- Treating all public C4 findings as equal without grouping by root cause and eligibility.
-- Letting retrospective benchmark leakage contaminate live evaluation.
+A change that finds more candidates but lowers final precision is not a 10x improvement. A change that finds valid bugs but cannot produce ready reports is incomplete. A change that recovers several accepted roots by fixing one measured failure stage is the kind of change this project should prioritize.
 
 ## Final Deliverables
 
-The deep dive should end with:
-
-- A concise technical writeup of how the algorithm works.
-- A benchmark harness and reproducible baseline.
-- A ranked list of top performance bottlenecks.
-- A small proposed patch set with expected impact.
-- Before/after metrics across local C4-style benchmarks.
-- A list of rejected research ideas and why they did not move the needle.
-- A recommendation for the next live Code4rena evaluation.
-
-## References
-
-- [Code4rena submission guidelines](https://docs.code4rena.com/competitions/submission-guidelines)
-- [Code4rena signal metrics](https://docs.code4rena.com/roles/signal)
-- [Code4rena awarding model](https://docs.code4rena.com/awarding)
-- [Code4rena bounty severity criteria](https://docs.code4rena.com/bounties/bounty-criteria)
+- Reproducible scorecards for every benchmark run.
+- Cross-run comparison reports for each experiment.
+- A ranked bottleneck list by failure stage.
+- A short recommended patch set with expected metric impact.
+- A rejected-ideas list with measured reasons.
+- A no-leakage evaluation plan for the next live or fresh contest.

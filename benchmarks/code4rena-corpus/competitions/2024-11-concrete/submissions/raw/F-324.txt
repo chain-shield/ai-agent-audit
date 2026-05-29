@@ -1,0 +1,154 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-324
+Low
+Primary
+S-165
+Retiring Aave strategy will lead to stuck rewards in the Aave strategy contract
+0xrex
+69
+Sufficient
+383d ago
+Finding description and impact
+
+During retirement of the Aave strategy, the protocol calls the aave incentive controller to claim accrued rewards on behalf of the Aave strategy contract.
+
+However, since these rewards are indeed claimed and sent to the Aave strategy contract and not sent to the concrete multi strategy vault it is linked to, the rewards will remain in the Aave strategy contract.
+
+In this case too, the feeRecipient of the Aave strategy contract will not receive its percentage share of the claimed rewards as well as users not receiving rewards earned from the strategy.
+
+Proof of Concept
+function _handleRewardsOnWithdraw() internal override {
+        _getRewardsToStrategy("");
+    }
+
+function retireStrategy() external onlyOwner {
+@>        _handleRewardsOnWithdraw();
+        _protocolWithdraw(aToken.balanceOf(address(this)), 0);
+    }
+
+    function _getRewardsToStrategy(bytes memory) internal override {
+        if (address(aaveIncentives) == address(0)) return;
+
+        address[] memory _assets = new address[](1);
+        _assets[0] = address(aToken);
+
+        //slither-disable-next-line unused-return
+  @>      try aaveIncentives.claimAllRewards(_assets, address(this)) {} catch {}
+    }
+Recommended mitigation steps
+
+During retirement of the Aave strategy, make the transfer of the received reward tokens to the vault the strategy is tied to, update the rewardIndex of the vault too so users can claim the rewards. Also, minus the percentage of the protocol to send to the feeRecipient.
+
+Links to affected code
+AaveV3Strategy.sol#L111-L125
+Opens in a new window
+Submissions touching same files
+AaveV3Strategy.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-165.
+S-165 seeking re-evaluation
+Edited: Feb 22
+0xrex
+OP
+
+hi judge, this issue is not a dupe of S-503. this issue talks about the reward tokens earned from third-party vaults being stuck during retirement of a strategy tied to that third-party vault. this submission can be considered a variation of F-7 but I think we need to split the issues into 2 parts because:
+
+F-7 and its duplicates talk about just the asset of the vault e.g weth being stuck during strategy retirements. thus, the protocol fixing that as suggested by F-7 and its duplicates will not render a fix to my submission which is S-165 because the fix for F-7 is this:
+function retireStrategy() external onlyOwner {
+    // ...
+
++   IERC20(asset()).safeTransfer(_vault, IERC20(asset()).balanceOf(address(this)));
+}
+
+and as we can see from the above snippet, the issue that S-165 explores still exists even after rendering a fix to F-7 because just the asset was transferred to the vault, not the reward tokens. hopefully, you get some time to re-evaluate this. thanks.
+
+0xrex
+OP
+01/09/2025
+
+to add to this comment, i believe this should be a separate issue on its own and submissions: 903,904,905 should be considered duplicates of it because this issue and the duplicates I mentioned above point out the reward token being locked, not the base asset which finding 7 and its duplicate sets point at.
+
+also, I have issues duplicated to F-7 which point out the base asset being locked. these issues are two separate issues which is why I logged them differently as fixing one does not in any way fix the other.
+
+thanks for your time!
+
+a_kalout
+Deleted: 01/26/2025
+This comment was deleted.
+a_kalout
+Edited: 01/26/2025
+
+this and all its duplicates should be duped with S-665 (or maybe invalid, not sure), the admin should retire a strategy -> harvest rewards -> remove strategy, i.e. no rewards are lost
+
+0xrex
+OP
+01/26/2025
+
+you raise a fine point the admin should retire a strategy -> harvest rewards. considering the harvestRewards function will be fixed anyway, this can indeed be be synchronized (didn't think of this initially) with the retire strategy and harvest reward calls so users withdrawing don't lose out and the rewards don't remain stuck. but that is entirely up to the assumption that both calls will be synchronized.
+
+this submission however is not a dupe of S-665
+
+Picodes
+02/03/2025
+
+Thanks for flagging @a_kalout. Considering the comments on S-665, I guess Low severity is more appropriate here as this is handled by the operational process in place. We could argue that the process is misleading with the call _handleRewardsOnWithdraw in retireStrategy but rethinking about this it makes sense to assume rewards have been handled by the admin prior to removing the strategy
+
+Duplicates
+3
+S-905
+Retirement of Radiant Strategy will result to locked rewards
+0xrex
+69
+S-904
+Retirement of Silo Strategy will result to locked rewards
+0xrex
+69
+S-903
+Retiring Compound Strategy will result to locked rewards in the strategy contract
+0xrex
+69
+Timeline
+Submitted
+Created: 548d ago
+Medium
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

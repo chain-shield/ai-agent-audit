@@ -1,0 +1,162 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-66
+Medium
+Primary
+S-210
+Insufficient Intermediate Value Precision in StableSwap Calculations
+Lambda
+00
+Sufficient
+383d ago
+
+The calculate_stableswap_y function uses Uint256 for intermediate calculations which can cause arithmetic overflow errors when dealing with large token amounts, especially for tokens with high decimal places (e.g. 18 decimals). This significantly impacts the reliability of the StableSwap pool implementation.
+
+Proof of Concept
+
+The issue occurs in src/helpers.rs#L106-L152 where calculate_stableswap_y performs multiplication and division operations using Uint256.
+
+The problem manifests when performing swaps with large token amounts. A proof of concept that demonstrates the failure is provided here:
+
+#[test]
+fn test_stableswap_large_swap() {
+    // Use realistic large pool values (e.g. 1M tokens with 18 decimals)
+    let large_pool = Uint128::new(1_000_000_000_000_000_000_000_000u128); // 1M tokens
+    
+    // Large swap amount (100k tokens)
+    let large_amount = Uint128::new(100_000_000_000_000_000_000_000u128);
+    
+    let test_cases = vec![
+        // (amp, offer_pool, ask_pool, offer_amount, description)
+        (
+            MIN_AMP, 
+            large_pool, 
+            large_pool, 
+            large_amount,
+            "Balanced pool, minimum amplification"
+        ),
+    ];
+
+    for (amp, offer_pool, ask_pool, offer_amount, description) in test_cases {
+        println!("\nTesting case: {}", description);
+        println!("Parameters: amp={}, offer_pool={}, ask_pool={}, offer_amount={}", 
+                 amp, offer_pool, ask_pool, offer_amount);
+        
+        // Convert to Decimal256 for precision
+        let offer_pool_dec = Decimal256::from_ratio(offer_pool, Uint128::new(1));
+        let ask_pool_dec = Decimal256::from_ratio(ask_pool, Uint128::new(1));
+        let offer_amount_dec = Decimal256::from_ratio(offer_amount, Uint128::new(1));
+        
+            let result = calculate_stableswap_y(
+                Uint256::from(2u8),
+                offer_pool_dec,
+                ask_pool_dec,
+                offer_amount_dec,
+                &amp,
+                18, // Using 18 decimals precision
+                StableSwapDirection::Simulate,
+            );
+            
+            match result {
+                Ok(value) => {
+                    println!("Result: {}", value);
+                }
+                Err(e) => {
+                    panic!(
+                        "Failed to converge: {:?}",
+                        e
+                    );
+                }
+            }
+    }
+}
+
+The test fails with CheckedMultiplyRatioError(Overflow) because intermediate calculations in calculate_stableswap_y overflow Uint256 when dealing with:
+
+Pool amounts of 1M tokens with 18 decimals (1e24)
+Swap amounts of 100k tokens with 18 decimals (1e23)
+
+These are realistic values that could occur in production, making this an issue that could prevent legitimate swaps from executing. Moreover, the following was mentioned in the contest description:
+
+Approximation errors when handling very large amounts, especially with assets having 18 decimal places. Think of handling trillions of such assets.
+Recommended mitigation steps
+
+Replace Uint256 with Uint512 for intermediate calculations in calculate_stableswap_y. This provides sufficient precision to handle large token amounts with high decimal places.
+
+pub fn calculate_stableswap_y(
+    n_coins: Uint256,
+    offer_pool: Decimal256,
+    ask_pool: Decimal256,
+    offer_amount: Decimal256,
+    amp: &u64,
+    ask_precision: u8,
+    direction: StableSwapDirection,
+) -> Result<Uint128, ContractError> {
+    // Convert inputs to Uint512 for intermediate calculations
+    let ann = Uint512::from(Uint256::from_u128((*amp).into()).checked_mul(n_coins)?);
+    // ... rest of calculations using Uint512
+}
+
+The final result can still be converted back to Uint128 since the actual swap amounts will fit within that range. This change ensures the contract can handle realistic token amounts while maintaining precision in the StableSwap calculations.
+
+A test suite should be added that verifies the contract handles large token amounts correctly across different pool configurations and swap scenarios.
+
+Links to affected code
+helpers.rs#L106-L152
+Opens in a new window
+Submissions touching same files
+helpers.rs
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-210.
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid, could be a self-dup of S-213/S-364
+
+Timeline
+Submitted
+Created: 503d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

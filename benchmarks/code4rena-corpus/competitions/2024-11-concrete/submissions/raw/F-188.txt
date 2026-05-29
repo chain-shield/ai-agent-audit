@@ -1,0 +1,110 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-188
+Low
+Primary
+S-850
+Users can avoid paying `withdrawFee` by using the Swapper
+deadrxsezzz
+61
+Sufficient
+383d ago
+Finding description and impact
+
+Within the Vault, there's a withdraw fee which users have to pay upon withdrawing funds. However, users can easily bypass it, given the provided Swapper contract.
+
+Proof of Concept
+
+The swapper contract allows any user to swap a Vault share token for a reward token. Not only does it do it without charging a fee, but it also gives an additional amount as a reward.
+
+    function swapTokensForReward(
+        address ctAssetToken_,
+        address rewardToken_,
+        uint256 ctAssetAmount_
+    ) external nonReentrant {
+        if (!_tokenRegistry.isRewardToken(rewardToken_)) revert Errors.NotValidRewardToken(rewardToken_);
+
+        uint256 rewardAmount = _quoteSwapFromCtAssetToReward(ctAssetToken_, rewardToken_, ctAssetAmount_);
+
+        if (!amountAvailableForWithdrawal(rewardToken_, rewardAmount)) {
+            revert Errors.NotAvailableForWithdrawal(rewardToken_, rewardAmount);
+        }
+
+        // first send the ctAsset tokens to the treasury
+        IERC20(ctAssetToken_).safeTransferFrom(msg.sender, address(_treasury), ctAssetAmount_);
+        // this isn't an issue because the msg,sender first need to pay with the ctAsset token
+        // slither-disable-next-line arbitrary-send-erc20
+        IERC20(rewardToken_).safeTransferFrom(address(_treasury), msg.sender, rewardAmount);
+
+        emit Swapped(msg.sender, ctAssetToken_, rewardToken_, ctAssetAmount_, rewardAmount);
+    }
+
+This allows any user to use it simply as a way to bypass withdraw fees. In the easiest way, if the underlying token is also listed as a reward token, users can directly swap between the vault share token and in it. But in case it isn't, users would still likely be able to profitably bypass the protocol's fees this way.
+
+Impact
+
+Loss of fees.
+
+Recommended mitigation steps
+
+Charge a fee upon the swaps
+
+Links to affected code
+Swapper.sol#L78
+Opens in a new window
+Submissions touching same files
+Swapper.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-850.
+Intended behavior
+Edited: Feb 22
+Picodes
+
+This seems to be the intended behavior as the user is "helping" the protocol by swapping
+
+Timeline
+Submitted
+Created: 543d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

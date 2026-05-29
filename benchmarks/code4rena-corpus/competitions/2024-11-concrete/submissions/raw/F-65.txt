@@ -1,0 +1,163 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-65
+Low
+Primary
+S-515
+User with blueprint can add rewards on behalf of a different blueprint.
+sl1
+68
+Sufficient
+383d ago
+Bug description
+
+The are two way of adding tokens to protection strategies: addRewards() and repay() functions. Both these functions can only be called by a sender with a blueprint role. However, currently it's possible for a user with a blueprint role to steal funds from another blueprint that has approved tokens to the ClaimRouter.
+
+If we look at the addRewards() function userBlueprint address is a user-supplied parameter.
+
+ClaimRouter.sol#L233-L239
+
+function addRewards(
+    address tokenAddress,
+    uint256 amount_,
+    address userBlueprint
+) external onlyRole(BLUEPRINT_ROLE) {
+    _addTokensToStrategy(tokenAddress, amount_, userBlueprint, true);
+}
+
+When _addTokensToStrategy() is called, it will try to transfer tokens from the userBlueprint to the protection strategy, which would result in a loss of funds for the blueprint if he had an unspent approval to the claim router.
+
+ClaimRouter.sol#L307
+
+IERC20(tokenAddress).safeTransferFrom(
+    userBlueprint,
+    protectionStrat,
+    amountToBeSent
+);
+
+It's important to note that the only trusted role in the context of this contest is the owner as stated by the contest page, therefore we cannot consider that all of the blueprints will act non-maliciously.
+
+Impact
+
+Loss of funds for the blueprint with an unspent approval to the claim router contract.
+
+Recommended Mitigation
+
+Change addRewards() and repay() function so userBlueprint won't be a user-supplied parameter anymore, and set it to the address of the msg.sender.
+
+ClaimRouter.sol#L233-L240
+
+function addRewards(
+    address tokenAddress,
+    uint256 amount_,
+-    address userBlueprint
+) external onlyRole(BLUEPRINT_ROLE) {
+-    _addTokensToStrategy(tokenAddress, amount_, userBlueprint, true);
++    _addTokensToStrategy(tokenAddress, amount_, msg.sender, true);
+}
+
+ClaimRouter.sol#L246-L248
+
+function repay(
+    address tokenAddress,
+    uint256 amount_,
+-    address userBlueprint
+) external onlyRole(BLUEPRINT_ROLE) {
+-    _addTokensToStrategy(tokenAddress, amount_, userBlueprint, false);
++    _addTokensToStrategy(tokenAddress, amount_, msg.sender, false);
+}
+Links to affected code
+ClaimRouter.sol#L233-L239
+Opens in a new window
+ClaimRouter.sol#L246-L248
+Opens in a new window
+Submissions touching same files
+ClaimRouter.sol
+View full submission
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-515.
+Appeal
+Edited: Feb 22
+sl1
+OP
+
+The information about blueprints being trusted was provided only after the contest end. If sponsors wanted to make blueprints trusted they should've provided that info in the README when asked the relevant question, thus I'm kindly requestion to re-evaluate this submission.
+
+On a side note, if you will still consider this issue as LOW, I would like to ask one question about trusted roles. If the readme states that the owner is trusted, what's the point of having that question in the first place, since if the owner is trusted (which is always) any other role's misbehaviour can be considered as an admin mistake, since almost all roles are set by the owner?
+Thank you!
+
+Picodes
+Edited: 01/23/2025
+
+https://github.com/code-423n4/2024-11-concrete/blob/d2950ec68fdc391c10989d98748e79d1a0017f69/src/claimRouter/ClaimRouter.sol#L58
+
+I mean I don't know how it's not clear that blueprint is a contract, so is trusted
+
+sl1
+OP
+Deleted: 01/24/2025
+This comment was deleted.
+Downgrading
+Edited: Feb 22
+Picodes
+
+Dowgrading to Low for admin mistake
+
+This is an expected behavior constrained by a modifier
+Edited: Feb 22
+gerantonyk
+
+There are no malicious blueprints. The only scenario where the role can be compromised is if the owner of the contract is compromised.
+
+Duplicates
+1
+S-1446
+User/Blueprint-contract who approved funds to ClaimRouter can loose it
+0xleadwizard
+80
+Timeline
+Submitted
+Created: 544d ago
+High
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,191 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-16
+Low
+Primary
+S-495
+Underbilling due to lack of inclusion of token transfer associated bytes in the execution cost
+hash
+87
+Sufficient
+383d ago
+Impact
+
+Lower calculation of execution cost hence underbilling
+
+Proof of Concept
+
+Each byte that is part of a transaction's data will incur a gas cost in the destination chain. This is accounted in the execution cost by using the destGasPerPayloadByte which stores the gas for one byte of such data. But when calculating the execution cost, only the bytes of message.data is considered. This leaves out the bytes that will be populated in the transaction due to the token transfers and the bytes overhead associated with each token transfer (these are not included in tokenTransferGas as it only considers amount of gas that will be forwarded)
+
+https://github.com/code-423n4/2024-11-chainlink/blob/69452f45335defa5b41aefd341bff26394aace8c/contracts/src/ccip/FeeQuoter.sol#L591-L596
+
+    uint256 executionCost = uint112(packedGasPrice)
+      * (
+        destChainConfig.destGasOverhead + (message.data.length * destChainConfig.destGasPerPayloadByte) + tokenTransferGas
+          + _parseEVMExtraArgsFromBytes(message.extraArgs, destChainConfig).gasLimit
+      ) * destChainConfig.gasMultiplierWeiPerEth;
+Recommended Mitigation Steps
+
+Include the bytes that will be populated for the token transfers and each of their overhead bytes
+
+Links to affected code
+FeeQuoter.sol#L591-L596
+Opens in a new window
+Submissions touching same files
+FeeQuoter.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-495.
+destChainConfig.destGasOverhead can cover the bytes overhead associated with each token transfer case.
+Edited: Feb 22
+ladboy233
+
+Thanks for judging the contest!
+
+The execution cost estimation algorithm is not changed since the last audit and this is the live algorithm used in chainlink production.
+
+The admin configure proper destChainConfig.destGasOverhead and destChainConfig.destGasPerPayloadByte value to account for the
+
+bytes overhead associated with each token transfer
+
+and also this issue is pending sponsor review.
+
+hash
+OP
+12/14/2024
+
+The admin configure proper destChainConfig.destGasOverhead and destChainConfig.destGasPerPayloadByte value to account for the bytes overhead associated with each token transfer
+
+These two variables serve completely different purpose and is not meant to cover the cost of token transfer payloads:
+destGasOverhead: A constant value to cover common overhead applied across all messages independent of the amount of token transfers in the message and the bytes overhead of each token transfer
+destGasPerPayloadByte: This is the calldata cost of the destination chain, likely a fixed value of 16 for EVM Chains and in no way accounts for the bytes overhead associated with each token transfer
+
+ladboy233
+12/14/2024
+
+Admin can still update and configure any value for destGasPerPayloadByte any time.
+
+ladboy233
+Edited: 12/14/2024
+
+https://github.com/code-423n4/2024-11-chainlink/blob/69452f45335defa5b41aefd341bff26394aace8c/contracts/src/ccip/FeeQuoter.sol#L98
+
+uint16 destGasPerPayloadByte; // │ Destination chain gas charged each byte of data payload.
+
+I am not sure why do we make the assumption: likely a fixed value of 16 for EVM Chains
+
+I politely think we should let the sponsor weight because review status is in-progress.
+
+hash
+OP
+12/14/2024
+
+I am not sure why do we make the assumption: likely a fixed value of 16 for EVM Chains
+
+Because that is the calldata cost for non-zero bytes in many EVM chains
+
+Admin can still update and configure any value for destGasPerPayloadByte any time
+
+But how does this have any connection to the issue here? In the codebase what happens is if the destGasPerPayloadByte is increased, messge.data will be charged way more than necessary. And it doesn't deal with the token transfer overhead bytes at all
+
+ladboy233
+Edited: 12/14/2024
+
+In the codebase what happens is if the destGasPerPayloadByte is increased, messge.data will be charged way more than necessary.
+
+I think for all cross-chain protocol, it is ok to leave buffer and over-charge the user instead of under-charge the user and let the relayer pay the fee.
+
+Sir, let us wait for sponsor and judge weight in.
+
+hash
+OP
+12/15/2024
+
+I think for all cross-chain protocol, it is ok to leave buffer and over-charge the user instead of under-charge the user and let the relayer pay the fee
+
+This is a vague general statement instead of pointing out what the claimed relation b/w destGasPerPayloadByte and token transfer overhead bytes is. There is no relation but you have claimed there is
+
+Admin can still update and configure any value for destGasPerPayloadByte any time
+But how does this have any connection to the issue here? .... And it doesn't deal with the token transfer overhead bytes at all
+
+rensr
+Edited: 12/16/2024
+
+Thanks for looking into this. I would say the statement that the token calldata cost is not accurately taken into account is correct. I would not call that a medium finding myself, as the errors is a rounding error on the total message cost, which is fuzzily calculated anyway. I do not agree destGasPerPayloadByte should be used for that part, but destGasOverhead is rounded to 5k values, which means there's more than enough taken into account for it to serve a few bytes at 16 gas per byte
+
+hash
+OP
+12/16/2024
+
+Hey,
+
+Apart from destGasOverhead not being meant to deal with this, 5k gas wouldn't be enough
+
+    struct Any2EVMTokenTransfer {
+    bytes sourcePoolAddress;
+    address destTokenAddress; 
+    uint32 destGasAmount; 
+    bytes extraData;
+    uint256 amount;
+  }
+
+Putting extraData == 64 bytes, the total encoded length will be 352 bytes. At 16 gas / byte and 5 token transfers in a message, this will cost 352 * 16 * 5 == 28160 > 5k
+
+0xRobocop
+12/16/2024
+
+I reported the issue in submission S-443. In that report, I consider that destGasOverhead accounts for the fixed-length bytes of a token transfer message, as this value remains constant regardless of the token.
+
+However, I pointed out that the extraData field is dynamic and varies between token transfer messages depending on the token involved. This means a fixed value as destGasOverhead cannot account for extraData. I showed that this oversight results in a non-trivial loss, which is not merely a rounding error.
+
+LSDan
+12/16/2024
+
+Based on the comments above, I agree that this should be low. The impact is minimal and S-443 is judged correctly.
+
+Showing 10 of 13 replies
+View more
+Timeline
+Submitted
+Created: 546d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

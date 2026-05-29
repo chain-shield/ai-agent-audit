@@ -1,0 +1,219 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-163
+Low
+Primary
+S-639
+Possibility of `vETH` and `ETH` being depegged and causing huge losses for users
+uuzall
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The protocol has a virtual token (henceforth called vETH) that should be pegged to the price of ETH. This is the foundation of the entire platform where they aim to provide liquidity through loans of this pegged vETH, this is also mentioned by the protocol in their docs:
+
+Undoubtedly, the 1:1 peg between ETH and vETH is the most crucial aspect of LamboV2.
+
+To maintain a ratio of 1:1 between vETH and ETH, they utilize a method they call a "rebalance" method. This essentially sells the commodity with the higher price for more of the lower priced tokens to make a profit, and keep the tokens pegged.
+
+The process to rebalance the tokens is to first call the LamboRebalanceOnUniwap.sol::previewRebalance function to see if the rebalance is profitable (otherwise it will just revert). Then, call the LamboRebalanceOnUniwap.sol::rebalance function to rebalance the pegged tokens.
+
+The issue arises with the requirement that the protocol must make a profit or else the entire rebalance reverts. With a bit of experimentation (details in appendix), it is noted that the price has a variation of up to -0.9% before the rebalance function turns a profit. Which means that in a normal day the market will have slippages of up to ~0.9%.
+
+In the case of users swapping wETH for vETH, there will be an edge case where an unlucky user will get less amount of vETH because the function overshoots the slippage of -0.9%.
+
+Proof of Concept
+
+To prove the claim, please copy-paste the following test into the test/RebalanceTest.t.sol file, and run it with forge test --mt test_unlucky_user_get_less_money -vvv:
+
+function test_unlucky_user_get_less_money() public { 
+        address user = vm.addr(0x55); 
+        vm.deal(user, 1000 ether); 
+        address unlucky_user = vm.addr(0x56); 
+        vm.deal(unlucky_user, 20 ether); 
+
+        vm.startPrank(user); 
+        uint256 amount = 402 ether;
+        uint256 _v3pool = uint256(uint160(uniswapPool)) | (_ONE_FOR_ZERO_MASK);
+        uint256[] memory pools = new uint256[](1);
+        pools[0] = _v3pool;
+        
+        uint res0  = IERC20(WETH).balanceOf(uniswapPool);
+        uint res1 = IERC20(VETH).balanceOf(uniswapPool); 
+        console.log("reserves", res0, res1); 
+        
+        console.log("a lot of swaps of WETH for VETH \n"); 
+        uint256 amountOut0 = IDexRouter(OKXRouter).uniswapV3SwapTo{value: amount}(
+            uint256(uint160(user)),
+            amount,
+            0,
+            pools
+        );
+        
+        res0  = IERC20(WETH).balanceOf(uniswapPool);
+        res1 = IERC20(VETH).balanceOf(uniswapPool); 
+        console.log("reserves after swaps show", res0, res1);
+        (bool result, uint256 directionMask, uint256 amountIn, uint256 amountOut) = lamboRebalance.previewRebalance();
+        console.log("result that mentions whether to rebalance:", result); 
+        
+        vm.stopPrank(); 
+        vm.startPrank(unlucky_user); 
+        console.log("\n unlucky user swaps for 20 VETH"); 
+        uint initial_bal = address(unlucky_user).balance; 
+        amountOut0 = IDexRouter(OKXRouter).uniswapV3SwapTo{value: 20 ether}(
+            uint256(uint160(unlucky_user)),
+            20 ether,
+            0,
+            pools
+        ); 
+        
+        console.log("eth used by unlucky user", initial_bal - address(unlucky_user).balance); 
+        console.log("eth got from swap by unlucky user", amountOut0); 
+        
+        res0  = IERC20(WETH).balanceOf(uniswapPool);
+        res1 = IERC20(VETH).balanceOf(uniswapPool);
+        console.log("final reserve of pool", res0, res1); 
+
+        (result, directionMask, amountIn, amountOut) = lamboRebalance.previewRebalance();
+        console.log("result that mentions whether to rebalance:", result); 
+    }
+
+When the test is ran, these are the logs:
+
+Logs:
+  reserves 450000000000000000000 450000000000000000000
+  a lot of swaps of WETH for VETH 
+
+  reserves after swaps show 852000000000000000000 50405303855439873561
+  result that mentions whether to rebalance: false
+  
+ unlucky user swaps for 20 VETH
+  eth used by unlucky user 20000000000000000000
+  eth got from swap by unlucky user 16935347135752936272
+  final reserve of pool 872000000000000000000 33469956719686937289
+  result that mentions whether to rebalance: true
+
+
+Let's go through the test phases:
+
+In the test file, the total reserved wETH and vETH in the uniswapPool is 450e18 each.
+In the course of the trade a lot of wETH is swapped for vETH.
+The amount in the reserve reaches a certain amount, in the case of the test it is 852e18 wETH and 50.40e18 vETH. Any more swaps and there would be a rebalance, but in this state there is no profit in rebalancing so it will not be rebalanced.
+An unlucky_user wants to swap their wETH to vETH so they transfer 20e18 tokens of wETH to the swapper, and they get back 16.93e18 tokens of vETH back. This is a slippage of -15.35%. It is unacceptable for a 1:1 pegged token.
+Now the rebalance function turns a profit, so the protocol calls the function.
+
+One of the requirement of this issue is the fact that a lot of wETH is swapped for vETH. It is entirely possible because this can happen due to various reasons from normal market fluctuations (example, wETH reached a low of -1.51% and reached -0.8% various times in the past year), to edge cases of wETH sell-off due to loss of confidence in the token.
+
+Recommended mitigation steps
+
+The major reason why this issue persists is because there is no slippage protection when swapping the tokens. Adding a slippage protection will ensure that users do not get "unlucky" and get a lower amount of vETH for their corresponding wETH.
+
+Appendix
+
+The experiment was ran as follows in the test/RebalanceTest.t.sol file:
+
+function test_weth_veth_450_times() public { 
+        uint256 amount = 1 ether;
+        uint256 _v3pool = uint256(uint160(uniswapPool)) | (_ONE_FOR_ZERO_MASK);
+        uint256[] memory pools = new uint256[](1);
+        pools[0] = _v3pool;
+        
+        uint res0  = IERC20(WETH).balanceOf(uniswapPool);
+        uint res1 = IERC20(VETH).balanceOf(uniswapPool); 
+        console.log("reserves", res0, res1); 
+        uint initial_bal = address(this).balance; 
+        
+        for (uint i = 0; i < 450; i++) {
+            uint256 amountOut0 = IDexRouter(OKXRouter).uniswapV3SwapTo{value: amount}(
+                uint256(uint160(multiSign)),
+                amount,
+                0,
+                pools
+            );
+            console.log(amountOut0); 
+            (bool result, uint256 directionMask, uint256 amountIn, uint256 amountOut) = lamboRebalance.previewRebalance();
+            console.log(result); 
+        }
+        
+        
+        (bool result, uint256 directionMask, uint256 amountIn, uint256 amountOut) = lamboRebalance.previewRebalance();
+        
+        console.log("eth used", initial_bal - address(this).balance); 
+        
+        res0  = IERC20(WETH).balanceOf(uniswapPool);
+        res1 = IERC20(VETH).balanceOf(uniswapPool);
+        console.log("after reserve", res0, res1); 
+
+        console.log(result, directionMask, amountIn, amountOut); 
+    }
+
+It is a crude way of experimenting, but the logs of the test were imported into a python notebook to be analyzed. It was found that the prices of the pegged tokens decreased steadily with market pressure from 0.996992556531111435 initially to 0.991049618227292752 without a trigger of the rebalance function. This is a decrease of 0.8950% from the actual price of 1.0.
+
+When the price reached 0.987969117445529844, the rebalance function can be called due to it turning a profit. This is a 1.20% decrease in price. If the rebalance function is not called, the prices decreases all the way to 0.491787038464126239 and below without further intervention. Although this might not be the case but there is a possibility for users to face a huge loss if they bulk swap their wETH like shown in the PoC above.
+
+Links to affected code
+LamboRebalanceOnUniwap.sol#L62
+Opens in a new window
+Submissions touching same files
+LamboRebalanceOnUniwap.sol
+View full submission
+Duplicates
+3
+S-572
+`LamboRebalanceOnUniwap::rebalance` fails to maintain 1:1 PEG without profitability, leading to extended PEG loss and protocol inaction at ratio below 17.188759403
+shiazinho
+00
+S-375
+LamboRebalanceOnUniwap::rebalance - rebalancing the pool won't work in most cases and the pool will be in an unbalanced state for most of the time
+rspadi
+00
+S-367
+Rebalancing Failure: vETH/ETH Peg Destabilization via Ineffective previewRebalance() and rebalance() Mechanisms
+slowbugmayor
+00
+Timeline
+Submitted
+Created: 532d ago
+High
+Triage
+High
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,168 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-29
+Low
+Primary
+S-137
+Unsafe oracle client initialization with uncontrolled goroutine
+Rhaydden
+30
+Sufficient
+383d ago
+Finding Description and Impact
+
+The oracle client initialization in the client connection is established in an uncontrolled goroutine without proper synchronization. This causes issues like:
+
+Race Conditions because the function returns an oracle client that may not be fully initialized, as the connection process happens asynchronously.
+Connection failures result in a panic in a separate goroutine, which may not be properly caught by the application's error handling.
+The application might proceed with an unconnected oracle client, potentially causing failed price updates or invalid vote extensions.
+
+The impact is severe as the oracle client is used for vote extension, price data aggregation and to block proposal validation
+
+Proof of Concept
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/app/oracle.go#L47-L54
+
+go func() {
+    app.Logger().Info("attempting to start oracle client...", "address", cfg.OracleAddress)
+    if err := oracleClient.Start(context.Background()); err != nil {
+        app.Logger().Error("failed to start oracle client", "err", err)
+        panic(err)
+    }
+}()
+
+return oracleClient, oracleMetrics, nil
+
+To demonstrate the issue:
+
+The function returns immediately while the connection is still being established
+Subsequent code might attempt to use the oracle client before it's ready:
+For example, in app.go
+// oracle initialization
+	client, metrics, err := app.initializeOracle(appOpts)
+>>>	if err != nil {  // This error check won't catch connection failures!
+		panic(fmt.Errorf("failed to initialize oracle client and metrics: %w", err))
+	}
+
+	app.MarketMapKeeper.SetHooks(app.OracleKeeper.Hooks())
+
+
+// This might execute before the client is connected
+	app.initializeABCIExtensions(client, metrics)
+If the connection fails, the panic occurs in a separate goroutine:
+panic: connection refused // This panic might be lost or improperly handled
+Recommended Mitigation Steps
+
+Consider implementing proper synchronization using a context with timeout and error handling:
+
+func (app *App) initializeOracle(appOpts types.AppOptions) (oracleclient.OracleClient, servicemetrics.Metrics, error) {
+     // Read general config from app-opts, and construct oracle service.
+     cfg, err := oracleconfig.ReadConfigFromAppOpts(appOpts)
+     if err != nil {
+         return nil, nil, err
+     }
+
+     oracleMetrics, err := servicemetrics.NewMetricsFromConfig(cfg, app.ChainID())
+     if err != nil {
+         return nil, nil, err
+     }
+
+     oracleClient, err := oracleclient.NewPriceDaemonClientFromConfig(
+         cfg,
+         app.Logger().With("client", "oracle"),
+         oracleMetrics,
+     )
+     if err != nil {
+         return nil, nil, err
+     }
+
+-    go func() {
+-        app.Logger().Info("attempting to start oracle client...", "address", cfg.OracleAddress)
+-        if err := oracleClient.Start(context.Background()); err != nil {
+-            app.Logger().Error("failed to start oracle client", "err", err)
+-            panic(err)
+-        }
+-    }()
++    // Create context with timeout
++    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++    defer cancel()
++
++    // Start the oracle client synchronously with timeout
++    app.Logger().Info("attempting to start oracle client...", "address", cfg.OracleAddress)
++    if err := oracleClient.Start(ctx); err != nil {
++        app.Logger().Error("failed to start oracle client", "err", err)
++        return nil, nil, fmt.Errorf("failed to start oracle client: %w", err)
++    }
+
+     return oracleClient, oracleMetrics, nil
+ }
+
+Just to be safer, consider implementing a health check mechanism.
+
+Links to affected code
+oracle.go#L47-L54
+Opens in a new window
+app.go#L960-L961
+Opens in a new window
+Submissions touching same files
+oracle.go
+app.go
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-137.
+Judging
+Edited: Feb 22
+3docSec
+
+App exiting on failed connection looks intended behavior; whether the exit is graceful or not is an aesthetics question
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Insufficient elaboration of which actual situation would cause the unwanted panic to happen. Also it doesnt say why the app exiting out of panic would not be the right behavior for improper oracle initialization
+
+Timeline
+Submitted
+Created: 512d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

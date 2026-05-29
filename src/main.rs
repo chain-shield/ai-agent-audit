@@ -64,6 +64,7 @@ async fn main() -> Result<()> {
     info!("repo config files => {:#?}", &repo.config_files);
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
+    ai_agent_audit::benchmark::telemetry::write_run_manifest(&repo);
 
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation

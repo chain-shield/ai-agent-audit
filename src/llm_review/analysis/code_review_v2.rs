@@ -1,3 +1,4 @@
+use crate::benchmark::telemetry;
 use crate::config::{
     AuditType, OPENAI_MODEL, OPENAI_REASONING_EFFORT, SKIP_ACTOR_PATTERN_RUNS, SKIP_LIBRARIES,
 };
@@ -25,6 +26,7 @@ use crate::llm_review::{
 use crate::prepare_code::git_clone::RepoPaths;
 use log::info;
 use nanoid::nanoid;
+use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -153,20 +155,34 @@ pub async fn review_codebase_for_security_issues_v2(
                 )
                 .await?;
 
-                if !raw_findings.findings.is_empty() {
-                    // add uuid to each finding to uniquely identify
+                // Add uuid to each finding so lifecycle telemetry can connect stages.
+                let findings_with_id: Findings = Findings {
+                    findings: raw_findings
+                        .findings
+                        .into_iter()
+                        .map(|f| Finding {
+                            id: Some(nanoid!()),
+                            ..f
+                        })
+                        .collect(),
+                };
 
-                    let findings_with_id: Findings = Findings {
-                        findings: raw_findings
-                            .findings
-                            .into_iter()
-                            .map(|f| Finding {
-                                id: Some(nanoid!()),
-                                ..f
-                            })
-                            .collect(),
-                    };
+                record_findings_stage(
+                    &repo_clone,
+                    "raw_candidates.jsonl",
+                    "discovery_raw_candidates",
+                    &contract,
+                    &findings_with_id,
+                );
+                record_lifecycle_stage(
+                    &repo_clone,
+                    "discovery_raw",
+                    &contract,
+                    &findings_with_id,
+                    None,
+                );
 
+                if !findings_with_id.findings.is_empty() {
                     // Phase 4: Verify findings and remove false positives
                     let verify_findings = phases::verify_rounds::execute_rounds(
                         findings_with_id,
@@ -175,6 +191,21 @@ pub async fn review_codebase_for_security_issues_v2(
                         &repo_clone,
                     )
                     .await?;
+
+                    record_findings_stage(
+                        &repo_clone,
+                        "verification_decisions.jsonl",
+                        "post_verification_retained",
+                        &contract,
+                        &verify_findings,
+                    );
+                    record_lifecycle_stage(
+                        &repo_clone,
+                        "post_verification_retained",
+                        &contract,
+                        &verify_findings,
+                        None,
+                    );
 
                     // Save findings to database before extending
                     let db = results_db.lock().await;
@@ -203,10 +234,79 @@ pub async fn review_codebase_for_security_issues_v2(
 
     // dedup combined findings
     let security_issues = all_security_issues.lock().await;
-    let deduped = security_issues.clone().dedup().await?;
+    let deduped = security_issues
+        .clone()
+        .dedup_with_telemetry(repo, "global_final")
+        .await?;
     drop(security_issues);
 
+    record_findings_stage(
+        repo,
+        "final_candidates.jsonl",
+        "global_final_candidates",
+        "ALL_CONTRACTS",
+        &deduped,
+    );
+    record_lifecycle_stage(
+        repo,
+        "final_report_candidate",
+        "ALL_CONTRACTS",
+        &deduped,
+        Some("final_report_candidate_unmatched"),
+    );
+
     Ok(deduped)
+}
+
+fn record_findings_stage(
+    repo: &RepoPaths,
+    file_name: &str,
+    stage: &str,
+    contract: &str,
+    findings: &Findings,
+) {
+    telemetry::append_jsonl(
+        repo,
+        file_name,
+        stage,
+        &json!({
+            "stage": stage,
+            "contract": contract,
+            "finding_count": findings.findings.len(),
+            "findings": findings.findings.clone()
+        }),
+    );
+}
+
+fn record_lifecycle_stage(
+    repo: &RepoPaths,
+    stage: &str,
+    contract: &str,
+    findings: &Findings,
+    terminal_label: Option<&str>,
+) {
+    for finding in &findings.findings {
+        telemetry::append_jsonl(
+            repo,
+            "finding_lifecycle.jsonl",
+            "finding_lifecycle",
+            &json!({
+                "entity_id": finding.id.clone(),
+                "entity_type": "candidate_finding",
+                "stage": stage,
+                "contract": contract,
+                "terminal_label": terminal_label,
+                "title": finding.title.clone(),
+                "severity": finding.severity.to_string(),
+                "finding_contract": finding.contract.clone(),
+                "finding_function": finding.function.clone(),
+                "exploit_type": finding.exploit_type.to_string(),
+                "derived_from": finding.derived_from.clone(),
+                "status": finding.status.clone(),
+                "status_justification": finding.status_justification.clone()
+            }),
+        );
+    }
 }
 
 pub async fn generate_ai_agents(

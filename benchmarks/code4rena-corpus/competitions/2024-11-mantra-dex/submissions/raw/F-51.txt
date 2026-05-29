@@ -1,0 +1,113 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-51
+Low
+Primary
+S-282
+Emergency‐unlock penalty is equally distributed which results in unfair loss for smaller farms
+axelot
+00
+Sufficient
+383d ago
+Emergency‐unlock penalty is equally distributed which results in unfair loss for smaller farms
+Finding description and impact
+
+When a user does an emergency unlock, the penalty is divided equally among all owners of farms associated with the lp_asset, ignoring differences in farm size (in terms of lp_asset) and unfairly impacting smaller farms owners.
+
+Proof of Concept
+
+The penalty fee is first computed
+
+if emergency_unlock.is_some() && emergency_unlock.unwrap() && !position.is_expired(current_time)
+    {
+        let emergency_unlock_penalty = CONFIG.load(deps.storage)?.emergency_unlock_penalty;
+
+        let total_penalty_fee = Decimal::from_ratio(position.lp_asset.amount, Uint128::one())
+            .checked_mul(emergency_unlock_penalty)?
+            .to_uint_floor();
+
+Then all the farms sharing that LP denom are retrieved
+
+let farms = get_farms_by_lp_denom(
+    deps.storage,
+    &position.lp_asset.denom,
+    None,
+    Some(MAX_ITEMS_LIMIT),
+)?;
+
+And the penalty per owner is computed, simply dividing the penalty by the number of owners
+
+// send penalty to farm owners
+let penalty_fee_share_per_farm_owner = Decimal::from_ratio(
+    owner_penalty_fee_comission,
+    unique_farm_owners.len() as u128,
+)
+.to_uint_floor();
+
+So if a user does an emergency unlock while there are multiple farms that share the same LP denom, the penalty fee will be equally divided among all farm owners.
+Any difference in the amount of lp_denom tokens there is in each farm is disregarded.
+Small farms owners will receive the same penalty as larger farms owners, meaning there is an unfair loss for small farms owners.
+
+Recommended Mitigation Steps
+
+Consider weighting the penalty distribution by each farm size in lp_denom.
+
+Links to affected code
+commands.rs#L366-L382
+Opens in a new window
+Submissions touching same files
+commands.rs
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-282.
+Not an issue
+Edited: Feb 22
+jvr0x
+
+This is intended. It's impossible to determine the "value" of the farm size without an oracle solution in place, therefore the penalty fee is shared equally.
+
+Timeline
+Submitted
+Created: 500d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

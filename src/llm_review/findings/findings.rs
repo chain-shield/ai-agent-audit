@@ -5,15 +5,18 @@ use crate::llm_review::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
+    benchmark::telemetry,
     config::{OPENAI_DEDUP_MODEL, OPENAI_DEDUP_REASONING_EFFORT},
     cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    prepare_code::git_clone::RepoPaths,
     utils::semantic_compare,
 };
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde_json::json;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use strum_macros::EnumIter;
 use tokio::sync::Mutex;
@@ -202,12 +205,28 @@ impl Finding {
 
 impl Findings {
     pub async fn dedup(self) -> anyhow::Result<Findings> {
+        self.dedup_inner(None).await
+    }
+
+    pub async fn dedup_with_telemetry(
+        self,
+        repo: &RepoPaths,
+        stage: &str,
+    ) -> anyhow::Result<Findings> {
+        self.dedup_inner(Some((repo, stage))).await
+    }
+
+    async fn dedup_inner(
+        self,
+        telemetry_meta: Option<(&RepoPaths, &str)>,
+    ) -> anyhow::Result<Findings> {
         if self.findings.is_empty() {
             return Ok(Findings {
                 findings: Vec::new(),
             });
         }
 
+        let input_findings = self.findings.clone();
         let openai_config = AgentConfig::new(None)
             .with_model(OPENAI_DEDUP_MODEL)
             .with_openai_reasoning_effort(OPENAI_DEDUP_REASONING_EFFORT);
@@ -220,6 +239,11 @@ impl Findings {
             let hash = finding.hash();
             findings_hash.entry(hash).or_default().push(finding.clone());
         }
+
+        let cluster_inputs = findings_hash
+            .iter()
+            .map(|(hash, findings)| (hash.clone(), findings.clone()))
+            .collect::<Vec<_>>();
 
         let arc_dedup_findings = Arc::new(Mutex::new(Vec::with_capacity(self.findings.len())));
         let mut handles = Vec::new();
@@ -257,6 +281,16 @@ impl Findings {
             .map_err(|_| anyhow::anyhow!("Failed to unwrap Arc"))?
             .into_inner();
 
+        if let Some((repo, stage)) = telemetry_meta {
+            record_dedup_telemetry(
+                repo,
+                stage,
+                &input_findings,
+                &deduped_findings,
+                &cluster_inputs,
+            );
+        }
+
         Ok(Findings {
             findings: deduped_findings,
         })
@@ -285,6 +319,81 @@ impl Findings {
     pub fn high_severity_findings(&self) -> Vec<&Finding> {
         self.filter_by_severity(Severity::High)
     }
+}
+
+fn record_dedup_telemetry(
+    repo: &RepoPaths,
+    stage: &str,
+    input_findings: &[Finding],
+    deduped_findings: &[Finding],
+    cluster_inputs: &[(String, Vec<Finding>)],
+) {
+    let output_ids = deduped_findings
+        .iter()
+        .filter_map(|finding| finding.id.clone())
+        .collect::<HashSet<_>>();
+
+    let clusters = cluster_inputs
+        .iter()
+        .map(|(hash, findings)| {
+            let input_refs = findings.iter().map(finding_ref_json).collect::<Vec<_>>();
+            let kept_refs = findings
+                .iter()
+                .filter(|finding| {
+                    finding
+                        .id
+                        .as_ref()
+                        .is_some_and(|id| output_ids.contains(id))
+                })
+                .map(finding_ref_json)
+                .collect::<Vec<_>>();
+            let dropped_refs = findings
+                .iter()
+                .filter(|finding| {
+                    finding
+                        .id
+                        .as_ref()
+                        .is_none_or(|id| !output_ids.contains(id))
+                })
+                .map(finding_ref_json)
+                .collect::<Vec<_>>();
+
+            json!({
+                "cluster_key": hash,
+                "input_count": findings.len(),
+                "kept_count": kept_refs.len(),
+                "dropped_count": dropped_refs.len(),
+                "inputs": input_refs,
+                "kept": kept_refs,
+                "dropped": dropped_refs
+            })
+        })
+        .collect::<Vec<_>>();
+
+    telemetry::append_jsonl(
+        repo,
+        "dedup_clusters.jsonl",
+        "dedup_clusters",
+        &json!({
+            "stage": stage,
+            "input_count": input_findings.len(),
+            "output_count": deduped_findings.len(),
+            "cluster_count": clusters.len(),
+            "clusters": clusters
+        }),
+    );
+}
+
+fn finding_ref_json(finding: &Finding) -> serde_json::Value {
+    json!({
+        "id": finding.id.clone(),
+        "title": finding.title.clone(),
+        "severity": finding.severity.to_string(),
+        "contract": finding.contract.clone(),
+        "function": finding.function.clone(),
+        "exploit_type": finding.exploit_type.to_string(),
+        "derived_from": finding.derived_from.clone()
+    })
 }
 
 async fn get_deduped_finding_vec(

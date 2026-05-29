@@ -1,0 +1,109 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-146
+Low
+Primary
+S-202
+Incorrect pool parameters when previewing rebalance via `previewRebalance (...)` function
+dic0de
+14
+Sufficient
+383d ago
+Finding description and impact
+
+The previewRebalance(...) function is used to preview the rebalance action. Probably this would be used off-chain to determine whether calling rebalance(...) is appropriate or not. However the function calls the internal function _getQuoteAndDirection(...) .
+
+The _getQuoteAndDirection(...) function uses LamboRebalanceOnUniswap contract fee amount and sets sqrtPriceLimitX96 as 0 instead of using the uniswapPool's parameters to get the most accurate quote as seen below:
+
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    ) internal view returns (uint256 amountOut, uint256 directionMask) {
+        (amountOut, , , ) = IQuoter(quoter).quoteExactInputSingleWithPool(
+            IQuoter.QuoteExactInputSingleWithPoolParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                amountIn: amountIn,
+                fee: fee, //@audit should use pool fee not this  as well as other parameters. 
+                pool: uniswapPool,
+                sqrtPriceLimitX96: 0
+            })
+        );
+
+Therefore, in the event the UniswapPool's fee and sqrtPriceLimitX96 are different, this would not return an accurate quote which would make the previewRebalance(...) function to output incorrect results that might be used to call rebalance.
+
+Proof of Concept
+
+Explain and rationalize the potential impact. Provide:
+
+function _getQuoteAndDirection(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    ) internal view returns (uint256 amountOut, uint256 directionMask) {
+        (amountOut, , , ) = IQuoter(quoter).quoteExactInputSingleWithPool(
+            IQuoter.QuoteExactInputSingleWithPoolParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                amountIn: amountIn,
+                fee: fee, //@audit should use pool fee not this  as well as other parameters. 
+                pool: uniswapPool,
+                sqrtPriceLimitX96: 0
+            })
+        );
+        directionMask = (tokenIn == weth) ? _BUY_MASK : _SELL_MASK;
+    }
+
+Recommended mitigation steps
+
+Consider using UniswapPool's fee and sqrtPriceLimitX96 parameters in the _getQuoteAndDirection(...) function.
+
+Links to affected code
+LamboRebalanceOnUniwap.sol#L150-L164
+Opens in a new window
+Submissions touching same files
+LamboRebalanceOnUniwap.sol
+Timeline
+Submitted
+Created: 535d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

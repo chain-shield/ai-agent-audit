@@ -1,0 +1,152 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-5
+Medium
+Primary
+S-595
+Missing option to remove tokens from the `isTokenSupport` mapping can result in huge financial loss for users and the protocol
+BenRai
+74
+Sufficient
+383d ago
+Impact
+
+Because there is no option for the admin to remove a token from the isTokenSupport mapping, a depeg of a whitelisted token can lead to significant financial loss for users and the protocol
+
+Proof of Concept
+
+When selling a vesting on the marketplace users need to specify the currency the buyer should pay for the sold tokens. To ensure the safety of the users and the safety of the protocol’s revenue, only currencies whitelisted in the isTokenSupport mapping can be used and according to the protocol only stable coins will be whitelisted. For a token to be whitelisted the function addCoin needs to be called by the admin.
+
+The issue arises from the fact that there is no way to remove a coin from the whitelist once it is on it. This poses a significant risk for the users and the revenue of the protocol in case a whitelisted stable coin losses his peg and becomes worthless. Even though the coin becomes worthless
+
+unsuspected uses can still list their vestings using the worthless currency practically giving away their tokens for free
+all listings using this currency can still be bought resulting in significant loss for the seller
+the fees for the protocol collected for listings using the depegged currency will also be worthless
+
+This results in significant financial loss for users as well as the protocol.
+
+Recommended Mitigation Steps
+
+Add an option for the admin to remove currencies from the whitelist. This way no new listings can be created with a depegged currency. To protect the vestings already listed with the bad currency, make sure to check if the currency used for a listing is still on the whitelist before executing a sale. This way sellers of the impacted listings are protected from selling their vestings for worthless currency and can delist their listings once they become aware of the depeg.
+
+Links to affected code
+SecondSwap_Marketplace.sol#L205-L218
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+View full submission
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-595.
+Valid Med
+Edited: Feb 22
+Koolex
+
+Taking into account the sponsor's input, no change of severity
+
+Liquid stables
+Edited: Feb 22
+calvinx
+
+In our initial design, we will only use liquid stables, i.e. USDT and USDC. In a depeg scenario, we can freeze listing and recommend sellers to remove their listings. We will include a fix
+
+Should be medium
+Edited: Feb 22
+BenRai
+OP
+
+Hi Koolex, thank you for juding!
+
+I was wondering why this issue is only a low eventhough it can lead to significant loss for all participants of the protocol. I would argue that becasue of the significant impact it should be at least medium.
+
+Would be great to get your perspective on this.
+
+0xrex
+01/25/2025
+
+hi again Koolex, my mind tends the same as BenRai'
+
+Koolex
+01/29/2025
+
+Validator's comment:
+
+The supported tokens are under protocol team's review, we can expect that most widely used token such as ETH/USDC/USDC to be included as currency token. Though it's a good idea to have a quit design, QA is proper to this issue.
+
+My view after further evaluation:
+Since all ERC20 tokens are supported, depegged currency risk is still there, even for USDC which actually dropped under 1$ about a year ago. Therefore, at this point, I believe this can be Medium.
+
+Duplicates
+7
+S-217
+Supported coin cannot be removed from `Marketplace` in case of malicious one
+zanderbyte
+100
+S-911
+isTokenSupport[_token] cannot be set to false
+Taiger
+80
+S-610
+Tokens no longer supported can still be used to trade up listings
+0xrex
+69
+S-343
+Not possible to remove a supported coin for payments
+0xStalin
+64
+S-1014
+No removal of token from supported
+0xAkira
+60
+S-953
+Missing Functionality to Remove Tokens from Supported Currency List in SecondSwap_Marketplace contract
+Bryan_Conquer
+00
+S-647
+Missing functionality for remove coin from `SecondSwap_Marketplace.sol`
+BajagaSec
+00
+Timeline
+Submitted
+Created: 523d ago
+High
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

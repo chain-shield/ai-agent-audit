@@ -1,3 +1,4 @@
+use crate::benchmark::telemetry;
 use crate::build_brain::graph_db::SmartContractFunction;
 use crate::build_brain::inheritance_map;
 use crate::config::{CODEBLOCK_DB, app_db_path};
@@ -28,6 +29,7 @@ use tokio::fs;
 use anyhow::Result;
 use log::{info, warn};
 use rusqlite::Connection;
+use serde_json::json;
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -832,6 +834,51 @@ pub async fn generate_codeblock_from_codebase(
             );
         }
 
+        let mut parent_contracts = contracts_with_parents
+            .iter()
+            .map(|(contract, _)| contract.clone())
+            .collect::<Vec<_>>();
+        parent_contracts.sort();
+
+        telemetry::append_jsonl(
+            repo,
+            "codeblock_manifest.jsonl",
+            "codeblock_manifest",
+            &json!({
+                "contract": main_contract.clone(),
+                "project_id": repo.project_id.clone(),
+                "max_depth": max_depth,
+                "token_budget": token_budget,
+                "final_token_count": final_token_count,
+                "budget_exceeded": final_token_count > token_budget,
+                "traversal_mode": if slither_available { "slither_call_graph" } else { "import_only" },
+                "slither_available": slither_available,
+                "called_contracts": sorted_string_set(&contracts),
+                "contracts_with_depth": sorted_string_set(&contracts_with_depth),
+                "parent_contracts": parent_contracts,
+                "included_files": sorted_path_set(&unique_files, repo),
+                "source_dependencies": sorted_path_set(&main_source_files, repo),
+                "library_dependencies": sorted_path_set(&main_lib_files, repo),
+                "interfaces": sorted_interface_set(&main_interfaces, repo),
+                "interface_implementations": sorted_named_paths(&main_interface_implementations, repo),
+                "deployment_scripts": sorted_path_set(&contract_scripts, repo),
+                "counts": {
+                    "supporting_contracts_added": contracts_added,
+                    "supporting_contracts_skipped_no_file": contracts_skipped_no_file,
+                    "supporting_contracts_skipped_too_small": contracts_skipped_too_small,
+                    "supporting_contracts_skipped_budget": contracts_skipped_budget,
+                    "source_files_added": source_files_added,
+                    "source_files_skipped_duplicate": source_files_skipped_dup,
+                    "source_files_skipped_read_error": source_files_skipped_read_error,
+                    "source_files_skipped_budget": source_files_skipped_budget,
+                    "interface_implementations_added": impl_added,
+                    "interface_implementations_skipped_duplicate": impl_skipped_dup,
+                    "interface_implementations_skipped_read_error": impl_skipped_read_error,
+                    "interface_implementations_skipped_budget": impl_skipped_budget
+                }
+            }),
+        );
+
         let codeblock = MarkdownCodeblock {
             id: Uuid::new_v4().to_string(),
             project_id: repo.project_id.clone(),
@@ -847,6 +894,43 @@ pub async fn generate_codeblock_from_codebase(
     }
 
     Ok(())
+}
+
+fn sorted_string_set(values: &HashSet<String>) -> Vec<String> {
+    let mut sorted = values.iter().cloned().collect::<Vec<_>>();
+    sorted.sort();
+    sorted
+}
+
+fn sorted_path_set(values: &HashSet<PathBuf>, repo: &RepoPaths) -> Vec<String> {
+    let mut sorted = values
+        .iter()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| display_file(path, repo))
+        .collect::<Vec<_>>();
+    sorted.sort();
+    sorted
+}
+
+fn sorted_interface_set(values: &HashSet<(String, PathBuf)>, repo: &RepoPaths) -> Vec<String> {
+    let mut sorted = values
+        .iter()
+        .map(|(name, path)| format!("{}:{}", name, display_file(path, repo)))
+        .collect::<Vec<_>>();
+    sorted.sort();
+    sorted
+}
+
+fn sorted_named_paths(
+    values: &std::collections::HashMap<String, PathBuf>,
+    repo: &RepoPaths,
+) -> Vec<String> {
+    let mut sorted = values
+        .iter()
+        .map(|(name, path)| format!("{}:{}", name, display_file(path, repo)))
+        .collect::<Vec<_>>();
+    sorted.sort();
+    sorted
 }
 
 pub async fn get_contract_file_content(

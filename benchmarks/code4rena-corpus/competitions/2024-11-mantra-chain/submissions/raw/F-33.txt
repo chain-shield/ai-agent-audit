@@ -1,0 +1,223 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-33
+Low
+Primary
+S-140
+Missing `WasmKeeper` dependency in `TokenFactory` module breaks `before-send` hook functionality
+Rhaydden
+30
+Sufficient
+383d ago
+Scope Consideration
+
+In the Publicly know issues section in the contest readMe, the protocol hints:
+
+Issues directly related to cosmos-sdk, IBC, cosmwasm and their dependencies (comet-bft) will not be within the scope of this audit. Basically if it is a issue affecting all cosmos chains of the same versions then it should be out of scope.
+
+However, if the issue arise from the custom code we made on our cosmos-sdk, or if the issues are directly affecting behavior of our custom modules, or if our custom modules are causing issues in the base cosmos modules (includes cosmwasm and IBC) then they should be included in the scope.
+
+I'd like to point out that the issue in this report is not an issue that affects "all cosmos chains of the same versions" - it's specific to this protocol's implementation of the tokenfactory module and how it integrates with cosmwasm. But rather, thiss issue stems from the custom tokenfactory module's code, specifically in the ProvideModule function which is custom implementation, not part of the base cosmos-sdk or cosmwasm.It affects the behavior of the custom tokenfactory module (BeforeSend hooks don't work). More like an incorrect initialization of dependencies, not about the dependencies themselves being faulty.
+
+Finding description and impact
+
+TokenFactory module::ProvideModule incorrectly initializes the module's keeper by passing nil for the required contractKeeper (WasmKeeper) param. This breaks the module's before-send hook functionality, which is made to execute calls before tokens are transferred.
+
+The root cause is that the ModuleInputs struct in module.go lacks the WasmKeeper field, leading to the ProvideModule function having no way to receive and pass this required dependency to the keeper constructor.
+
+Impact
+
+Any attempt to use before-send hooks will fail silently or with errors since the module cannot execute the required contract calls. All BeforeSend hooks will fail due to nil contractKeeper. There will be panics during token transfers. BeforeSend hook gas metering system becomes non-functional and ther'll be no protection against infinite loops in contract calls.
+
+Proof of Concept
+Missing WasmKeeper in ModuleInputs:
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/tokenfactory/module.go#L189-L198
+
+// In module.go
+type ModuleInputs struct {
+    depinject.In
+    
+    Cdc           codec.Codec
+    StoreService  store.KVStoreService
+    Config        *modulev1.Module
+    Logger        log.Logger
+    AccountKeeper types.AccountKeeper
+    BankKeeper    types.BankKeeper
+    // WasmKeeper is missing but required
+}
+Nil WasmKeeper in Keeper Initialization:
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/tokenfactory/module.go#L214-L221
+
+// In module.go - ProvideModule function
+k := keeper.NewKeeper(
+    in.Cdc,
+    in.StoreService,
+    in.Config.KnownModules,
+    in.AccountKeeper,
+    in.BankKeeper,
+    nil,  // WasmKeeper is nil
+    authority.String(),
+)
+
+But take a look at WasmKeeper interface requirements here:
+
+// In types/expected_keepers.go
+type WasmKeeper interface {
+    Sudo(ctx context.Context, contractAddress sdk.AccAddress, msg []byte) ([]byte, error)
+    GetContractInfo(ctx context.Context, contractAddress sdk.AccAddress) *wasmtypes.ContractInfo
+}
+
+Most importantly, callBeforeSendListener function attempts to use the nil contractKeeper:
+
+// in keeper/before_send.go
+func (k Keeper) callBeforeSendListener(ctx context.Context, from, to sdk.AccAddress, amount sdk.Coins, blockBeforeSend bool) (err error) {
+    // ...
+    if blockBeforeSend {
+        _, err = k.contractKeeper.Sudo(c, cwAddr, msgBz)  <----This will panic because contractKeeper is nil
+        if err != nil {
+            return errorsmod.Wrapf(err, "failed to call before send hook for denom %s", coin.Denom)
+        }
+    }
+    // ...
+}
+
+Also, there will be hook Setting Failure since the SetBeforeSendHook message handler attempts validation:
+
+// in keeper/msg_server.go
+func (server msgServer) SetBeforeSendHook(goCtx context.Context, msg *types.MsgSetBeforeSendHook) (*types.MsgSetBeforeSendHookResponse, error) {
+    // ...snip
+>>>    err = server.Keeper.setBeforeSendHook(ctx, msg.Denom, msg.ContractAddr)
+    if err != nil {
+        return nil, err
+    }
+    // ...snip
+}
+
+This issue also makes the BeforeSend hook gas metering system become non-functional.
+
+// in keeper/before_send.go
+childCtx := c.WithGasMeter(types2.NewGasMeter(types.TrackBeforeSendGasLimit))
+_, err = k.contractKeeper.Sudo(childCtx, cwAddr, msgBz)  <----- Will panic - contractKeeper is nil
+Recommendations
+Modify ModuleInputs struct to include WasmKeeper:
+type ModuleInputs struct {
+    depinject.In
+
+    Cdc           codec.Codec
+    StoreService  store.KVStoreService
+    Config        *modulev1.Module
+    Logger        log.Logger
+    AccountKeeper types.AccountKeeper
+    BankKeeper    types.BankKeeper
+    WasmKeeper    types.WasmKeeper  // Add this field.  <----------
+}
+Update ProvideModule to pass the WasmKeeper:
+func ProvideModule(in ModuleInputs) ModuleOutputs {
+    authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+    if in.Config.Authority != "" {
+        authority = authtypes.NewModuleAddressOrBech32Address(in.Config.Authority)
+    }
+    k := keeper.NewKeeper(
+        in.Cdc,
+        in.StoreService,
+        in.Config.KnownModules,
+        in.AccountKeeper,
+        in.BankKeeper,
+        in.WasmKeeper,  // Pass the WasmKeeper instead of nil
+        authority.String(),
+    )
+    // ...
+}
+Add validation in NewKeeper:
+func NewKeeper(
+    cdc codec.Codec,
+    storeService store.KVStoreService,
+    knownModules []string,
+    accountKeeper types.AccountKeeper,
+    bankKeeper types.BankKeeper,
+    contractKeeper types.WasmKeeper,
+    authority string,
+) Keeper {
+    if contractKeeper == nil {
+        panic("contractKeeper cannot be nil in tokenfactory module")
+    }
+    return Keeper{
+        // ...
+    }
+}
+Links to affected code
+module.go#L189-L198
+Opens in a new window
+module.go#L214-L221
+Opens in a new window
+Submissions touching same files
+module.go
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-140.
+Not Valid
+Edited: Feb 22
+mantra_lance
+
+We do not use dependency injection for initializing the app but instead manually initialize the app in app.go
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Doesn't look valid: app.go:L516 passes the proper WasmKeeper. Would be M at most
+
+Duplicates
+1
+S-206
+Disabled ICS20Wasm Hook Functionality Due to Unset ContractKeeper
+abdulsamijay
+00
+Timeline
+Submitted
+Created: 510d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

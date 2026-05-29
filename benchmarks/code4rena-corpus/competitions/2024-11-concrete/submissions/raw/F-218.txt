@@ -1,0 +1,108 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-218
+Low
+Primary
+S-1058
+Incompatible Clone Implementation with ZKSync Chain
+0x2517
+00
+Sufficient
+383d ago
+
+The issue is proposed since the contract will be deployed across chains(Ethereum,BSC,Other,ArbitrumCorn)
+
+Finding description and impact
+
+The Clones library from OpenZeppelin is incompatible with ZKSync Era. This incompatibility stems from fundamental differences in how contract deployment works on ZKSync(EVM chain) compared to traditional EVM chains.
+
+The current implementation uses runtime assembly to generate and deploy proxy contracts using create and create2 opcodes:
+
+newVault = Clones.cloneDeterministic(implementation_.implementationAddress, salt_);
+
+On ZKSync Era, contract deployments require the compiler must be aware of the bytecode of the deployed contract in advance.
+
+To guarantee that create/create2 functions operate correctly, the compiler must be aware of the bytecode of the deployed contract in advance. The compiler interprets the calldata arguments as incomplete input for ContractDeployer, as the remaining part is filled in by the compiler internally. The Yul datasize and dataoffset instructions have been adjusted to return the constant size and bytecode hash rather than the bytecode itself.
+
+However, it would be impossible for the compiler to know the actual bytecode beforehand, causing issues due to incompatibility.
+
+Proof of Concept
+
+The issue manifests in the VaultFactory.sol contract where new vaults are deployed using Clones.cloneDeterministic:
+
+    function deployVault(
+        ImplementationData calldata implementation_,
+        bytes calldata data_,
+        bytes32 salt_
+    ) external onlyOwner returns (address newVault) {
+        // Deploy a new clone of the implementation.
+        newVault = Clones.cloneDeterministic(implementation_.implementationAddress, salt_);
+	...
+}
+
+This call ultimately executes the assembly code that generates bytecode at runtime, which conflicts with ZKSync's requirement of compile-time bytecode knowledge.
+
+Recommended mitigation steps
+
+Use ZKSync-specific deployment method for ZKSync deployments
+
+Links to affected code
+VaultFactory.sol#L34-L35
+Opens in a new window
+Clones.sol#L55-L58
+Opens in a new window
+Submissions touching same files
+VaultFactory.sol
+Clones.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1058.
+0xnev-validator-comment-S-1058
+Edited: Feb 22
+0xnev
+
+QA could be more appropriate, since there is no explicit indication that we will deploy on zkSync. Alternatively a separate factory contract can be utilized if zkSync deployment is desired
+
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

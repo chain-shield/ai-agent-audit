@@ -1,0 +1,163 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-140
+Medium
+Primary
+S-358
+Vulnerable liquidity slippage calculation doesn't ensure slippage protection due to unscaled assets sum
+oakcobalt
+68
+Sufficient
+383d ago
+Finding description and impact
+
+Current slippage calculation for providing liquidity to stableswap pool uses simple sum of unscaled asset balance. This is vulnerable because it doesn't account for differences in asset decimals, which might cause slippage calculation to be invalid.
+
+Proof of Concept
+
+Vulnerable case: (1000000 usdc + 1e18 dai) vs (1e18 usdc + 1e6 dai)
+
+The pool impact of depositing 1000000 usdc + 1e18 dai vs depositing 1e18 usdc + 1e6 dai are expected to diverge.
+
+However, in the current slippage check, both cases will lead to the same deposits_total. This invalidates the pool_ratio / deposit_ratio calculation.
+
+//contracts/pool-manager/src/helpers.rs
+
+pub fn assert_slippage_tolerance(
+    slippage_tolerance: &Option<Decimal>,
+    deposits: &[Coin],
+    pools: &[Coin],
+    pool_type: PoolType,
+    amount: Uint128,
+    pool_token_supply: Uint128,
+) -> Result<(), ContractError> {
+    if let Some(slippage_tolerance) = *slippage_tolerance {
+...
+        let deposits: Vec<Uint256> = deposits.iter().map(|coin| coin.amount.into()).collect();
+        let pools: Vec<Uint256> = pools.iter().map(|coin| coin.amount.into()).collect();
+        // Ensure each prices are not dropped as much as slippage tolerance rate
+        match pool_type {
+            PoolType::StableSwap { .. } => {
+                let pools_total: Uint256 = pools
+                    .into_iter()
+|>                  .fold(Uint256::zero(), |acc, x| acc.checked_add(x).unwrap());
+                let deposits_total: Uint256 = deposits
+                    .into_iter()
+|>                  .fold(Uint256::zero(), |acc, x| acc.checked_add(x).unwrap());
+
+                let pool_ratio = Decimal256::from_ratio(pools_total, pool_token_supply);
+                let deposit_ratio = Decimal256::from_ratio(deposits_total, amount);
+
+                // the slippage tolerance for the stableswap can't use a simple ratio for calculating
+                // slippage when adding liquidity. Due to the math behind the stableswap, the amp factor
+                // needs to be in as well, much like when swaps are done
+|>              if pool_ratio * one_minus_slippage_tolerance > deposit_ratio {
+                    return Err(ContractError::MaxSlippageAssertion);
+                }
+
+(https://github.com/code-423n4/2024-11-mantra-dex/blob/26714ea59dab7ecfafca9db1138d60adcf513588/contracts/pool-manager/src/helpers.rs#L424-L429)
+Flows: contracts/pool-manager/src/liquidity/commands::provide_liquidity → helpers::assert_slippage_tolerance
+
+As we can see, in the vulnerable case above, pools_total and deposits_total will be the same in both cases where the actual deposits assets amount when aligned to 18 decimals and the actual deposit assets value vastly differ. This invalidates the comparison check results.
+
+Recommended mitigation steps
+
+Scale the asset to the same decimal before performing sum.
+
+Links to affected code
+helpers.rs#L426
+Opens in a new window
+helpers.rs#L429
+Opens in a new window
+Submissions touching same files
+helpers.rs
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-358.
+Not a dupe of F-37
+Edited: Feb 22
+carrotsmuggler
+
+The issue describes a lack of decimal validation adjustment, which is covered in F-12.
+
+F-12 shows that the liquidity addition does not adjust decimals. It doesn't adjust decimals when calculating liquidity mint amounts, and thus it also doesn't adjust decimals during slippage calculation.
+
+The issue here shows that the slippage function doesn't work properly, even if the decimals are same.
+
+oakcobalt
+OP
+Edited: 02/04/2025
+
+This is not a dup of F-12. F-12 only covers compute_lp_mint_amount_for_stableswap_deposit, which is used when calculating liquidity. This report covers assert_slippage_tolerance which is different code. If the decimal scaling in slippage check is not corrected, the slippage can still be incorrect even if F-37 is fixed.
+
+3docSec
+02/05/2025
+
+Good call, while it's related to F-12 I agree it's not quite the same, and unlike what was said for the F-43 group, slippage checks are not quite the same as due LP shares calculations.
+
+Not a duplicate
+Edited: Feb 22
+oakcobalt
+OP
+
+Thanks for judging the contest!
+I don't think this is a dup of F-37, This report talks about incorrect decimal handling leading to invalid slippage calculation in stable swap pools. F-37 deals with slippage comparison, not related to decimal handling.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Decimal handling, relating to slippage
+
+jvr0x
+01/22/2025
+
+I believe there are other issues related to this, potentially duplicate.
+
+3docSec
+01/31/2025
+
+Good call, this is a reasonable dup of F-37, even though they suggest different mitigations
+
+Timeline
+Submitted
+Created: 497d ago
+Medium
+Triage
+Primary
+Sufficient
+Review
+Judging
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

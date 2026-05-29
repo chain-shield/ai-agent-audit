@@ -1,0 +1,165 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-144
+Medium
+Primary
+S-150
+Unlisting a vesting after seller has claimed additional steps locks tokens which should have been claimable already
+BenRai
+74
+Sufficient
+383d ago
+Impact
+
+Because unlisted vestings are equally distributed to the unclaimed steps of the seller, if a seller unlists a vesting after he claimed additional steps, tokens which should have been claimable already are locked again and the unlocking schedule is disrupted.
+
+Proof of Concept
+
+The core functionality of the SecondSwap protocol is the option to sell tokens which are currently still locked in the vesting schedule. A user which has a vesting allocation of a token can sell tokens which are currently still locked/unvested to other users.by listing them for sale. The tokens are transferred to the VestingManager and the users releaseRate is adjusted accordingly.
+E.g. if the user has a vesting of 1,000 tokens where the vesting has 10 steps, the user will have a releaseRate of
+1000 tokens /10 steps = 100 tokens / step
+
+The issue arises if a seller unlist a vesting and since the time he listed the vesting a new step was unlocked which he claimed. Because the tokens he gets back by unlisting his vesting are distributed equally by increasing his releaseRate for his unclaimed steps, tokens which should be unlocked will be locked again.
+
+_vestings[_beneficiary].releaseRate =
+                (_vestings[_beneficiary].totalAmount - _vestings[_beneficiary].amountClaimed) /
+                (numOfSteps - _vestings[_beneficiary].stepsClaimed);
+Scenario Illustration
+A vesting has 1000 tokens and 10 steps meaning that at each step 100 tokens should become claimable.
+Alice has an allocation of 100 tokens and therefore a releaseRate of 10 tokens / step. She lists 50 of her tokens for sale. 50 tokens are transferred to the VestingManager and her release rate is adjusted to (100 - 50) tokens / 10 steps = 50/10 = 5 tokens/step
+The first 5 steps are unlocked and Alice claims her 5 tokens/ step * 5 steps = 25 tokens which leaves her with 25 tokens to claim.
+Since no one has bough her vesting she decides to unlist it. The 50 tokens which are refunded are distributed to her unclaimed steps by increasing the release rate to (25 + 50)/(10-5) = 75 / 5 = 15 tokens / step
+Alice has all her initial allocation back but she can not claim any additional tokens at the moment event though according to the initial allocation, once step 5 is unlocked a total of 5 * 10 = 50 tokens of her inital vesting should be claimable.
+Recommended Mitigation Steps
+
+To prevent locking tokens which should be claimable when a vesting is unlisted, consider adding the lastStepsClaimedSeller variable listing info indicating the last step the seller has claimed when creating the listing:
+
+    struct Listing {
+        address seller;
+        uint256 total;
+        uint256 balance;
+        uint256 pricePerUnit;
+        ListingType listingType;
+        DiscountType discountType;
+        uint256 discountPct;
+        uint256 listTime;
++      uint256 lastStepsClaimedSeller;
+        address whitelist;
+        uint256 minPurchaseAmt;
+        Status status;
+        address currency;
+        address vestingPlan;
+    }
+
+
+Also, an additional info about claimable tokens should be added to the vesting information:
+
+struct Vesting {
+        uint256 stepsClaimed;
+        uint256 amountClaimed;
+        uint256 releaseRate;
+        uint256 totalAmount;
++      uint256 claimableAmount;
+    }
+
+When the seller unlist a vesting, his last stepsClaimed is compared to lastStepsClaimedSeller of the listing. If they differ, they are handled like this:
+
+A amount of refunded tokens proportional to the steps claimed since the vesting was listed are allocated to claimableAmount of the seller and can be claimed immediately since they have been unlocked already:
+
+claimableAmount = refundedTokens * (stepsClaimed-lastStepsClaimedSeller) / numOfSteps
+
+releaseRate of the seller is adjusted using the remaining refunded tokens.
+
+Links to affected code
+SecondSwap_VestingManager.sol#L149-L152
+Opens in a new window
+Submissions touching same files
+SecondSwap_VestingManager.sol
+Comments for the judge
+4
+You are viewing comments for the primary submission, S-150.
+S-805
+Edited: Feb 22
+sl1
+
+Unless I'm missing something S-805 seems to be a dup of this issue.
+
+Koolex
+02/01/2025
+
+It's not the same. S-805 not talking about unlisting at all
+
+sl1
+Edited: 02/02/2025
+
+But isn't the logic the same? S-805 describes how tokens are locked after user claims and buys tokens, and this issue describes how tokens are locked if user claims and unlists, where underlying problem is a transfer of tokens from marketplace (be it by unlisting or buying) to the user who has already claimed. They both highlight calculations of releaseRate when transferring in an allocation as a root cause, where claimable steps of an allocation transferred in are not considered.
+
+Valid Med
+Edited: Feb 22
+Koolex
+
+Based on above, a valid Med.
+
+Token shouldn't be locked
+Edited: Feb 22
+calvinx
+
+The token's should be claimable and not locked. This is a valid issue
+
+487 not a duplicate of 732
+Edited: Feb 22
+BenRai
+OP
+
+Hi Koolex, thank you for judging and sorry for all my comment!
+
+THIS ISSUE is not a duplicate of S-732. 732 describes what happens when a new user without an vesting buys his first vesting (tokens can be claimed earlier) but THIS ISSUE is about what happens if a user unlist a listing ( tokens which should be claimable are getting locked).
+
+Both issues are different which is also reflected in their different root causes.
+The root of 732 is in the _createVesting function´s if statement for new users.
+The root cause for THIS ISSUE is in the function _createVesting function´s if statement for existing users.
+
+The two different root causes need to be fixed in different ways therefore the two issues should not be the same.
+
+Timeline
+Submitted
+Created: 528d ago
+Medium
+Triage
+Sufficient
+Review
+Judging
+Medium
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

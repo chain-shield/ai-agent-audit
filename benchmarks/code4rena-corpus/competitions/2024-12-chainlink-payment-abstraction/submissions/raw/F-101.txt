@@ -1,0 +1,148 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink Payment Abstraction
+/
+F-101
+Low
+Primary
+S-435
+Both `withdrawNative()` and `withdrawNonAllowlistedAssets()` remain accessible during emergency situations.
+0xpiken
+65
+Sufficient
+383d ago
+Finding description and impact
+
+WITHDRAWER_ROLE caller can withdraw assets from FeeAggregator or FeeRouter under emergency situations
+
+Proof of Concept
+
+Both FeeAggregator and FeeRouter support emergency withdrawal. No one except the DEFAULT_ADMIN_ROLE caller is allowed to withdraw all assets in the smart contracts during an emergency event.
+
+However, both withdrawNative() and withdrawNonAllowlistedAssets() can be called under emergency situations due to lack of whenNotPaused modifier.
+
+Copy below codes to emergencyWithdraw.t.sol and run forge test --match-test test_emergencyWithdraw_WithdrawNonAllowlistedAssets:
+
+  function test_emergencyWithdraw_WithdrawNonAllowlistedAssets() public {
+    //@audit-info s_feeAggregatorReceiver is paused
+    assertEq(s_feeAggregatorReceiver.paused(), true);
+    _changePrank(WITHDRAWER);
+    //@audit-info WITHDRAWER can withdraw assets
+    s_feeAggregatorReceiver.withdrawNonAllowlistedAssets(WITHDRAWER, s_assets, s_amounts);
+
+    assertEq(s_mockWETH.balanceOf(WITHDRAWER), s_amounts[0]);
+    assertEq(s_mockUSDC.balanceOf(WITHDRAWER), s_amounts[1]);
+    assertEq(s_mockWETH.balanceOf(address(s_feeAggregatorReceiver)), 0);
+    assertEq(s_mockUSDC.balanceOf(address(s_feeAggregatorReceiver)), 0);
+  }
+Recommended mitigation steps
+
+Introduce whenNotPaused to both withdrawNative() and withdrawNonAllowlistedAssets():
+
+  function withdrawNonAllowlistedAssets(
+    address to,
+    address[] calldata assets,
+    uint256[] calldata amounts
+- ) external onlyRole(Roles.WITHDRAWER_ROLE) {
++ ) external whenNotPaused onlyRole(Roles.WITHDRAWER_ROLE) {
+    ...
+  }
+
+-  function withdrawNative(address payable to, uint256 amount) external onlyRole(Roles.WITHDRAWER_ROLE) {
++  function withdrawNative(address payable to, uint256 amount) external whenNotPaused onlyRole(Roles.WITHDRAWER_ROLE) {
+    ...
+  }
+Links to affected code
+FeeRouter.sol#L115-L119
+Opens in a new window
+FeeRouter.sol#L143
+Opens in a new window
+FeeAggregator.sol#L354-L358
+Opens in a new window
+FeeAggregator.sol#L379
+Opens in a new window
+Submissions touching same files
+FeeRouter.sol
+FeeAggregator.sol
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-435.
+Low Downgrade Rationale
+Edited: Feb 22
+0xsomeone
+
+The submission and its duplicates outline that it is possible for the WITHDRAWER_ROLE to withdraw assets from the contract even if it is in a paused state.
+
+I am unsure why this should be prevented in a paused state, and even if we consider it to not be permitted in such a scenario the WITHDRAWER_ROLE is one of the highest-trust assumption roles in the system.
+
+As such, I believe that a QA (L) risk rating is better suited for this submission and its duplicates.
+
+Low
+Edited: Feb 22
+KingNFT
+
+Low, but it's better to pause withdrawNative() and withdrawNonAllowlistedAssets() in emergency
+
+cll_rayxpub
+01/08/2025
+
+Agreed on low severity.
+
+Duplicates
+3
+S-274
+Withdrawer role can still withdraw on emergency
+csanuragjain
+52
+S-364
+The function `withdrawNative()` can be called even when the contract is paused
+Timeless
+22
+S-508
+No whenNotPaused in unpausewithdrawNonAllowlistedAssets
+bareli
+03
+Timeline
+Submitted
+Created: 507d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

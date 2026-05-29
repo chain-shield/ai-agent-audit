@@ -1,0 +1,124 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-101
+Low
+Primary
+S-567
+Rounding Issues Leading to Potential Exploits
+TheFabled
+44
+Sufficient
+383d ago
+
+Description:
+
+There are calculations involving division that could result in integer rounding errors, potentially leading to zero values or inaccurate amounts.
+
+Example in _handleTransfers:
+
+uint256 baseAmount = (_amount * discountedPrice) /
+    uint256(10 ** (IERC20Extended(...).decimals()));
+
+require(baseAmount > 0, "SS_Marketplace: Amount too little");
+
+Issue:
+
+If discountedPrice is low or the token decimals are large, baseAmount could be calculated as zero due to integer division truncation. This could allow purchasers to buy tokens for zero payment or cause a denial of service.
+
+Impact:
+
+Economic Loss: Sellers might lose funds if tokens are sold for less than intended.
+Denial of Service: Transactions might fail, disrupting the marketplace operations.
+
+Recommendation:
+
+Use SafeMath with Precise Calculations: Utilize libraries that handle fixed-point arithmetic to maintain precision.
+Set Minimum Price Thresholds: Enforce a minimum discountedPrice and _amount to prevent zero-value calculations.
+Validate Calculations: After performing calculations, check for zero or unexpected values and revert if necessary.
+Links to affected code
+SecondSwap_Marketplace.sol#L459
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+View full submission
+Duplicates
+9
+S-890
+`SecondSwap_Marketplace::spotPurchase` is Vulnerable to Precision Loss and Sellers Will Lose Funds
+IzuMan
+57
+S-755
+Rounding Errors in Price Calculations on the SecondSwap Marketplace Contract
+boredpukar
+07
+S-1057
+Rounding down issue if the currency is really high valued
+0xaudron
+00
+S-1005
+Rounding issues of baseAmount
+aster
+00
+S-426
+Incorrect Usage of Base Amount Leading to Token Transfer Vulnerability
+macart224
+00
+S-400
+Price Rounding Manipulation in Token Purchases
+iepathos
+00
+S-152
+Users can lose significant amount of funds due to division rounding
+Z3nithpu1se
+00
+S-2
+Buyer Fee Miscalculation in _handleTransfers function
+SmartAuditPro
+00
+S-1
+Rounding Issue in Price Calculation (Vesting Token)
+SmartAuditPro
+00
+Timeline
+Submitted
+Created: 523d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

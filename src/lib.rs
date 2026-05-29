@@ -158,6 +158,10 @@ pub mod cli_args {
     pub mod parse;
 }
 
+pub mod benchmark {
+    pub mod telemetry;
+}
+
 // /// Test module for rig-core API testing
 // pub mod test_rig;
 /// Cost tracking and management for LLM inference

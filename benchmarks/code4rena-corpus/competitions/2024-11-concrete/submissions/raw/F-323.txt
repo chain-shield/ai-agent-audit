@@ -1,0 +1,187 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-323
+Low
+Primary
+S-1334
+Wrong check causing incorrect withdrawals leading to reverts
+samuraii77
+63
+Sufficient
+383d ago
+Finding description and impact
+
+Wrong check causing incorrect withdrawals leading to reverts due to an unitialized variable
+
+Proof of Concept
+
+The protocol will call batchClaimWithdrawal() to batch withdraw requests in the withdrawal queue. On each request, we call claimWithdrawal() where we have the following check:
+
+if (avaliableAssets != newAvaliableAssets) {
+            _withdrawStrategyFunds(amount, recipient);
+        }
+
+The check is true when there are assets to withdraw. If it is true, we withdraw amount from the strategies. The issue is that the check will be true when it shouldn't. This is how newAvailableAssets gets its value:
+
+(address recipient, uint256 amount, uint256 newAvaliableAssets) = withdrawalQueue.prepareWithdrawal(
+            _requestId,
+            avaliableAssets
+        );
+
+availableAssets is a function input, we call the following function:
+
+ if (_avaliableAssets > amount) {
+            ...
+            avaliableAssets = _avaliableAssets - amount;
+            ...
+        }
+
+If the available assets are more than the amount to withdraw, we set availableAssets to _availableAssets decreased by amount. Then, availableAssets is the newAvailableAssets in the main function. The issue is that if there is no available assets, availableAssets will not change. This is problematic as it was not initialized, thus it has a value of 0. This makes it so we will still withdraw despite not having enough assets.
+
+Recommended mitigation steps
+
+Refactor the code to handle this case
+
+Links to affected code
+WithdrawalQueue.sol#L153
+Opens in a new window
+Submissions touching same files
+WithdrawalQueue.sol
+View full submission
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-1334.
+Similar findings explained in details,
+Edited: Feb 22
+blutorque
+
+I agree with samuraii77, sorry for late reply though. Findings S-350 highlight two different findings, one of that issue is the same as of samuraii77 one, Please consider reviewing S-350, its explained in more detail there.
+
+samuraii77
+OP
+01/19/2025
+
+Judge, note that the primary there is a completely different issue, about a wrong sign. Some deduplication might be needed, this should also be a High.
+
+0xStalin
+01/19/2025
+
+Judge, I added a comment on S-350 about the points brought by Blutorque and Saumari, I hope they are of some help for the final decision.
+
+Invalidating
+Edited: Feb 22
+Picodes
+
+Indeed it's not a duplicate. I don't understand the issue though. If avaliableAssets is 0 everytime nothing will happen anyway ?
+
+samuraii77
+OP
+Edited: 01/19/2025
+
+If available assets is 0, we will end up in the below check as we are checking a non-initialized value with the available assets:
+
+if (avaliableAssets != newAvaliableAssets) {
+            _withdrawStrategyFunds(amount, recipient);
+        }
+
+Then, we withdraw amount which we don't have. The check assumes that they are not equal when we have deducted from the provided available assets, however the they are also not equal when we don't initialize the return value.
+
+Here is the scenario:
+
+There are 100 assets to withdraw, that is the amount value computed in prepareWithdrawal()
+The available assets are 50, so we check whether 50 is enough to fulfil the withdrawal
+We don't pass the check so availableAssets returns as 0
+As 0 is not equal to the 50, it is assumed that the "withdrawal" was prepared correctly and we conduct it
+We revert incorrectly as we withdraw an amount we don't have
+
+This is done in a loop where we must stop before any invalid withdrawal, however we don't causing a DoS on withdrawals.
+
+samuraii77
+OP
+01/18/2025
+
+To simplify it further for you, the function returns newAvailableAssets, however if it is not initialized, it returns 0 by default. As it is 0, it basically assumes that the new available assets are 0, which basically implies that we successfully managed to do a full withdrawal of all our previously available assets, which is not the case in the scenario explained.
+
+Picodes
+01/23/2025
+
+Yes, I get this, you're not adding anything new here. The question is what is the impact?
+
+You're claiming this is of High severity so leads to a loss of funds. Your report doesn't even discuss the impact, and the most obvious one is that the tx tries to withdraw more than has so it just reverts. In this case, the owner can just retry without this withdrawal request or free more funds.
+
+So:
+
+this report isn't properly showing the severity it claims to have found
+the impact showed is Low at max (some admin only function reverts so there is not even a real DoS)
+Picodes
+01/23/2025
+
+Hence my comment "If avaliableAssets is 0 everytime nothing will happen anyway" -> it'll just revert, it's not leading to either a loss of funds either a DoS for users
+
+samuraii77
+OP
+Edited: 01/24/2025
+
+I gave more detail as you said "If avaliableAssets is 0 everytime nothing will happen anyway" which indicates nothing will happen, a revert is not "nothing", I did not know you managed to understand it based on your comment.
+
+You are right the function can be called without that final request but that is broken functionality, the code is clearly wrong. I agree that this is not a High but I believe it can be classified as a medium. For example, S-350 reverts due to a 1 wei difference, which is extremely negligent and is basically a non-issue but has been marked valid. Either way, this was my last comment and will leave it up to you as this could also be considered a low.
+
+Incorrect duplication
+Edited: Feb 22
+samuraii77
+OP
+
+Issue has nothing to do with the issue it is duplicated to, this is a valid separate issue
+
+Duplicates
+2
+S-1387
+Partial loss of funds for request id user during batchClaimWithdrawal() or DOS for withdrawal group
+MrPotatoMagic
+59
+S-1134
+`ConcreteMultiStrategyVault.batchClaimWithdrawal` transaction will revert even if one requestId can not be repaid
+Udsen
+27
+Timeline
+Submitted
+Created: 542d ago
+High
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

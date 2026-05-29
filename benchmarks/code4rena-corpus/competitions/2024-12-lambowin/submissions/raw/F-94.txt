@@ -1,0 +1,115 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-94
+Medium
+Primary
+S-176
+Incorrect Struct Field and Hardcoded `sqrtPriceLimitX96` in `_getQuoteAndDirection`
+Daniel526
+03
+Sufficient
+383d ago
+Finding description and impact
+
+The absence of a properly set sqrtPriceLimitX96 allows swaps to execute at prices far beyond expected limits, exposing the contract to unfavorable trade outcomes. The function is also likely to fail at runtime due to a mismatch in struct field names (amountIn instead of amount)
+
+Proof of Concept
+
+In the _getQuoteAndDirection function, the amountIn parameter is incorrectly used for constructing the QuoteExactInputSingleWithPoolParams struct. Additionally, the sqrtPriceLimitX96 parameter is hardcoded to 0, potentially leading to unintended behavior in price-constrained swaps.
+
+IQuoter.QuoteExactInputSingleWithPoolParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                amountIn: amountIn, // Incorrect struct field usage
+                fee: fee,
+                pool: uniswapPool, 
+                sqrtPriceLimitX96: 0 // No price constraint is applied
+            })
+
+The QuoteExactOutputSingleWithPoolParams struct implementation:
+
+    struct QuoteExactOutputSingleWithPoolParams {
+        address tokenIn;
+        address tokenOut;
+        uint256 amount;
+        uint24 fee;
+        address pool;
+        uint160 sqrtPriceLimitX96;
+    }
+Recommended mitigation steps
+
+Update _getQuoteAndDirection to correctly reference the struct fields and provide configurable sqrtPriceLimitX96 if needed:
+
+(amountOut, , , ) = IQuoter(quoter).quoteExactInputSingleWithPool(
+    IQuoter.QuoteExactInputSingleWithPoolParams({
+        tokenIn: tokenIn,
+        tokenOut: tokenOut,
+        amount: amountIn, // Correct field usage
+        fee: fee,
+        pool: uniswapPool,
+        sqrtPriceLimitX96: sqrtPriceLimitX96 // Example of allowing no limit
+    })
+);
+Links to affected code
+IQuoter.sol#L82-L89
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L156-L163
+Opens in a new window
+Submissions touching same files
+IQuoter.sol
+LamboRebalanceOnUniwap.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-176.
+Comfirm.
+Edited: Feb 22
+Shaneson
+
+Good Suggestion,
+
+Accept.
+
+Timeline
+Submitted
+Created: 535d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

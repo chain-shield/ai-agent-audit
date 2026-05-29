@@ -1,0 +1,107 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-298
+Low
+Primary
+S-881
+Implement A Method To Get Rewards From Strategies
+EPSec
+88
+Sufficient
+383d ago
+Finding description and impact
+
+When a strategy is retired in the ConcreteMultiStrategyVault, there is no mechanism to ensure that rewards allocated to the strategy are claimed. For example, in the MorphoVault, the _getRewardsToStrategy function is not invoked as part of the retireStrategy process. This oversight can leave unclaimed rewards stuck in the contract, rendering them inaccessible and disrupting the protocol's efficiency.
+
+Rewards remain inaccessible, reducing the efficiency of the protocol.
+
+Proof of Concept
+
+Unclaimed Rewards:
+
+The _getRewardsToStrategy function is designed to handle claiming of rewards. However, when a strategy is retired, this function is no longer called, and any remaining rewards associated with the strategy are left unclaimed. This issue arises because the reward-claiming mechanism is not integrated with the retireStrategy function.
+
+Example Context in MorphoVault:
+
+_getRewardsToStrategy uses MorphoV1Helper.claimRewardsAndSend to fetch and distribute rewards.
+When a strategy is retired, this function is no longer utilized, and the rewards remain locked in the strategy.
+The absence of a claim mechanism leaves these rewards permanently inaccessible.
+
+Potential for Loss:
+
+Rewards that accumulate over time but are not claimed represent a financial loss to the protocol and its users. This can also create inefficiencies in fund utilization.
+
+Recommended Mitigation Steps
+
+To address this vulnerability, integrate reward-claiming logic into the retireStrategy function. Below is an example implementation:
+
+function retireStrategy(bytes calldata claimData) external onlyOwner {
+    // Withdraw all assets from the strategy.
+    _morphoVault.withdraw(_morphoVault.maxWithdraw(address(this)), address(this), address(this));
+
+    // Claim any remaining rewards before retiring the strategy.
+    if (claimData.length != 0) {
+        _getRewardsToStrategy(claimData);
+    }
+
+    emit StrategyRetired(address(this));
+}```
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L27
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-881.
+Downgrading
+Edited: Feb 22
+Picodes
+
+the loss is potential and would fall among "admin mistakes"
+
+Timeline
+Submitted
+Created: 543d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

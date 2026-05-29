@@ -1,0 +1,11 @@
+{
+  "counts": {
+    "accepted_fallbacks": 0,
+    "accepted_markdown": 1395,
+    "competitions": 175,
+    "rejected_markdown": 3598,
+    "rejected_without_summary": 0
+  },
+  "generated_at": "2026-05-26T19:23:17Z",
+  "schema_version": "code4rena-corpus-v1"
+}

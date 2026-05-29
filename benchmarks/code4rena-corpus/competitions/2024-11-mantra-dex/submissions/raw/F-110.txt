@@ -1,0 +1,147 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-110
+Medium
+Primary
+S-203
+Emergency Unlocking Penalty Makes Long Duration Positions Economically Advantageous
+Lambda
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The farm-manager contract has a static emergency unlock penalty (initialized to 2% in the deployment file deploy_mantra_dex.sh) regardless of the position's unlocking duration. However, longer unlocking durations provide significantly higher reward weight multipliers (up to 16x for 1 year lockups). This creates an economic imbalance where users are incentivized to:
+
+Create positions with maximum unlocking duration to get the highest weight multiplier (up to 16x)
+Emergency unlock when they want liquidity, only paying the fixed 2% penalty
+
+This undermines the intended lockup mechanism since users can get much higher rewards while maintaining effective liquidity through emergency unlocks. The impact is that the protocol's liquidity stability guarantees are weakened, as users are economically incentivized to game the system rather than maintain their intended lock periods.
+
+Moreover, it can be profitable to open a huge position 1 second before an epoch ends and withdraw immediately (in the new epoch), which hurts real users of the system.
+
+Proof of Concept
+
+The key components of this issue are:
+
+Emergency unlock penalty is static, set during initialization:
+https://github.com/code-423n4/2024-11-mantra-dex/blob/26714ea59dab7ecfafca9db1138d60adcf513588/contracts/farm-manager/src/position/commands.rs#L322
+
+Weight calculation increases significantly with lock duration:
+https://github.com/code-423n4/2024-11-mantra-dex/blob/26714ea59dab7ecfafca9db1138d60adcf513588/contracts/farm-manager/src/position/helpers.rs#L28-L65
+
+For example:
+
+#[test]
+fn test_calculate_weight() {
+    // 1 day lockup = 1x multiplier
+    let weight = calculate_weight(&coin(100, "uwhale"), 86400u64).unwrap();
+    assert_eq!(weight, Uint128::new(100));
+
+    // 1 year lockup = ~16x multiplier
+    let weight = calculate_weight(&coin(100, "uwhale"), 31556926).unwrap();
+    assert_eq!(weight, Uint128::new(1599));
+}
+
+Consider this scenario:
+
+User creates position with 1000 tokens and 1 year lock, getting ~16x weight (16000)
+After collecting boosted rewards, user emergency exits paying only 2% (20 tokens)
+Net result: User got 16x rewards while maintaining effective liquidity with minimal penalty
+
+This makes it economically optimal to always choose maximum duration and emergency unlock when needed, defeating the purpose of tiered lockup periods.
+
+Recommended mitigation steps
+
+The emergency unlock penalty should scale with:
+
+Remaining lock duration
+Position's weight multiplier
+
+Suggested formula:
+
+emergency_penalty = base_penalty * (remaining_duration / total_duration) * (position_weight / base_weight)
+
+This would make emergency unlocks proportionally expensive for positions with higher weights and longer remaining durations, better aligning incentives with the protocol's goals.
+
+Alternative mitigation:
+
+Cap maximum unlock duration to reduce exploitability
+Increase base emergency unlock penalty
+Add minimum hold period before emergency unlocks are allowed
+
+The key is ensuring the penalty properly counterbalances the increased rewards from longer lock periods.
+
+Links to affected code
+commands.rs#L322
+Opens in a new window
+Submissions touching same files
+commands.rs
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-203.
+Valid, not priority
+Edited: Feb 22
+jvr0x
+
+This is a valid concern and the team is aware of that. However, the way the team intends to instantiate the farm manager at the beginning is to set min and max unlock periods to 1 day, so in that case all positions would be the same.
+
+Will probably address this issue once/if the team decides to increase the constraint.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid
+
+Duplicates
+1
+S-284
+Farm Manager's reward multiplier system can be manipulated through short-term cycles despite long-term lock commitments
+Evo
+52
+Timeline
+Submitted
+Created: 503d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

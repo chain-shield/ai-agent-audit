@@ -1,0 +1,138 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-73
+Low
+Primary
+S-216
+Wrong constant product pool fee calculation increases k=xy invariant
+Lambda
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The constant product pool swap implementation deducts fees from the output amount instead of the input amount, which increases the fundamental k = x * y invariant property after every swap and means that the users get too little tokens.
+
+In Uniswap V2 and other major constant product AMMs, fees are charged on the input amount before calculating the output. This ensures that after every swap:
+
+The new reserves satisfy k = (x + amount_in * (1 - fee)) * (y - amount_out) = x * y
+The pool collects fees while maintaining its price discovery mechanism
+
+The current implementation instead:
+
+Calculates output without fees: amount_out = (y * amount_in) / (x + amount_in)
+Deducts fees from amount_out
+Results in: k_new = (x + amount_in) * (y - amount_out * (1 - fees)) > k_old
+
+This means each swap slightly increases k at the expense of the users.
+
+Proof of Concept
+
+The issue exists in helpers.rs#L173-L185:
+
+// offer => ask
+// ask_amount = (ask_pool * offer_amount / (offer_pool + offer_amount)) - swap_fee - protocol_fee - burn_fee
+let return_amount: Uint256 =
+    Decimal256::from_ratio(ask_pool.mul(offer_amount), offer_pool + offer_amount)
+    .to_uint_floor();
+
+// Fees are deducted from return_amount later
+let fees_computation = compute_fees(pool_fees, return_amount)?;
+
+Compare this with the Uniswap V2 implementation:
+
+    // given an input amount of an asset and pair reserves, returns the maximum output amount of the other asset
+    function getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) internal pure returns (uint amountOut) {
+        require(amountIn > 0, 'UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT');
+        require(reserveIn > 0 && reserveOut > 0, 'UniswapV2Library: INSUFFICIENT_LIQUIDITY');
+        uint amountInWithFee = amountIn.mul(997);
+        uint numerator = amountInWithFee.mul(reserveOut);
+        uint denominator = reserveIn.mul(1000).add(amountInWithFee);
+        amountOut = numerator / denominator;
+    }
+
+Example of k increase:
+
+Initial pool: 1000 A, 1000 B, k = 1,000,000
+Swap 100 A with 3% total fees
+Current implementation:
+out = (1000 * 100) / (1000 + 100) = 90.90
+after fees = 90.90 * 0.97 = 88.17
+new reserves: 1100 A, 911.83 B
+new k = 1,003,013 (increased)
+Correct implementation:
+in_after_fees = 100 * 0.97 = 97
+out = (1000 * 97) / (1000 + 97) = 88.42
+new reserves: 1097 A, 911.58 B
+new k = 1,000,000 (preserved)
+Recommended mitigation steps
+
+Apply fees to input amount before calculating output.
+
+This maintains the constant product invariant while still collecting fees for the pool and protocol.
+
+Links to affected code
+helpers.rs#L173-L185
+Opens in a new window
+Submissions touching same files
+helpers.rs
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-216.
+Not an issue
+Edited: Feb 22
+jvr0x
+
+The effect is negligible and arbers would take care of this imbalance.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks L at most: different from Uniswap doesn't mean wrong - increasing K means fees advantage liquidity providers
+
+Timeline
+Submitted
+Created: 503d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

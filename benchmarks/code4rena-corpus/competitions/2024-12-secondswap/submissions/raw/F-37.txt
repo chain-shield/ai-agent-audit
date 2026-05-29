@@ -1,0 +1,200 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-37
+Medium
+Primary
+S-216
+Incorrect referral fee calculations
+zanderbyte
+100
+Sufficient
+383d ago
+Finding description and impact
+
+When a purchase of listed tokens is performed, the caller can provide a referral address. This address should receive a referral fee as a reward for introducing users to the project. According to the dev team, the referral payment will be done off-chain. However, in the current implementation, the referralFeeCost calculations are incorrect, which results in much higher fees (ou to 90% of buyersFeeTotal) for the referral than expected.
+
+Proof of Concept
+
+Assume the default protocol values for buyerFee = 250 and referralFee = 1000. Let's say a user wants to purchase tokens worth 1000 USDT. The buyer fee will be charged on the baseAmount, and for simplicity, we can assume that the _amount is not affected by any discount.
+
+The buyerFeeTotal is calculated as:
+
+buyerFeeTotal = (1000e6 * 250) / 10000 = 25e6
+
+The referrallFeeCost is calculated as:
+
+referralFeeCost =
+                buyerFeeTotal -
+                (baseAmount * bfee * IMarketplaceSetting(marketplaceSetting).referralFee()) /
+                (BASE * BASE);
+
+Substituting the values:
+
+referralFeeCost = 25e6 - (1000e6 * 250 * 1000) / (10000 * 10000)
+                = 25e6 - 2.5e6 
+                = 22.5e6
+
+
+This resulted in a referral fee of 22.5e6 which is much higher than expected.
+
+Recommended mitigation steps
+
+The referralFeeCost should be calculated as a percentage of buyerFeeTotal.
+The correct calculation should be:
+
+referralFeeCost =
+-                buyerFeeTotal -
+-               (baseAmount * bfee * IMarketplaceSetting(marketplaceSetting).referralFee()) /
+-               (BASE * BASE);
++               buyerFeeTotal * IMarketplaceSetting(marketplaceSetting).referralFee() / BASE
+
+This will result in referralFee = 2.5e6 (exactly 10% of buyerFeeTotal)
+
+Links to affected code
+SecondSwap_Marketplace.sol#L480-#L483
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+View full submission
+Duplicates
+49
+S-884
+Referral Fee Cost Calculation Implemented Wrongly, Leading To More Or Less Fees For Referrer
+franfran20
+100
+S-282
+`referralFeeCost` Could Be The Whole `buyerFee` Or Bigger Part
+EPSec
+88
+S-251
+SecondSwap_Marketplace::_handleTransfers Does Not Calculate referralFeeCost Properly
+Ryonen
+80
+S-49
+Incorrect referral fee calculation leading to financial loss for the protocol
+BenRai
+74
+S-652
+Incorrect Referral Fee Calculation Impairs Off-chain Referral Reward Distribution
+0xNirix
+72
+S-837
+Referral fee is calculated incorrectly.
+sl1
+68
+S-787
+`referralFeeCost` is incorrectly calculated
+inh3l
+66
+S-678
+Referral reward are not emitted properly
+Gosho
+66
+S-893
+Incorrect calculation of the `referralFeeCost` in the `SecondSwap_Marketplace._handleTransfers()` function.
+KupiaSec
+66
+S-339
+referralFeeCost is incorrectly computing a bigger value than what it is expected to be.
+0xStalin
+64
+S-453
+Referral fee is calculated wrongly when `spotPurchase`.
+DanielArmstrong
+62
+S-824
+Referral fee calculations are incorrect and lead to referrals getting paid the fee amounts, which are intended for protocol/feeCollector
+JustUzair
+60
+S-682
+Incorrect fee calculation leads to more fees sent to the feeCollector than intended, every time a spot purchase with a valid referral address is made
+JustUzair
+60
+S-821
+The referral fee calculation is incorrect
+c0pp3rscr3w3r
+45
+S-565
+Missing Transfer of Referral Fees
+TheFabled
+44
+S-463
+Incorrect calculation of referral fees
+Drynooo
+42
+S-173
+Incorrect Referral Fee Calculation Leads to 90% Protocol Revenue Loss
+Agontuk
+41
+S-606
+Protocol may lose fee due to wrong calculation of referral fee
+y0ng0p3
+41
+S-245
+Protocol unintentionally creates an unsustainable 'too good to be true' referral program due to inverted fee calculation in `_handleTransfers` function
+Rhaydden
+30
+S-146
+Miscalculation of `feeCollectorTotal` fees when referrer exists leading to receiving more fees than expected
+oualidpro
+23
+S-141
+The `referralFeeCost` are miscalculated leading to less or more referral rewards
+oualidpro
+23
+S-776
+Incorrect referral fee calculation leading to excessive rewards
+Sabit
+20
+S-1068
+referralFeeCost has been calculated incorrectly in `_handleTransfers()`
+smbv-1923
+19
+S-1100
+Wrong referral fee is being emitted in spot purchased function after calculation
+0xlucky
+00
+Timeline
+Submitted
+Created: 527d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

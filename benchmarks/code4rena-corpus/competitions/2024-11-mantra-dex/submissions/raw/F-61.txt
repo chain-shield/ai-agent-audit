@@ -1,0 +1,243 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-61
+Low
+Primary
+S-93
+DoS in farm expansion due to redundant validation of lp_asset creator incurs owners new creation fees
+Tigerfrake
+19
+Sufficient
+383d ago
+Finding description and impact
+
+When creating and expanding farms, the LP asset (params.lp_denom) is validated to ensure it was created by the current pool_manager_addr. However, a configuration update to the pool_manager_addr (through update_config()) can potentially invalidate the checks during farm expansion, as the pool manager address used at the time of the position creation may differ from the updated address.
+
+Now, if a farm owner is blocked from expansion, their farm will be considered expired the moment all rewards have been claimed from it. Once this happens, the farm owner entirely loses expansion ability and therefore if they still want to participate, will have to create a new farm incurring a new (farm creation fee) for no reason when they could have just expanded their farms and avoided this all together.
+
+This therefore only results in financial loses for farm owners as the pattern will repeat with every update.
+
+Proof of Concept
+
+Scenario:
+
+A user creates a farm with a valid params.lp_denom, where the pool_manager_addr is manager_1. The following check is made:
+    // ensure the lp denom is valid and was created by the pool manager
+    validate_lp_denom(&params.lp_denom, config.pool_manager_addr.as_str())?;
+The farm is created and stored in the contract with the original manager_1 address.
+    let farm = Farm {
+        --SNIP--
+>>      lp_denom: params.lp_denom,
+        --SNIP--
+    };
+
+>>  FARMS.save(deps.storage, &farm.identifier, &farm)?;
+Later, the contract owner updates the configuration, changing the pool_manager_addr to manager_2 using the update_config() function.
+    if let Some(pool_manager_addr) = pool_manager_addr {
+>>      config.pool_manager_addr = deps.api.addr_validate(&pool_manager_addr)?;
+    }
+When the user later tries to expand their farm via the expand_farm(), the contract checks if the LP token is valid and whether it was created by the current pool_manager_addr:
+    // ensure the lp denom is valid and was created by the pool manager
+    validate_lp_denom(&params.lp_denom, config.pool_manager_addr.as_str())?;
+
+However, the pool manager address has changed, so this check will now fail since the farm was created under manager_1, not manager_2.
+
+Test:
+<details> <summary>Coded PoC</summary>
+
+In farm_manager/tests/integration.rs, add the following test:
+
+#[test]
+fn farm_exansion_failure_due_to_redundant_validation_of_lp_asset_creator() {
+    let lp_denom = format!("factory/{MOCK_CONTRACT_ADDR_1}/{LP_SYMBOL}").to_string();
+
+    let mut suite = TestingSuite::default_with_balances(vec![
+        coin(1_000_000_000u128, "uom".to_string()),
+        coin(1_000_000_000u128, "uusdy".to_string()),
+        coin(1_000_000_000u128, "uosmo".to_string()),
+        coin(1_000_000_000u128, lp_denom.clone()),
+    ]);
+
+    let creator = suite.creator();
+    let other = suite.senders[1].clone();
+
+    suite.instantiate_default();
+
+    for _ in 0..10 {
+        suite.add_one_epoch();
+    }
+    // current epoch is 10
+
+    suite
+        .manage_farm(
+            &other,
+            FarmAction::Fill { // user creates a farm
+                params: FarmParams {
+                    lp_denom: lp_denom.clone(), // uses this valid lp_denom
+                    start_epoch: Some(20),
+                    preliminary_end_epoch: Some(28),
+                    curve: None,
+                    farm_asset: Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(4_000u128),
+                    },
+                    farm_identifier: Some("farm_1".to_string()),
+                },
+            },
+            vec![coin(4_000, "uusdy"), coin(1_000, "uom")],
+            |result| {
+                result.unwrap();
+            },
+        )
+        .update_config(
+            &creator,
+            None,
+            None,
+            Some(MOCK_CONTRACT_ADDR_2.to_string()), // Owner updates pool_manager_addr
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            |result| {
+                result.unwrap();
+            },
+        )
+        .manage_farm(
+            &other,
+            FarmAction::Fill { // User attempts to use original lp_denom during expansion
+                params: FarmParams {
+                    lp_denom: lp_denom.clone(),
+                    start_epoch: Some(20),
+                    preliminary_end_epoch: Some(28),
+                    curve: None,
+                    farm_asset: Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(5_000u128),
+                    },
+                    farm_identifier: Some("m-farm_1".to_string()),
+                },
+            },
+            vec![coin(5_000u128, "uusdy")],
+            |result| {
+                let err = result.unwrap_err().downcast::<ContractError>().unwrap();
+                match err {
+                    ContractError::AssetMismatch { .. } => {} // Fails here
+                    _ => panic!("Wrong error type, should return ContractError::AssetMismatch"),
+                }
+            },
+        )
+        // Query this farm to confirm failure
+        .query_farms(
+            Some(FarmsBy::Identifier("m-farm_1".to_string())),
+            None,
+            None,
+            |result| {
+                let farms_response = result.unwrap();
+                let farm = farms_response.farms[0].clone();
+                assert_eq!(
+                    farm.farm_asset,
+                    Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(4_000), // Reflects original balance (4_000)
+                    }
+                );
+
+                assert_eq!(farm.preliminary_end_epoch, 28); // No epochs added
+            },
+        );
+}
+
+Output:
+
+running 1 test
+test farm_exansion_failure_due_to_redundant_validation_of_lp_asset_creator ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.01s
+</details>
+Recommended mitigation steps
+
+If the lp_denom was valid during creation, its creator does not need revalidation during expansion. Only verify that the same one is used during expansion:
+
+-   // ensure the lp denom is valid and was created by the pool manager
+-   validate_lp_denom(&params.lp_denom, config.pool_manager_addr.as_str())?;
++   ensure!(
++       params.lp_denom == farm.lp_denom,
++       ContractError::AssetMismatch
++   );
+Links to affected code
+commands.rs#L245-L246
+Opens in a new window
+Submissions touching same files
+commands.rs
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-93.
+Not an issue
+Edited: Feb 22
+jvr0x
+
+The team is aware of this. The configuration of the contract addresses such as the pool manager addr should never change once instantiated. It is technically possible to do it via the UpdateConfig msg in case the address is accidentally set incorrectly, otherwise it won't change.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks L (admins changing global protocol parameters)
+
+Duplicates
+1
+S-84
+DoS in position expansion due to redundant validation of lp_asset creator
+Tigerfrake
+19
+Timeline
+Submitted
+Created: 530d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

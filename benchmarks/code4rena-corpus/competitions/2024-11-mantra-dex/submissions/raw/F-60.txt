@@ -1,0 +1,201 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-60
+Low
+Primary
+S-94
+Farm expansion permits mismatched lp_denom parameters
+Tigerfrake
+19
+Sufficient
+383d ago
+Finding description and impact
+
+During the expand_farm() function execution, the farm owner can pass any params.lp_denom value, as long as it was created by the current pool_manager_addr. This results in a mismatch between the original lp_denom of the farm and the params.lp_denom used during expansion.
+
+Proof of Concept
+
+This is the only check made on the params.lp_denom:
+
+    // @audit-info In `expand_farm`, no check ensures `params.lp_denom` matches the farm's original lp_denom:
+    validate_lp_denom(&params.lp_denom, config.pool_manager_addr.as_str())?;
+    // @audit-info This allows any valid lp_denom from the current pool_manager_addr to pass validation.
+
+Example Scenario:
+
+A farm is created for lp_denom = AssetA.
+The pool_manager_addr then creates a new LP asset, AssetB.
+During expansion, the farm owner passes params.lp_denom = AssetB.
+Validation passes because AssetB was also created by the pool manager.
+The farm is expanded with AssetB, creating a mismatch with the original AssetA.
+Test:
+<details> <summary>Coded PoC</summary>
+
+In farm_manager/tests/integration.rs, add the following test:
+
+#[test]
+fn farm_expansion_allows_mismatched_lp_denom_parameters() {
+    let lp_denom = format!("factory/{MOCK_CONTRACT_ADDR_1}/{LP_SYMBOL}").to_string();
+    let lp_symbol_2: &str = "lp2";
+    let another_lp_denom = format!("factory/{MOCK_CONTRACT_ADDR_1}/{lp_symbol_2}").to_string();
+
+    let mut suite = TestingSuite::default_with_balances(vec![
+        coin(1_000_000_000u128, "uom".to_string()),
+        coin(1_000_000_000u128, "uusdy".to_string()),
+        coin(1_000_000_000u128, "uosmo".to_string()),
+        coin(1_000_000_000u128, lp_denom.clone()),
+        coin(1_000_000_000u128, another_lp_denom.clone()),
+    ]);
+
+    // let creator = suite.creator();
+    let other = suite.senders[1].clone();
+
+    suite.instantiate_default();
+
+    for _ in 0..10 {
+        suite.add_one_epoch();
+    }
+    // current epoch is 10
+
+    suite
+        .manage_farm(
+            &other,
+            FarmAction::Fill {
+                params: FarmParams {
+                    lp_denom: lp_denom.clone(), // User creates a farm with lp_denom
+                    start_epoch: Some(20),
+                    preliminary_end_epoch: Some(28),
+                    curve: None,
+                    farm_asset: Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(4_000u128),
+                    },
+                    farm_identifier: Some("farm_1".to_string()),
+                },
+            },
+            vec![coin(4_000, "uusdy"), coin(1_000, "uom")], // Provides 4_000 rewards
+            |result| {
+                result.unwrap();
+            },
+        )
+        .manage_farm(
+            &other,
+            FarmAction::Fill {
+                params: FarmParams {
+                    lp_denom: another_lp_denom.clone(), // He then expands farm with another_lp_denom
+                    start_epoch: Some(20),
+                    preliminary_end_epoch: Some(28),
+                    curve: None,
+                    farm_asset: Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(5_000u128),
+                    },
+                    farm_identifier: Some("m-farm_1".to_string()),
+                },
+            },
+            vec![coin(5_000u128, "uusdy")], // Adds 5_000 rewards
+            |result| {
+                result.unwrap();
+            },
+        )
+        .query_farms( // Query the farm for stats
+            Some(FarmsBy::Identifier("m-farm_1".to_string())),
+            None,
+            None,
+            |result| {
+                let farms_response = result.unwrap();
+                let farm = farms_response.farms[0].clone();
+                assert_eq!(
+                    farm.farm_asset,
+                    Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(9_000), // The farm reflects total balance (4_000 + 5_000)
+                    }
+                );
+
+                assert_eq!(farm.preliminary_end_epoch, 38); // 10 epochs added successfully
+            },
+        );
+}
+
+Output:
+
+running 1 test
+test farm_expansion_allows_mismatched_lp_denom_parameters ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 0.02s
+</details>
+Recommended mitigation steps
+
+Ensure params.lp_denom matches the farm's original lp_denom:
+
+-   validate_lp_denom(&params.lp_denom, config.pool_manager_addr.as_str())?;
++   ensure!(
++       farm.lp_denom == params.lp_denom,
++       ContractError::AssetMismatch
++   );
+Links to affected code
+commands.rs#L245-L246
+Opens in a new window
+Submissions touching same files
+commands.rs
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-94.
+Invalid
+Edited: Feb 22
+jvr0x
+
+For the farm expansion, what's important is the farm identifier. If that matches, then the farm_asset is checked against the one sent in the params, the other parameters are not important for that task really, that's why they are not being validated.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks inconsequential/L - expand_farm doesn't seem to make any use of the input lp_denom
+
+Timeline
+Submitted
+Created: 530d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

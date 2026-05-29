@@ -1,0 +1,357 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-54
+Low
+Primary
+S-1022
+Changing strategies allocations with locked funds in strategies will break allocation percentages
+zzebra83
+54
+Sufficient
+383d ago
+Finding description and impact
+
+The admin has the ability change allocations for strategies via the changeallocation function.
+
+    /**
+     * @notice Changes strategies allocations.
+     * @dev Can only be called by the vault owner. Validates the total allocation does not exceed 100% and the length corresponds with the strategies array.
+     *      Emits a `StrategyAllocationsChanged`
+     * @param allocations_ The array with the new allocations.
+     * @param redistribute A boolean indicating whether to redistributes allocations.
+     */
+    function changeAllocations(
+        Allocation[] calldata allocations_,
+        bool redistribute
+    ) external nonReentrant onlyOwner takeFees {
+        uint256 len = allocations_.length;
+
+        if (len != strategies.length) revert InvalidLength(len, strategies.length);
+
+        uint256 allotmentTotals = 0;
+        for (uint256 i; i < len; ) {
+            allotmentTotals += allocations_[i].amount;
+            strategies[i].allocation = allocations_[i];
+            unchecked {
+                i++;
+            }
+        }
+        if (allotmentTotals != 10000) revert AllotmentTotalTooHigh();
+
+        if (redistribute) {
+            pullFundsFromStrategies();
+            pushFundsToStrategies();
+        }
+
+        emit StrategyAllocationsChanged(allocations_);
+    }
+
+
+Notice how strategy allocations are updated, followed by pulling funds out and the redistributing using new allocation percentages. e.g. assume we have 3 strategies with 33.33% alloocation each, by calling changeallocation, we could modify it to 80-10-10 %.
+
+However the current implementation does not take into strategies with locked funds(ie total assets not matching withdrawable assets). This will break the allocation percentages, meaning the owner can inadvertently increase the risk profile of the protocol, causing significant damage. to see why we take a look at the function below:
+
+    // We are aware that we aren't using the return value
+    // We control both the length of the array and the external call
+    //slither-disable-next-line unused-return,calls-loop
+    function pullFundsFromSingleStrategy(uint256 index_) public onlyOwner {
+        IStrategy strategy = strategies[index_].strategy;
+        // slither-disable-next-line unused-return
+        if (strategy.getAvailableAssetsForWithdrawal() != strategy.totalAssets()) {
+            console.log("we not redeeming");
+            strategy.withdraw(strategy.getAvailableAssetsForWithdrawal(), address(this), address(this));
+            return;
+        }
+        console.log("we redeaming");
+        strategy.redeem(strategy.balanceOf(address(this)), address(this), address(this));
+    }
+
+
+if funds available for withdrawal are less than total assets(as can be the case in morpho strategy for example), it only partially withdraws, leaving remainder in the strategy, breaking allocation logic.
+
+Assume that strategy funds in strategy 2 are fulled locked, what would happen then to the allocations? The POC below will demonstrate.
+
+Proof of Concept
+
+First POC with no locked funds:
+
+function test_changeAllocations_with_unlocked_funds() public {
+    // 1. Setup vault and initial deposit
+    (ConcreteMultiStrategyVault newVault, Strategy[] memory strats) = _createNewVault(false, false, true);
+    
+    uint256 depositAmount = 10 ether;
+    asset.mint(hazel, depositAmount);
+    vm.startPrank(hazel);
+    asset.approve(address(newVault), depositAmount);
+    newVault.deposit(depositAmount, hazel);
+    vm.stopPrank();
+
+    // Initial allocations should be equal (33.33% each)
+    // So each strategy should have ~3.33 ETH
+
+    // 2. Lock funds in strategies
+    for (uint256 i = 0; i < strats.length; ) {
+        IMockStrategy(address(strats[i].strategy)).setAvailableAssetsZero(false);
+        unchecked {
+            i++;
+        }
+    }
+
+    // 3. Change allocations drastically
+    Allocation[] memory newAllocations = new Allocation[](3);
+    newAllocations[0] = Allocation({index: 0, amount: 8000}); // 80%
+    newAllocations[1] = Allocation({index: 0, amount: 1000}); // 10%
+    newAllocations[2] = Allocation({index: 0, amount: 1000}); // 10%
+    
+    vm.prank(admin);
+    newVault.changeAllocations(newAllocations, true);
+
+    // 4. Show the mismatch
+    for(uint256 i = 0; i < strats.length; i++) {
+        uint256 expectedAmount = depositAmount.mulDiv(newAllocations[i].amount, 10000, Math.Rounding.Floor);
+        uint256 actualAmount = asset.balanceOf(address(strats[i].strategy));
+        
+        console.log("Strategy", i);
+        console.log("New allocation %:", newAllocations[i].amount / 100); // e.g. 80%, 10%, 10%
+        console.log("Expected amount:", expectedAmount);  // e.g. 8 ETH, 1 ETH, 1 ETH
+        console.log("Actual amount:", actualAmount);     // Still ~3.33 ETH each
+        console.log("------------------------");
+
+        // This should fail showing the mismatch
+        //assertEq(actualAmount, expectedAmount, "Strategy balance should match new allocation");
+    }
+}
+
+
+
+with correct allocations:
+
+  Strategy 0
+  New allocation %: 80
+  Expected amount: 8000000000000000000
+  Actual amount: 8000000000000000000
+  ------------------------
+  Strategy 1
+  New allocation %: 10
+  Expected amount: 1000000000000000000
+  Actual amount: 1000000000000000000
+  ------------------------
+  Strategy 2
+  New allocation %: 10
+  Expected amount: 1000000000000000000
+  Actual amount: 1000000000000000000
+
+
+Second POC with locked funds in strategy 2 is below:
+
+function test_changeAllocations_with_locked_funds() public {
+    // 1. Setup vault and initial deposit
+    (ConcreteMultiStrategyVault newVault, Strategy[] memory strats) = _createNewVault(false, false, true);
+    
+    uint256 depositAmount = 10 ether;
+    asset.mint(hazel, depositAmount);
+    vm.startPrank(hazel);
+    asset.approve(address(newVault), depositAmount);
+    newVault.deposit(depositAmount, hazel);
+    vm.stopPrank();
+
+    // Initial allocations should be equal (33.33% each)
+    // So each strategy should have ~3.33 ETH
+
+    // 2. Lock funds in strategy 2, and keep unlocked in strategy 1 and 3
+    for (uint256 i = 0; i < strats.length; ) {
+        if (i == 0 || i == 2){
+        IMockStrategy(address(strats[i].strategy)).setAvailableAssetsZero(false);
+        }
+        unchecked {
+            i++;
+        }
+    }
+
+    // 3. Change allocations drastically
+    Allocation[] memory newAllocations = new Allocation[](3);
+    newAllocations[0] = Allocation({index: 0, amount: 8000}); // 80%
+    newAllocations[1] = Allocation({index: 0, amount: 1000}); // 10%
+    newAllocations[2] = Allocation({index: 0, amount: 1000}); // 10%
+    
+    vm.prank(admin);
+    newVault.changeAllocations(newAllocations, true);
+
+    // 4. Show the mismatch
+    for(uint256 i = 0; i < strats.length; i++) {
+        uint256 expectedAmount = depositAmount.mulDiv(newAllocations[i].amount, 10000, Math.Rounding.Floor);
+        uint256 actualAmount = asset.balanceOf(address(strats[i].strategy));
+        
+        console.log("Strategy", i);
+        console.log("New allocation %:", newAllocations[i].amount / 100); // e.g. 80%, 10%, 10%
+        console.log("Expected amount:", expectedAmount);  // e.g. 8 ETH, 1 ETH, 1 ETH
+        console.log("Actual amount:", actualAmount);     // Still ~3.33 ETH each
+        console.log("------------------------");
+
+        // This should show the mismatch
+        assertNotEq(actualAmount, expectedAmount, "Strategy balance should not match new allocation");
+    }
+}
+
+
+with following output showing wrong allocations:
+
+  New allocation %: 80
+  Expected amount: 8000000000000000000
+  Actual amount: 5333600000000000000
+  ------------------------
+  Strategy 1
+  New allocation %: 10
+  Expected amount: 1000000000000000000
+  Actual amount: 3999700000000000000
+  ------------------------
+  Strategy 2
+  New allocation %: 10
+  Expected amount: 1000000000000000000
+  Actual amount: 666700000000000000
+  ------------------------
+
+
+In the first Proof of Concept (POC), changing allocations to 80-10-10 worked as intended because all strategies could freely withdraw and redistribute funds. However, in the second POC, with locked funds in Strategy 2, only 6.6666 ETH was withdrawn from Strategies 1 and 3. This withdrawn amount was then distributed as 80% (5.3336 ETH) to Strategy 1 and 10% (0.6667 ETH) to Strategy 2 and 3, resulting in actual allocations of 53.34% for Strategy 1, 40% for Strategy 2 (3.33 from prev lock + 0.6667), and only 6.67%(0.6667) for Strategy 3 instead of the intended 80-10-10 distribution.
+
+The broken allocation will completely change the risk profile of the protocol, causing potential financial losses to users. this needs to be addressed to avoid any surprise risks.
+
+Mitigation
+
+One potential mitigation is to avoid changing allocations when any funds are locked by reverting the transaction.
+
+    // We are aware that we aren't using the return value
+    // We control both the length of the array and the external call
+    //slither-disable-next-line unused-return,calls-loop
+    function pullFundsFromSingleStrategy(uint256 index_) public onlyOwner {
+        IStrategy strategy = strategies[index_].strategy;
+        // slither-disable-next-line unused-return
+        if (strategy.getAvailableAssetsForWithdrawal() != strategy.totalAssets()) {
+            revert StrategyHasLockedAssets(address(strategy));
+        }
+        console.log("we redeaming");
+        strategy.redeem(strategy.balanceOf(address(this)), address(this), address(this));
+    }
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L930-L938
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-1022.
+This functionality will be broken
+Edited: Feb 22
+zxriptor
+
+To this sponsor's comment:
+
+Temporary State: Locked funds in strategies are typically a temporary state
+
+and this:
+
+Many strategies (like lending strategies) will often have some portion of funds locked
+
+Essentially, this means that the chance of all strategies not holding any funds locked simultaneously goes down as the number of used strategies grows, eventually rendering funds reallocation functionality broken or inaccessible most of the time.
+
+In other words, this:
+
+Wait for funds to unlock before redistributing
+
+will rarely be a useful suggestion.
+
+I believe the sponsor mostly disagrees with the proposed mitigation, which makes sense and, as @zzebra83 already mentioned, is not optimal, as the one from the report S-1256.
+
+Picodes
+01/28/2025
+
+@zxriptor thanks for your comment. I still believe this is Low. Allocations are targets and the current flow eventually converges once funds are freed by strategies. I don't regard Allocations not being respected as a Med issue in this context
+
+Problem still exists
+Edited: Feb 22
+zzebra83
+OP
+
+Hi @Picodes, after reviewing the sponsor comments, I still believe this is still a problem that can impact user returns and should be a medium severity atleast. the bottomline is the allocation of funds can still deviate significantly from the intended parameters set by the admin and hence impacting user returns. I understand the sponsor's concerns with the mitigations and those are valid, and my report mentioned its only one potential mitigation, I believe the mitigation in the duplicate report S-1256 is better suited to sponsor's needs, while still ensuring the allocations set match the intention. Thanks!
+
+Dispute Logic
+Edited: Feb 22
+rdturner
+
+Safety First: The system should never attempt to forcefully withdraw locked funds
+Temporary State: Locked funds in strategies are typically a temporary state
+Admin Control: The redistribute parameter is optional, allowing admins to:
+Change allocations without redistribution when funds are locked
+Wait for funds to unlock before redistributing
+Perform gradual reallocation as funds become available
+The suggested mitigation to revert if any funds are locked would actually be worse because:
+It would prevent legitimate allocation changes during normal operation
+Many strategies (like lending strategies) will often have some portion of funds locked
+It removes admin flexibility to manage allocations strategically
+
+Picodes
+12/27/2024
+
+Downgrading to Low following the sponsor's comment
+
+Duplicates
+3
+S-1256
+Redistribution of funds in `changeAllocations` should take into account locked funds as well
+rscodes
+92
+S-1442
+Changing the allocation of assets may cause strategies become unbalanced
+zxriptor
+81
+S-1117
+Lack of Asset Availability Checks in Strategy Reallocation Can Lock Funds and Break Vault Accounting
+NexusAudits
+31
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

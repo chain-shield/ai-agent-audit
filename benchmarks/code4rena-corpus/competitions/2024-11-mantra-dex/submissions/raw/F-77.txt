@@ -1,0 +1,380 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-77
+Low
+Primary
+S-120
+Unclaimable remainder during farm creation gives some farm owners expansion-advantage over others
+Tigerfrake
+19
+Sufficient
+383d ago
+Finding description and impact
+
+The current implementation of the farm expiration logic leads to an imbalance in the ability to expand farms.
+
+Specifically, when a user contributes an amount that does not evenly divide by the number of epochs provided, they can maintain their farm's active status longer than other users who provide fully claimable assets.
+
+Now, notice that once a farm is expired, it can be closed by anyone during new farm creation. This means that users who cannot expand their farms will therefore have to pay new creation fees (at least 1_000 amount) to create new farms if they still want to participate while the advantaged users do not incur this new fee (they bypass it). This is akin to improper value extraction from the farm manager.
+
+Proof of Concept
+
+As per the is_farm_expired() function, a farm is considered expired if:
+
+    farm.farm_asset.amount.saturating_sub(farm.claimed_amount) == Uint128::zero()
+        || farm_ending_at.plus_seconds(config.farm_expiration_time) < env.block.time,
+
+That is:
+
+The total amount of the farm asset has been claimed
+The farm's end time has passed.
+
+Now when creating a farm, emission_rate is calculated by rounding down the result as follows:
+
+let emission_rate = params
+        .farm_asset
+        .amount
+        .checked_div_floor((preliminary_end_epoch.saturating_sub(start_epoch), 1u64))?;
+
+This means that if the user's contribution does not evenly divide by the number of epochs, the remainder is left unhandled.
+
+Issue Scenario:
+
+Consider the following scenario involving two farm owners, Alice and Bob:
+
+Alice contributes 10_000 tokens for 3 epochs.
+Bob contributes 9_000 tokens for 3 epochs.
+Emission Rate Calculation
+
+Bob's Contribution:
+
+Total Amount: 9000
+Emission Rate: 9000 / 3 = 3000 tokens per epoch.
+Total Claimable: 3000 * 3 = 9000 tokens.
+Remainder: 9000 - 9000 = 0 tokens.
+
+Alice's Contribution:
+
+Total Amount: 10000
+Emission Rate: 10000 / 3 = 3333 tokens per epoch.
+Total Claimable: 3333 * 3 = 9999 tokens.
+Remainder: 10000 - 9999 = 1 tokens.
+
+Then during farm expansion, the following check is made:
+
+    // check if the farm has already expired, can't be expanded
+    ensure!(
+        !is_farm_expired(&farm, deps.as_ref(), &env, &config)?,
+        ContractError::FarmAlreadyExpired
+    );
+
+Now, since Bob's total contribution is claimable, his farm will be considered expired once all 9000 tokens are claimed blocking him from expansion.
+
+However, for Alice, only 9999 tokens can be claimed, leaving a remainder of 1 token. As such, her farm will not expire on the 3rd epoch, allowing her to continue expanding her farm before her farm's end time has passed.
+
+Test:
+<details> <summary>Coded PoC</summary>
+
+In farm_manager/tests/integration.rs, add the following test:
+
+#[test]
+fn unclaimable_remainder_during_farm_creation_gives_some_farm_owners_expansion_advantage_over_others() {
+    let lp_denom = format!("factory/{MOCK_CONTRACT_ADDR_1}/{LP_SYMBOL}").to_string();
+
+    let mut suite = TestingSuite::default_with_balances(vec![
+        coin(1_000_000_000u128, "uom"),
+        coin(1_000_000_000u128, "uusdy"),
+        coin(1_000_000_000u128, "uosmo"),
+        coin(1_000_000_000u128, lp_denom.clone()),
+        coin(1_000_000_000u128, "invalid_lp"),
+    ]);
+
+    let creator = suite.creator();
+    let other = suite.senders[1].clone();
+    let alice = suite.senders[2].clone();
+
+    suite.instantiate_default();
+
+    for _ in 0..10 {
+        suite.add_one_epoch(); // Current epoch is 10
+    }
+
+    suite
+        .manage_farm(
+            &creator, // 1st farm of same denom by creator (bob)
+            FarmAction::Fill {
+                params: FarmParams {
+                    lp_denom: lp_denom.clone(),
+                    start_epoch: Some(12),
+                    preliminary_end_epoch: Some(15), // Distributes for 3 epochs (15-12)
+                    curve: None,
+                    farm_asset: Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(9_000u128),
+                    },
+                    farm_identifier: Some("farm_1".to_string()),
+                },
+            },
+            vec![coin(9_000, "uusdy"), coin(1_000, "uom")], // 9_000 rewards
+            |result| {
+                result.unwrap();
+            },
+        )
+        .manage_farm(
+            &alice, // 2nd farm of same denom by alice
+            FarmAction::Fill {
+                params: FarmParams {
+                    lp_denom: lp_denom.clone(),
+                    start_epoch: Some(12),
+                    preliminary_end_epoch: Some(15), // Also distributes for 3 epochs (15-12)
+                    curve: None,
+                    farm_asset: Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(10_000u128),
+                    },
+                    farm_identifier: Some("farm_2".to_string()),
+                },
+            },
+            vec![coin(10_000, "uusdy"), coin(1_000, "uom")], // 10_000 rewards
+            |result| {
+                result.unwrap();
+            },
+        )
+        .manage_position(
+            &other,
+            PositionAction::Create {
+                identifier: Some("creator_position".to_string()),
+                unlocking_duration: 86_400,
+                receiver: None,
+            },
+            vec![coin(5_000, lp_denom.clone())], // User creates position for this denom
+            |result| {
+                result.unwrap();
+            },
+        );
+    
+    // create a couple of epochs to make the farm active
+
+    suite
+        .add_one_epoch()
+        .add_one_epoch() // 1st reward on 12th epoch
+        .add_one_epoch() // 2nd reward on 13th epoch
+        .add_one_epoch() // 3rd reward on 14th epoch
+        .query_current_epoch(|result| {
+            let epoch_response = result.unwrap();
+            assert_eq!(epoch_response.epoch.id, 14);
+        })
+        .query_balance("uusdy".to_string(), &other, |balance| {
+            assert_eq!(balance, Uint128::new(1_000_000_000u128)); // users's current uusdy balance
+        })
+        .claim(&other, vec![], |result| { // User claims rewards
+            result.unwrap();
+        })
+        // firm_1: 9_000/3 => 3_000 for 3 epochs => Tototal:9_000
+        // firm_2: 10_000/3 => 3_333 for 3 epochs => Total: 9_999 (1 unclaimamble remainder)
+        // Total claimed => 9_000 + 9_999 = 18_999
+        .query_balance("uusdy".to_string(), &other, |balance| {
+            assert_eq!(balance, Uint128::new(1_000_018_999u128)); // User balance reflects claimed rewards
+        })
+        .query_farms(None, None, None, |result| {
+            let farms_response = result.unwrap();
+            assert_eq!(farms_response.farms.len(), 2usize);
+            assert_eq!(farms_response.farms[0].claimed_amount, Uint128::new(9_000)); // All rewards claimed in farm_1
+
+            let farm_1_debt =
+                farms_response.farms[0].farm_asset.amount - farms_response.farms[0].claimed_amount;
+            assert_eq!(farm_1_debt, Uint128::zero()); // No debt
+
+            let farm_2_debt =
+                farms_response.farms[1].farm_asset.amount - farms_response.farms[1].claimed_amount;
+            assert_eq!(farm_2_debt, Uint128::new(1)); // 1 unclaimamble remainder
+        });
+
+    suite
+        .manage_farm(
+            &creator,
+            FarmAction::Fill { // creator (bob) attempts to expand his farm
+                params: FarmParams {
+                    lp_denom: lp_denom.clone(),
+                    start_epoch: Some(12),
+                    preliminary_end_epoch: Some(15),
+                    curve: None,
+                    farm_asset: Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(9_000u128),
+                    },
+                    farm_identifier: Some("m-farm_1".to_string()),
+                },
+            },
+            vec![coin(9_000, "uusdy")],
+            |result| {
+                let err = result.unwrap_err().downcast::<ContractError>().unwrap();
+                match err {
+                    ContractError::FarmAlreadyExpired { .. } => {} // Fails since his farm has run out of rewards
+                    _ => panic!("Wrong error type, should return ContractError::FarmAlreadyExpired"),
+                }
+            },
+        )
+        .manage_farm(
+            &alice,
+            FarmAction::Fill { // alice attempts to expand her farm
+                params: FarmParams {
+                    lp_denom: lp_denom.clone(),
+                    start_epoch: Some(12),
+                    preliminary_end_epoch: Some(15),
+                    curve: None,
+                    farm_asset: Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(9_999u128),
+                    },
+                    farm_identifier: Some("m-farm_2".to_string()),
+                },
+            },
+            vec![coin(9_999, "uusdy")],
+            |result| {
+                result.unwrap(); // Goes successfully
+            },
+        )
+        .query_farms( // lets confirm that by querying her farm
+            Some(FarmsBy::Identifier("m-farm_2".to_string())),
+            None,
+            None,
+            |result| {
+                let farms_response = result.unwrap();
+                let farm = farms_response.farms[0].clone();
+                assert_eq!(
+                    farm.farm_asset,
+                    Coin {
+                        denom: "uusdy".to_string(),
+                        amount: Uint128::new(19_999), // Alice's farm reflects new rewards (10_000 + 9_999)
+                    }
+                );
+
+                assert_eq!(farm.preliminary_end_epoch, 18); // 3 epochs added successfully just because she had a left-over
+            },
+        );  
+}
+
+
+
+Output:
+
+running 1 test
+test unclaimable_remainder_during_farm_creation_gives_some_farm_owners_expansion_advantage_over_others ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 0.02s
+</details>
+Recommended mitigation steps
+Implementing a refund mechanism for the remainder when creating a farm. This way, any leftover assets that cannot be evenly distributed will be returned to the user, preventing them from gaining an unfair advantage based on the remainder.
+    fn create_farm(
+        deps: DepsMut,
+        env: Env,
+        info: MessageInfo,
+-       params: FarmParams,
++       mut params: FarmParams, // @audit Make params mutable
+    ) -> Result<Response, ContractError> {
+        // ... existing code ...
+
+        // Calculate the emission rate
+        let emission_rate = params
+            .farm_asset
+            .amount
+            .checked_div_floor((preliminary_end_epoch.saturating_sub(start_epoch), 1u64))?;
+
+        // @audit Calculate the remainder
++       let total_claimable = emission_rate * (preliminary_end_epoch.saturating_sub(start_epoch));
++       let remainder = params.farm_asset.amount.saturating_sub(total_claimable);
+
+        // @audit Refund the remainder if it exists
++       if remainder > Uint128::zero() {
++           messages.push(
++               BankMsg::Send {
++                   to_address: info.sender.into_string(),
++                   amount: vec![Coin {
++                       amount: remainder,
++                       denom: params.farm_asset.denom.clone(),
++                   }],
++               }
++               .into(),
++           );
++       }
+
+        // @audit Adjust the farm asset amount to exclude the remainder
++       params.farm_asset.amount = params.farm_asset.amount.saturating_sub(remainder);
+
+        // ... existing code to create the farm ...
+    }
+Links to affected code
+commands.rs#L133-L136
+Opens in a new window
+Submissions touching same files
+commands.rs
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-120.
+Judging
+Edited: Feb 22
+3docSec
+
+I don't see here any fund loss / availability / value leak impact of getting an extra farm expansion that justifies an H/M
+
+Not an issue
+Edited: Feb 22
+jvr0x
+
+It is impossible to calculate how to "evenly" distribute the rewards in the farm since users can come in and out of it with any amount of LP tokens they wish, which changes the weight of the farm for that LP as epochs go on and users change their positions.
+
+Additionally, the entity creating the farm doesn't lose anything, if there are unclaimed tokens in the farm left over, whether it is due to flooring division when calculating the rewards or just because some users forget to claim, once the farm is closed the unclaimed rewards go back to the farm creator.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks reasonable, no support for H though
+
+Timeline
+Submitted
+Created: 520d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

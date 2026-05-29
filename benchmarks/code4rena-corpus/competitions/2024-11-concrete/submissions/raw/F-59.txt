@@ -1,0 +1,587 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-59
+Medium
+Primary
+S-1270
+Insufficient withdrawal liquidity of some `Strategies` can break users' legit withdrawals
+serial-coder
+78
+Sufficient
+383d ago
+Finding Description
+
+The ConcreteMultiStrategyVault::getAvailableAssetsForWithdrawal() returns the sum of all available assets for withdrawal across all strategies, including the floating assets residing in the vault. This returned value only represents the total (overall) amount of available assets. However, it cannot guarantee that every strategy will always have sufficient available assets for withdrawal in proportion to its assigned asset allocation percentage at all times.
+
+When transferring assets to a user, the ConcreteMultiStrategyVault::_withdrawStrategyFunds() calculates the asset amount to withdraw (amountToWithdraw) from each strategy according to its assigned asset allocation percentage. If the resulting amountToWithdraw is greater than the strategy's available assets, the transaction will be reverted.
+
+The root cause of this issue stems from the imbalance between the available asset amount and the asset allocation percentage of each strategy. The issue can occur even if the expected amount of assets to withdraw is less than the total amount of available assets.
+
+Please refer to the Proof of Concept and Coded PoC sections for details.
+
+Finding Impact
+
+This issue breaks the protocol's core functionality. Users may not be able to withdraw their assets (via the withdraw(), redeem(), or batchClaimWithdrawal()) even if their expected amount of assets is legit and less than the total amount of available assets.
+
+Proof of Concept
+
+This section will walk you through the code.
+
+As described previously, the getAvailableAssetsForWithdrawal() (@1) returns the sum of all available assets for withdrawal across all strategies, including the floating assets residing in the vault. This returned value only represents the total (overall) amount of available assets. However, it cannot guarantee that every strategy will always have sufficient available assets for withdrawal in proportion to its assigned asset allocation percentage at all times.
+
+The _withdraw() will execute the _withdrawStrategyFunds() (@2) to transfer assets to a receiver as long as the total amount of available assets is greater than or equal to the expected amount of assets regardless of the balance between the available asset amount and the asset allocation percentage of each strategy.
+
+Then, the _withdrawStrategyFunds() will calculate the asset amount to withdraw (amountToWithdraw (@3)) from each strategy according to its assigned asset allocation percentage.
+
+If the resulting amountToWithdraw is greater than the strategy's available assets, the transaction will be reverted (@4). This issue can occur even if the expected amount of assets to withdraw is less than the total amount of available assets if some strategies' available asset amount and asset allocation percentage are imbalanced.
+
+Please refer to the Coded PoC section for the solid proof.
+
+    function _withdraw(uint256 assets_, address receiver_, address owner_, uint256 shares, uint256 feeShares) private {
+        if (msg.sender != owner_) {
+            _approve(owner_, msg.sender, allowance(owner_, msg.sender) - shares);
+        }
+        _burn(owner_, shares);
+        if (feeShares > 0) _mint(feeRecipient, feeShares);
+
+        //@audit -- The getAvailableAssetsForWithdrawal() returns the sum of all available assets for withdrawal
+        //          across all strategies, including the floating assets residing in the vault.
+        //
+        //          This returned value only represents the total (overall) amount of available assets. However, 
+        //          it cannot guarantee that every strategy will always have sufficient available assets for 
+        //          withdrawal in proportion to its assigned asset allocation percentage at all times.
+@1      uint256 availableAssetsForWithdrawal = getAvailableAssetsForWithdrawal();
+
+        if (availableAssetsForWithdrawal >= assets_) {
+            //@audit -- The _withdraw() will execute the _withdrawStrategyFunds() to transfer assets to a receiver
+            //          as long as the total amount of available assets is greater than or equal to the expected
+            //          amount of assets regardless of the balance between the available asset amount and the  
+            //          asset allocation percentage of each strategy. This can cause the transaction to revert at @4.
+@2          _withdrawStrategyFunds(assets_, receiver_);
+        } else {
+            if (address(withdrawalQueue) == address(0)) {
+                revert InsufficientVaultFunds(address(this), assets_, availableAssetsForWithdrawal);
+            }
+            withdrawalQueue.requestWithdrawal(receiver_, assets_);
+        }
+        emit Withdraw(msg.sender, receiver_, owner_, assets_, shares);
+    }
+
+    function _withdrawStrategyFunds(uint256 amount_, address receiver_) private {
+        ...
+
+        if (amount_ <= float) {
+            ...
+        } else {
+            ...
+            
+            for (uint256 i; i < len; ) {
+                Strategy memory strategy = strategies[i];
+                //We control both the length of the array and the external call
+                //slither-disable-next-line calls-loop
+                uint256 withdrawable = strategy.strategy.previewRedeem(strategy.strategy.balanceOf(address(this)));
+                if (diff.mulDiv(strategy.allocation.amount, MAX_BASIS_POINTS, Math.Rounding.Ceil) > withdrawable) {
+                    revert InsufficientFunds(strategy.strategy, diff * strategy.allocation.amount, withdrawable);
+                }
+
+                //@audit -- The _withdrawStrategyFunds() will calculate the asset amount to withdraw (amountToWithdraw) 
+                //          from each strategy according to its assigned asset allocation percentage.
+@3              uint256 amountToWithdraw = amount_.mulDiv(
+@3                  strategy.allocation.amount,
+@3                  MAX_BASIS_POINTS,
+@3                  Math.Rounding.Ceil
+@3              );
+
+                ...
+
+                //@audit -- If the resulting amountToWithdraw is greater than the strategy's available assets,
+                //          the transaction will be reverted here.
+                //
+                //          This issue can occur even if the expected amount of assets to withdraw is less than 
+                //          the total amount of available assets (refer to the coded PoC for the proof).
+@4              strategy.strategy.withdraw(amountToWithdraw, receiver_, address(this));
+
+                totalWithdrawn += amountToWithdraw;
+                unchecked {
+                    i++;
+                }
+            }
+
+            ...
+        }
+    }
+@1: https://github.com/code-423n4/2024-11-concrete/blob/d2950ec68fdc391c10989d98748e79d1a0017f69/src/vault/ConcreteMultiStrategyVault.sol#L425
+@2: https://github.com/code-423n4/2024-11-concrete/blob/d2950ec68fdc391c10989d98748e79d1a0017f69/src/vault/ConcreteMultiStrategyVault.sol#L427
+@3: https://github.com/code-423n4/2024-11-concrete/blob/d2950ec68fdc391c10989d98748e79d1a0017f69/src/vault/ConcreteMultiStrategyVault.sol#L464-L468
+@4: https://github.com/code-423n4/2024-11-concrete/blob/d2950ec68fdc391c10989d98748e79d1a0017f69/src/vault/ConcreteMultiStrategyVault.sol#L471
+Coded PoC
+
+This section provides a coded PoC, which consists of two sub-sections for the sake of understanding:
+
+The main test function
+How to set up and run the test
+1. The main test function
+
+The PoC shows that Jimmy deposits 100 ether into the Vault. The Vault then distributes all deposited assets to Strategy0 and Strategy1, 50 ether each. In other words, each strategy has an asset allocation percentage of 50% equally.
+
+Later on, the PoC demonstrates that if Strategy0 locks 30 ether of the deposited assets for its use (i.e., there are only 20 ether left for withdrawal for Strategy0), the total amount of available assets returned from the vault.getAvailableAssetsForWithdrawal() is 70 ether left, which is the correct value.
+
+For this reason, if Jimmy wants to withdraw 45 ether from the Vault, it should work because there are 70 ether available for withdrawal in total. However, due to the protocol's design flaw, the transaction is reverted because the expected amount to withdraw from Strategy0 is 22.5 ether, whereas Strategy0 has only 20 ether available for withdrawal.
+
+function test_poc_insufficient_liquidity_strategy_breaks_legit_withdrawal() public {
+    _setup();
+
+    // Mint 100 ether for Jimmy
+    asset.mint(jimmy, 100 ether);
+    assertEq(asset.balanceOf(jimmy), 100 ether, "Mint 100 ether");
+
+    // Jimmy deposits 100 ether
+    vm.startPrank(jimmy);
+    asset.approve(address(vault), 100 ether);
+    vault.deposit(100 ether, jimmy);
+    vm.stopPrank();
+
+    // Asset distribution percentages for the Strategy0 and Strategy1 are 50% equally
+    assertEq(asset.balanceOf(address(strategies[0].strategy)), 50 ether, "Strategy0's asset balance");
+    assertEq(asset.balanceOf(address(strategies[1].strategy)), 50 ether, "Strategy1's asset balance");
+    assertEq(asset.balanceOf(address(vault)), 0, "Vault's asset balance");
+
+    // Assume the available assets managed by Strategy0 are only 20 ether left
+    // Set the Strategy0 to lock 30 ether (now, available assets for withdrawal are only 20 ether)
+    IStrategyModified(address(strategies[0].strategy)).setAvaliableAssetLessThanOrEqualTo20e18(true);
+    assertEq(
+        IMockStrategy(address(strategies[0].strategy)).getAvailableAssetsForWithdrawal(), 
+        20 ether, 
+        "Strategy0's available assets for withdrawal"
+    );
+
+    // Set the Strategy1 to lock 0 ether (so available assets for withdrawal are all 50 ether)
+    IStrategyModified(address(strategies[1].strategy)).setAvaliableAssetLessThanOrEqualTo20e18(false);
+    assertEq(
+        IMockStrategy(address(strategies[1].strategy)).getAvailableAssetsForWithdrawal(), 
+        50 ether, 
+        "Strategy1's available assets for withdrawal"
+    );
+
+    // Total available assets for withdrawal (across all Strategies) are 70 ether
+    assertEq(
+        vault.getAvailableAssetsForWithdrawal(), 
+        70 ether, 
+        "Total available assets for withdrawal (across all Strategies)"
+    );
+
+    // Withdraw 45 ether (it should work because there are 70 ether available for withdrawal in total)
+    //
+    // However, due to the design flaw, the transaction is expected to be reverted!!!
+    vm.expectRevert(
+        abi.encodeWithSelector(
+            ERC4626.ERC4626ExceededMaxWithdraw.selector,
+            address(vault),
+            22.5 ether, // Expect to withdraw 22.5 ether from Strategy0
+            20 ether    // Strategy0 has only 20 ether available
+        )
+    );
+    vm.prank(jimmy);
+    vault.withdraw(45 ether, jimmy, jimmy);
+}
+2. How to set up and run the test
+
+Click the collapsible section below to show the whole test file.
+
+Create a new test file named PoCInsufficientLiquidityStrategyBreaksLegitWithdrawal.t.sol in the folder test of the project. Then, place the source code below in the file.
+
+To run the test, use the command: forge test -vvv --mt test_poc_insufficient_liquidity_strategy_breaks_legit_withdrawal.
+
+<details> <summary>Show the whole test file</summary> ```solidity //SPDX-License-Identifier: MIT pragma solidity 0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {IERC20, IERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {MockERC20} from "./utils/mocks/MockERC20.sol";
+import {ConcreteMultiStrategyVault} from "../src/vault/ConcreteMultiStrategyVault.sol";
+import {IMockStrategy} from "../src/interfaces/IMockStrategy.sol";
+import {Strategy, VaultFees, Allocation, GraduatedFee} from "../src/interfaces/IConcreteMultiStrategyVault.sol";
+import {IStrategy} from "../src/interfaces/IStrategy.sol";
+import {MockERC4626} from "./utils/mocks/MockERC4626.sol";
+import {ERC4626, ERC20, IERC20, IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+
+contract PoCInsufficientLiquidityStrategyBreaksLegitWithdrawal is Test {
+MockERC20 asset;
+
+Strategy[] strategies;
+ConcreteMultiStrategyVault vault;
+
+GraduatedFee[] zeroFees;
+
+address implementation;
+
+address feeRecipient = address(0x1111);
+address jimmy = address(0x2222);
+address admin = address(0x3333);
+
+function test_poc_insufficient_liquidity_strategy_breaks_legit_withdrawal() public {
+    _setup();
+
+    // Mint 100 ether for Jimmy
+    asset.mint(jimmy, 100 ether);
+    assertEq(asset.balanceOf(jimmy), 100 ether, "Mint 100 ether");
+
+    // Jimmy deposits 100 ether
+    vm.startPrank(jimmy);
+    asset.approve(address(vault), 100 ether);
+    vault.deposit(100 ether, jimmy);
+    vm.stopPrank();
+
+    // Asset distribution percentages for the Strategy0 and Strategy1 are 50% equally
+    assertEq(asset.balanceOf(address(strategies[0].strategy)), 50 ether, "Strategy0's asset balance");
+    assertEq(asset.balanceOf(address(strategies[1].strategy)), 50 ether, "Strategy1's asset balance");
+    assertEq(asset.balanceOf(address(vault)), 0, "Vault's asset balance");
+
+    // Assume the available assets managed by Strategy0 are only 20 ether left
+    // Set the Strategy0 to lock 30 ether (now, available assets for withdrawal are only 20 ether)
+    IStrategyModified(address(strategies[0].strategy)).setAvaliableAssetLessThanOrEqualTo20e18(true);
+    assertEq(
+        IMockStrategy(address(strategies[0].strategy)).getAvailableAssetsForWithdrawal(), 
+        20 ether, 
+        "Strategy0's available assets for withdrawal"
+    );
+
+    // Set the Strategy1 to lock 0 ether (so available assets for withdrawal are all 50 ether)
+    IStrategyModified(address(strategies[1].strategy)).setAvaliableAssetLessThanOrEqualTo20e18(false);
+    assertEq(
+        IMockStrategy(address(strategies[1].strategy)).getAvailableAssetsForWithdrawal(), 
+        50 ether, 
+        "Strategy1's available assets for withdrawal"
+    );
+
+    // Total available assets for withdrawal (across all Strategies) are 70 ether
+    assertEq(
+        vault.getAvailableAssetsForWithdrawal(), 
+        70 ether, 
+        "Total available assets for withdrawal (across all Strategies)"
+    );
+
+    // Withdraw 45 ether (it should work because there are 70 ether available for withdrawal in total)
+    //
+    // However, due to the design flaw, the transaction is expected to be reverted!!!
+    vm.expectRevert(
+        abi.encodeWithSelector(
+            ERC4626.ERC4626ExceededMaxWithdraw.selector,
+            address(vault),
+            22.5 ether, // Expect to withdraw 22.5 ether from Strategy0
+            20 ether    // Strategy0 has only 20 ether available
+        )
+    );
+    vm.prank(jimmy);
+    vault.withdraw(45 ether, jimmy, jimmy);
+}
+
+// ========================= SETUP =========================
+
+function _setup() internal {
+    vm.label(feeRecipient, "feeRecipient");
+    vm.label(jimmy, "jimmy");
+    vm.label(admin, "admin");
+
+    zeroFees.push(GraduatedFee({lowerBound: 0, upperBound: 10000, fee: 0}));
+
+    asset = new MockERC20("Mock Asset", "MA", 18);
+
+    strategies.push(_createMockStrategy(IERC20(address(asset)))); // Allocation percentage: 50%
+    strategies.push(_createMockStrategy(IERC20(address(asset)))); // Allocation percentage: 50%
+
+    implementation = address(new ConcreteMultiStrategyVault());
+    address vaultAddress = Clones.clone(implementation);
+
+    vault = ConcreteMultiStrategyVault(vaultAddress);
+    vault.initialize(
+        IERC20(address(asset)),
+        "Mock Vault",
+        "MV",
+        strategies,
+        feeRecipient,
+        VaultFees({depositFee: 0, withdrawalFee: 0, protocolFee: 0, performanceFee: zeroFees}),
+        type(uint256).max,
+        admin
+    );
+
+    IMockStrategy(address(strategies[0].strategy)).setAvailableAssetsZero(false);
+    IMockStrategy(address(strategies[1].strategy)).setAvailableAssetsZero(false);
+}
+
+function _createMockStrategy(IERC20 asset_) internal returns (Strategy memory) {
+    return
+        Strategy({
+            strategy: IStrategy(address(new MockERC4626_AvaliableAssetLessThanOrEqualTo20e18(asset_, "Mock Shares", "MS"))),
+            allocation: Allocation({index: 0, amount: 5000}) // Allocation percentage: 50%
+        });
+}
+
+
+}
+
+interface IStrategyModified is IStrategy {
+function setAvaliableAssetLessThanOrEqualTo20e18(bool _avaliableAssetLessThanOrEqualTo20e18) external;
+}
+
+contract MockERC4626_AvaliableAssetLessThanOrEqualTo20e18 is MockERC4626 {
+bool public avaliableAssetLessThanOrEqualTo20e18 = true;
+
+constructor(
+    IERC20 asset_,
+    string memory shareName_,
+    string memory shareSymbol_
+) MockERC4626(asset_, shareName_, shareSymbol_) {}
+
+function setAvaliableAssetLessThanOrEqualTo20e18(bool _avaliableAssetLessThanOrEqualTo20e18) public {
+    avaliableAssetLessThanOrEqualTo20e18 = _avaliableAssetLessThanOrEqualTo20e18;
+}
+
+function getAvailableAssetsForWithdrawal() public view override returns (uint256) {
+    uint256 totalDepositedAssetsForCaller = IERC20(asset()).balanceOf(address(this));
+
+    if (avaliableAssetLessThanOrEqualTo20e18) {
+        // If avaliableAssetLessThanOrEqualTo20e18 is set...
+        if (totalDepositedAssetsForCaller <= 20e18) {
+            return totalDepositedAssetsForCaller; // If assets <= 20e18, return as-is
+        }
+        else {
+            return 20e18; // If assets > 20e18, return 20e18
+        }
+    }
+    else {
+        // If avaliableAssetLessThanOrEqualTo20e18 is unset, return the total asset balance
+        return totalDepositedAssetsForCaller;
+    }
+}
+
+function withdraw(uint256 assets, address receiver, address owner) public override(ERC4626, IERC4626) returns (uint256) {
+    uint256 maxAssets = maxWithdraw(owner);
+    if (assets > maxAssets) {
+        revert ERC4626ExceededMaxWithdraw(owner, assets, maxAssets);
+    }
+
+    if (avaliableAssetLessThanOrEqualTo20e18) {
+        if (assets > 20e18) {
+            // If avaliableAssetLessThanOrEqualTo20e18 is set and assets > 20e18, revert the transaction
+            revert ERC4626ExceededMaxWithdraw(owner, assets, 20e18);
+        }
+    }
+
+    uint256 shares = previewWithdraw(assets);
+    _withdraw(_msgSender(), receiver, owner, assets, shares);
+
+    return shares;
+}
+
+
+}
+
+</details>
+
+## Recommended Mitigation Steps
+
+Implement a fallback mechanism to handle this strategy's asset availability vs. asset allocation imbalance vulnerability.
+
+*(Note: from what I understand, there is no straight solution that can fully fix the vulnerability without introducing other security concerns. Thus, the fix should be based on the protocol's and developer's design choices.)*
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L425
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L427
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L464-L468
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L471
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1270.
+Appeal
+Edited: Feb 22
+serial-coder
+OP
+
+This report is not a duplicate of S-1280.
+
+Meanwhile, S-1280 refers to the imbalance of asset allocation across strategies when the vault is idled.
+
+This report refers to the imbalance of asset allocation across strategies when some strategy locks up some deposited assets (due to, for example, the deposited assets being lent and the strategy having insufficient withdrawal liquidity (e.g., ref: in Silo V1) or when the strategy's reserve is paused or inactive (e.g., ref: in AAVE V3)).
+
+For this reason, they should be de-duplicated because they report different vulnerabilities (fixing one issue cannot remediate another).
+
+Please refer to the coded PoCs in this report and in S-1280; you will find that they are different.
+
+To facilitate your judging, I list all reports that should duplicate with this issue:
+
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1270 (this issue)
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1401
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-883
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1040
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-759
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-989
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-984
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1329
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1328
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-760
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1196
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-835
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1128
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1130
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1033
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-914
+https://code4rena.com/evaluate/2024-11-concrete/submissions/S-104
+
+Thanks for your time, sir!
+
+Picodes
+01/20/2025
+
+Thank you for your comment @serial-coder
+
+Duplicates
+35
+S-1401
+User's order to withdraw is wrongly reverted instead of being sent to the withdrawalQueue in some senarios
+rscodes
+92
+S-859
+DOS in `_withdrawStrategyFunds`
+EPSec
+88
+S-657
+Withdrawals can fail due to balance accumulated on the ConcreteMultiStrategyVault
+zxriptor
+81
+S-1280
+`ConcreteMultiStrategyVault` in an idle state can cause the asset allocation across `Strategies` to be imbalanced, preventing users from withdrawing their assets
+serial-coder
+78
+S-1040
+`_withdraw` wrongfully uses `getAvailableAssetsForWithdrawal` to determine withdrawability, causing withdraws to always revert when protect strategy's (or any single strategy's) borrow utilization is high
+thekmj
+75
+S-759
+Withdrawal Requests Can Get Permanently Stuck in Queue When Strategy Loses Assets
+0xNirix
+72
+S-989
+Strategies that interacts with protocols like Morpho where loses are evenly distributed when bad debt occurs will cause user funds to get stuck because the logic on the withdrawStrategyFunds()
+0xStalin
+64
+S-984
+Withdraws from Vaults can fall into DoS when a single strategy has not enough withdrawable liquidity, even though the rest of the strategies have more than enough liquidity to process the requested withdrawal
+0xStalin
+64
+S-1328
+Users can be DoSed from going into the withdrawal queue due to not considering allocations
+samuraii77
+63
+S-760
+Strategy withdraws will often revert as protocol expects strategies to hold their allocation ratio.
+deadrxsezzz
+61
+S-1196
+Available funds to withdraw are summed instead of individually checked for each strategy which will lead to reverting withdrawal transactions for users
+gesha17
+57
+S-212
+`getAvailableAssetsForWithdrawal` Calculation Without Considering `Strategy` Proportions
+13u9
+57
+S-98
+Revert Triggered Due to Improper Validation in Claim Withdrawal
+13u9
+57
+S-389
+withdrawals need to be finalized before claim but they are finalized after claim
+Giorgio
+54
+S-835
+Withdrawals could be temporarily DoSd in cases where there's enough total liquidity to cover it, but not enough in a particular strategy
+iamandreiski
+51
+S-498
+`_withdrawStrategyFunds()` reverts prematurely even if withdrawable amount in vault is sufficient
+t0x1c
+46
+S-602
+Strategy Removal Can Break Withdrawal Queue Processing Leading to Locked Funds
+Agontuk
+41
+S-524
+Strategy allocation changes cause withdrawal queue desynchronization leading to potential excess withdrawals
+Agontuk
+41
+S-1128
+Rigid Proportional Withdrawal Logic Causes Unnecessary Failed Withdrawals During Strategy Asset Imbalances
+NexusAudits
+31
+S-751
+When admin changes allocation and redistribute Amounts in each vaults, The total asset in each Vault will not reflect the allocation percentage causing a DOS
+Bigsam
+29
+S-650
+DOS to the withdrawal function because of the allocation distribution percentage use instead of using the Available funds
+Bigsam
+29
+S-196
+Flawed withdrawal check due to incorrect `withdrawable` amount calculation.
+Tigerfrake
+19
+S-784
+ConcreteMultiStrategyVault fails to guarantee successful withdrawals even when sufficient liquidity exists
+foxb868
+01
+S-1294
+Allocation Mismatch Between Plan and Actual Distribution Can Lead to DoS
+0x2517
+00
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+High
+Valid
+Sufficient
+Review
+Disputed
+Judging
+Medium
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

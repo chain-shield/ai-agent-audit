@@ -1,0 +1,141 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-288
+Low
+Primary
+S-564
+Rebalance operations vulnerable to MEV sandwich attacks due to insufficient profit threshold
+bumbleb33
+00
+Sufficient
+383d ago
+
+Summary:
+The rebalance() function in LamboRebalanceOnUniwap.sol only checks for positive profit (profit > 0), making it vulnerable to MEV sandwich attacks that can extract the majority of arbitrage profits while still satisfying this minimal check.
+
+Vulnerability Details:
+The current implementation only verifies that some profit was made:
+
+function rebalance(uint256 directionMask, uint256 amountIn, uint256 amountOut) external nonReentrant {
+    uint256 balanceBefore = IERC20(weth).balanceOf(address(this));
+    bytes memory data = abi.encode(directionMask, amountIn, amountOut);
+    IMorpho(morphoVault).flashLoan(weth, amountIn, data);
+    uint256 balanceAfter = IERC20(weth).balanceOf(address(this));
+    uint256 profit = balanceAfter - balanceBefore;
+    require(profit > 0, "No profit made"); // @audit insufficient profit check
+}
+
+This allows MEV bots to execute sandwich attacks through the following steps:
+
+MEV bot front-runs the transaction:
+Observes rebalance() call in mempool
+Executes trades to worsen the price in their favor
+Contract executes with minimal profit:
+// Example scenario
+uint256 expectedProfit = 1 ether;     // Original expected profit
+uint256 actualProfit = 0.001 ether;   // Profit after front-running
+require(actualProfit > 0);            // Check passes despite 99.9% profit loss
+MEV bot back-runs:
+Executes reverse trades to restore price
+Captures majority of the arbitrage opportunity
+
+Impact:
+
+Severe reduction in protocol profits from rebalancing operations
+Most arbitrage value extracted by MEV bots instead of benefiting protocol/users
+Protocol still pays full gas costs but receives minimal benefit
+Medium severity as functionality continues but with greatly reduced effectiveness
+
+Tools Used:
+
+Manual Review
+Foundry for POC testing
+
+Recommended Mitigation:
+
+Implement a configurable minimum profit threshold:
+contract LamboRebalanceOnUniwap {
+    uint256 public minProfitBps; // e.g., 50 = 0.5%
+    
+    function rebalance(uint256 directionMask, uint256 amountIn, uint256 amountOut) external nonReentrant {
+        uint256 balanceBefore = IERC20(weth).balanceOf(address(this));
+        bytes memory data = abi.encode(directionMask, amountIn, amountOut);
+        IMorpho(morphoVault).flashLoan(weth, amountIn, data);
+        uint256 balanceAfter = IERC20(weth).balanceOf(address(this));
+        uint256 profit = balanceAfter - balanceBefore;
+        
+        // Require minimum profit threshold
+        uint256 minProfit = (amountIn * minProfitBps) / 10000;
+        require(profit >= minProfit, "Insufficient profit");
+    }
+    
+    function setMinProfitBps(uint256 _minProfitBps) external onlyOwner {
+        require(_minProfitBps <= 1000, "Max 10%");
+        minProfitBps = _minProfitBps;
+        emit MinProfitBpsUpdated(_minProfitBps);
+    }
+}
+
+Consider implementing dynamic profit thresholds based on:
+
+Historical profit averages
+Current market volatility
+Gas costs relative to trade size
+
+Use private mempools (e.g., Flashbots) to protect against sandwich attacks
+
+References:
+
+MEV on Ethereum
+Flashbots Documentation
+Uniswap V3 Sandwich Attack Prevention
+Similar issue in Audit Finding Database
+Links to affected code
+LamboRebalanceOnUniwap.sol#L68
+Opens in a new window
+Submissions touching same files
+LamboRebalanceOnUniwap.sol
+Timeline
+Submitted
+Created: 532d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

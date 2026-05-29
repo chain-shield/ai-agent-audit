@@ -1,0 +1,195 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-4
+Medium
+Primary
+S-319
+In edge cases, create_pool can either be reverted or allow user underpay fees.
+oakcobalt
+68
+Sufficient
+383d ago
+Finding description and impact
+
+create_pool is permissionless. User will need to pay both pool creation fee and token factory fee(fees charged for creating lp token) when creating a pool.
+
+The vulnerabilities are (1) in validate_fees_are_paid, a strict equalilty check is used between total paid fees in pool_creation token and required pool creation fee. paid_pool_fee_amount == pool_creation_fee.amount. (2) denom_creation_fee.iter() used .any instead of .all, which allows user to only pay one coin from denom_creation.
+
+//contracts/pool-manager/src/helpers.rs
+pub fn validate_fees_are_paid(
+    pool_creation_fee: &Coin,
+    denom_creation_fee: Vec<Coin>,
+    info: &MessageInfo,
+) -> Result<Vec<Coin>, ContractError> {
+...
+    // Check if the pool fee denom is found in the vector of the token factory possible fee denoms
+    if let Some(tf_fee) = denom_creation_fee
+        .iter()
+        .find(|fee| &fee.denom == pool_fee_denom)
+    {
+        // If the token factory fee has only one option, check if the user paid the sum of the fees
+        if denom_creation_fee.len() == 1usize {
+...
+        } else {
+            // If the token factory fee has multiple options besides pool_fee_denom, check if the user paid the pool creation fee
+            let paid_pool_fee_amount = get_paid_pool_fee_amount(info, pool_fee_denom)?;
+            //@audit (1) strict equality check. When user is also required to pay denom_creation_fee in pool creation fee token, check will revert create_pool
+            ensure!(
+ |>             paid_pool_fee_amount == pool_creation_fee.amount,
+                ContractError::InvalidPoolCreationFee {
+                    amount: paid_pool_fee_amount,
+                    expected: pool_creation_fee.amount,
+                }
+            );
+...
+            // Check if the user paid the token factory fee in any other of the allowed denoms
+            //@audit (2) iter().any() only requires one of denom_creation_fee token to be paid. 
+|>          let tf_fee_paid = denom_creation_fee.iter().any(|fee| {
+                let paid_fee_amount = info
+                    .funds
+                    .iter()
+                    .filter(|fund| fund.denom == fee.denom)
+                    .map(|fund| fund.amount)
+                    .try_fold(Uint128::zero(), |acc, amount| acc.checked_add(amount))
+                    .unwrap_or(Uint128::zero());
+
+                total_fees.push(Coin {
+                    denom: fee.denom.clone(),
+                    amount: paid_fee_amount,
+                });
+
+                paid_fee_amount == fee.amount
+            });
+...
+
+(https://github.com/code-423n4/2024-11-mantra-dex/blob/26714ea59dab7ecfafca9db1138d60adcf513588/contracts/pool-manager/src/helpers.rs#L577)
+
+Based on cosmwasm tokenfactory, denom creation fee(std.coins) can contain multiple coins and every coin needs to be paid.
+
+//x/tokenfactory/simulation/operations.go
+func SimulateMsgCreateDenom(tfKeeper TokenfactoryKeeper, ak types.AccountKeeper, bk BankKeeper) simtypes.Operation {
+...
+		// Check if sims account enough create fee
+		createFee := tfKeeper.GetParams(ctx).DenomCreationFee
+		balances := bk.GetAllBalances(ctx, simAccount.Address)
+|>		_, hasNeg := balances.SafeSub(createFee) //@audit-info all denom creation fee tokens have to be paid
+		if hasNeg {
+			return simtypes.NoOpMsg(types.ModuleName, types.MsgCreateDenom{}.Type(), "Creator not enough creation fee"), nil, nil
+		}
+...
+
+(https://github.com/CosmWasm/token-factory/blob/47dc2d5ae36980bcc03cf746580f7cb3deabc39e/x/tokenfactory/simulation/operations.go#L359-L361)
+
+Flows: contracts/pool-manager/src/manager/commands::create_pool -> validate_fees_are_paid()
+
+Impacts: User can either underpay fees, or create_pool tx will revert.
+
+Proof of Concept
+
+Because pool creation fee and all denom creation fee tokens need to be paid. Consider this edge case:
+A. There are more than one token factory fee tokens required in denom_creation_fee.
+B. One of the denom_creation fee token is the pool creation fee token (fee.denom == pool_creation_fee.denom);
+
+In this case, user is required to send = pool token amount (pool_creation_fee + denom_creation_fee) + all other denom creation token amount.
+
+If user sends all the required fees, paid_pool_fee_amount == pool_creation_fee.amount check will fail because paid_pool_fee.amount > pool_creation_fee.amount. This reverts create_pool.
+
+If user chooses to take advantage of denom_creation_fee.iter().any, user sent = pool_creation_fee + One of denom creation token amounts (not the pool token). This passes both the strict equality check and .any. However, the user only paid pool_creation_fee and underpaid denom_creation_fee.
+
+Recommended mitigation steps
+
+(1) change .any() -> .all() (2) also, because this branch denom_creation_fee contains the pool_creation token, needs to add a control flow to handle the iteration of pool_creation token to check paid_fee_amount == fee.amount + pool_creation_fee.amount;
+
+Links to affected code
+helpers.rs#L563-L564
+Opens in a new window
+helpers.rs#L577
+Opens in a new window
+Submissions touching same files
+helpers.rs
+View full submission
+Comments for the judge
+4
+You are viewing comments for the primary submission, S-319.
+Correction
+Edited: Feb 22
+3docSec
+
+Behavior is inconsistent with the MantraChain tokenfactory that collects all fees, OK for valid M 👍
+
+Judging
+Edited: Feb 22
+3docSec
+
+Closing as invalid - paying one denom only is the intended behavior
+
+Intended
+Edited: Feb 22
+jvr0x
+
+pool_creation_fee is the fee for creating the pool while the vec denom_creation_fee are the tokens that the user can pay for the token factory in. Only 1 is enough, no need to pay in all the denoms listed there.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks intended behavior, as per comment L576
+
+Duplicates
+3
+S-311
+Pool Pool-creation fees are not fully paid when pool denomination fee is included in the factory denomination fee
+Abdessamed
+72
+S-252
+validate_fees_are_paid() multiple denom_creation_fee does not validate that all fees are paid
+0x1982us
+00
+S-200
+Fee validation inconsistency allows pool drainage via unpaid token factory fees
+Lambda
+00
+Timeline
+Submitted
+Created: 498d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

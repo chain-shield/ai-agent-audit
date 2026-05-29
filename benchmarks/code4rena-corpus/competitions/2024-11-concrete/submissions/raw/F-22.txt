@@ -1,0 +1,210 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-22
+Medium
+Primary
+S-934
+`removeStrategy()` can be DoSed by sending 1 wei to the to-be-deleted strategy
+thekmj
+75
+Sufficient
+383d ago
+Summary
+
+MultiStrategyVaultHelper.removeStrategy() has an erroneous check that can be easy force-failed. This allows removing a strategy to be easy DoS-ed by anyone.
+
+Finding description
+
+When a strategy is removed with ConcreteMultiStrategyVault.removeStrategy(), it calls into MultiStrategyVaultHelper.removeStrategy(), which has the following check:
+
+https://github.com/code-423n4/2024-11-concrete/blob/main/src/libraries/MultiStrategyVaultHelper.sol#L274-L277
+
+// Check if the strategy has any locked assets that cannot be withdrawn
+if (stratToBeRemoved_.getAvailableAssetsForWithdrawal() != stratToBeRemoved_.totalAssets()) {
+    revert StrategyHasLockedAssets(address(stratToBeRemoved_));
+}
+
+For the strategies' getAvailableAssetsForWithdrawal():
+
+For Aave strategy, it is the aToken balance
+For Morpho, it is the maximum withdrawable
+For Radiant, it is the rToken balance
+For Silo, it is the collateral vault token balance
+For Compound, it is the cToken balance
+For Protect strategy, it is the asset's balance i.e. the amount of deployed funds that has not been borrowed yet.
+
+For totalAssets(), it is the balance of the underlying asset (not the external vault's token), plus the _totalAssets() defined per-strategy, where:
+
+For all non-protect strategies, it is the vault's token balance (converted to assets if needed).
+For protect strategy, it is the debt of the vault.
+
+Now, because _totalAssets() also counts the underlying asset balance in, combined with the fact that there's no way to directly withdraw the underlying asset from the strategy's balance itself, anyone can force the above equality to false by transferring 1 wei of asset in, causing removeStrategy() to always fail at that equality check.
+
+Proof of Concept
+
+We first prove that it is possible to force-fail by sending 1 wei of underlying asset in. Paste the test into AaveV3Strategy.t.sol, and run with forge test --match-test test_PoCRemoveStrategyCheckFail:
+
+function test_PoCRemoveStrategyCheckFail(uint256 amount_) public {
+    uint256 amount = bound(amount_, 1e10, 1000 ether);
+    _mintAsset(amount + 1, hazel);
+    vm.startPrank(hazel);
+
+    asset.approve(address(strategy), amount);
+    uint256 shares = strategy.deposit(amount, hazel); // deposit first
+    assertEq(strategy.getAvailableAssetsForWithdrawal(), strategy.totalAssets());
+
+    // now send 1 wei in
+    asset.transfer(address(strategy), 1);
+    assertNotEq(strategy.getAvailableAssetsForWithdrawal(), strategy.totalAssets()); // assert not equal, will pass
+
+    vm.stopPrank();
+}
+Impact
+
+removeStrategy() can be denied at any time. This in turn also denies the replacement part of addOrReplaceStrategy(), which calls into removeStrategy()
+
+Recommended mitigation steps
+
+totalAssets() should only add the underlying balance if it's the protect strategy. Otherwise, it should only count the vault token's balance (converted to underlying assets)
+
+Links to affected code
+MultiStrategyVaultHelper.sol#L274-L277
+Opens in a new window
+Submissions touching same files
+MultiStrategyVaultHelper.sol
+View full submission
+Duplicates
+22
+S-873
+Remove Strategy Could Be Easily DoS
+EPSec
+88
+S-609
+DoS in `removeStrategy` by sending asset to the strategy balance
+zxriptor
+81
+S-596
+DoS of various Vault functionality by directly sending share token dust to the strategy balance.
+zxriptor
+81
+S-1073
+Malicious Direct Asset Transfers to Strategies Can DOS Strategy Removal via removeStrategy
+waydou
+75
+S-750
+New Depositors Can Lose 100% Due to Lack of Bad Debt Write-off Mechanism
+0xNirix
+72
+S-164
+Strategy replacement and removal can be DoSed
+0xrex
+69
+S-552
+Removal of a strategy can be DoS'ed.
+sl1
+68
+S-1344
+Removing a strategy might be DoSed
+samuraii77
+63
+S-1077
+Strategy removal can DoSed by a malicios user
+gesha17
+57
+S-1187
+`MorphoVaultStrategy` can be griefed with dust deposits, preventing strategy removal
+4rdiii
+56
+S-263
+removeStrategy in ConcreteMultiStrategyVault.sol can be DoS by directly depositing into the strategy contract
+peanuts
+50
+S-1263
+Impossible to remove protect Strategy from ConcreteMultiStrategyVault contract
+grearlake
+47
+S-669
+A malicious user can donate dust tokens to the strategy, preventing the strategy from being removed
+ayden
+43
+S-655
+Incorrect computation of available asset for withdrawal leading to DOS of removeStrategy()
+lanrebayode77
+30
+S-632
+Dust amount donation to Strategy Base will cause Strategy Removal to always revert.
+Bigsam
+29
+S-1166
+`MultiStrategyVaultHelper.removeStrategy` can be `DoS` by depositing `only 1 wei` into the `Strategy vault`
+Udsen
+27
+S-1244
+Donation attack can permanently freeze strategy assets
+wallstreetvilkas
+11
+S-1180
+DoS in removeStrategy via donation
+Jiri123
+00
+S-415
+Remove strategy can be dos
+0x37
+00
+S-301
+Attacker can prevent protocol from replacing strategy with donation
+OpaBatyo
+00
+S-244
+Strategy removal can be Dosed
+ChainProof
+00
+S-236
+Denial of Service Vulnerability in removeStrategy Function by Dust Token Transfer
+a2security
+00
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

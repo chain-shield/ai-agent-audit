@@ -1,0 +1,112 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-60
+Low
+Primary
+S-481
+Execution will get reverted for all reports if one of the chains is not-enabled
+Al-Qa-qa
+62
+Sufficient
+383d ago
+Description
+
+When transmitters execute reports, they execute more than one report in a single execution. for each single report execution, we call _getEnabledSourceChainConfig() which reverts in case the chain is not-enabled.
+
+offRamp/OffRamp.sol#L391
+
+  function _executeSingleReport( ... ) internal {
+    ...
+    {
+      bytes32 metaDataHash = keccak256(
+        abi.encode(
+          Internal.ANY_2_EVM_MESSAGE_HASH,
+          sourceChainSelector,
+          i_chainSelector,
+>>        keccak256(_getEnabledSourceChainConfig(sourceChainSelector).onRamp)
+        )
+      );
+  }
+// ------------------
+  function _getEnabledSourceChainConfig( ... ) internal view returns (SourceChainConfig storage) {
+    SourceChainConfig storage sourceChainConfig = s_sourceChainConfigs[sourceChainSelector];
+    if (!sourceChainConfig.isEnabled) {
+>>    revert SourceChainNotEnabled(sourceChainSelector);
+    }
+
+    return sourceChainConfig;
+  }
+
+Since DONs execute reports at batches (more than one report at a time, each report for a given source chain), reverting the hole execution because a single chain is not-enabled, will make the hole execution gets reverted, wasting gas for DON execution.
+
+Proof of Concept
+5 Different reports for 5 different source chains has been commited successfully
+1 of the chains gets un-enabled (this can occuar like in case the chain will make an upgrade or something)
+DON execute the 5 reports as one execution
+All reports gets executed, but the last one gets reverted as it is not-enabled, preventing the previous successful reports from getting executed.
+
+this will result in All Execution reverting wasting The Transmitter gas consumed for executing the prev 4 reports, as will as postponing Other messages' execution.
+
+Recommendations
+
+Skip executing the report if the chain isEnabled is set to false.
+
+Links to affected code
+OffRamp.sol#L391
+Opens in a new window
+Submissions touching same files
+OffRamp.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-481.
+Why would the DON report for non existent chains?
+Edited: Feb 22
+rensr
+
+Not sure I see how this would ever happen?
+
+Timeline
+Submitted
+Created: 546d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

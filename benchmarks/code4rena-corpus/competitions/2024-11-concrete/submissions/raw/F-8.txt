@@ -1,0 +1,224 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-8
+High
+Primary
+S-117
+Radiant strategy's rewards can never be claimed
+0xAlix2
+82
+Sufficient
+383d ago
+Finding description and impact
+
+When the vault deposits assets in strategies, these strategies take the deposited assets and deposit them into third-party protocols to accumulate some profit and receive rewards. RadiantV2Strategy is an example of this, where a profit is earned in some asset by holding a corresponding rToken, moreover, it expects some rndt tokens as rewards, however, this will never work.
+
+To claim rndt rewards, users have to call ChefIncentivesController::claim, https://github.com/radiant-capital/v2/blob/main/contracts/radiant/staking/ChefIncentivesController.sol#L533. However, this doesn't send the rewards to the caller (the protocol is expecting it to be sent). The rewards are vested and sent to the MultiFeeDistribution contract:
+
+function claim(address _user, address[] memory _tokens) public whenNotPaused {
+	// ...
+
+@>	_vestTokens(_user, pending);
+
+	eligibleDataProvider.updatePrice();
+}
+
+function _vestTokens(address _user, uint256 _amount) internal {
+	if (_amount == 0) revert NothingToVest();
+	IMultiFeeDistribution mfd_ = mfd;
+	_sendRadiant(address(mfd_), _amount);
+@>	mfd_.vestTokens(_user, _amount, true);
+}
+
+To claim those rewards "early", a user could call MultiFeeDistribution::exit, https://github.com/radiant-capital/v2/blob/main/contracts/radiant/staking/MultiFeeDistribution.sol#L644-L656, which transfers the rndt tokens to the user:
+
+function exit(bool claimRewards) external {
+	// ...
+
+@>	_withdrawTokens(onBehalfOf, amount, penaltyAmount, burnAmount, claimRewards);
+}
+Proof of Concept
+
+Add the following in test/strategies/RadiantV2Starategy.t.sol:
+
+function getPendingRewardForStrategy() internal view returns (uint256) {
+    address[] memory _assets = new address[](1);
+    _assets[0] = address(aToken);
+    uint256[] memory claimableRewards = incentiveController.pendingRewards(
+        address(strategy),
+        _assets
+    );
+    return claimableRewards[0];
+}
+
+function getVestingBalanceForStrategy() internal returns (uint256) {
+    (uint256 totalVesting, , ) = incentiveController.mfd().earnedBalances(
+        address(strategy)
+    );
+    return totalVesting;
+}
+
+function test_radiantRewardsUnclaimable() public {
+    // Disable eligibility for simplicity
+    vm.prank(incentiveController.owner());
+    incentiveController.setEligibilityMode(EligibilityModes.DISABLED);
+
+    // Enable rewards
+    vm.prank(admin);
+    strategy.setEnableRewards(true);
+
+    IERC20 rndt = IERC20(incentiveController.rdntToken());
+
+    uint256 amount = 10e18;
+
+    _mintAsset(amount, hazel);
+
+    // Strategy has no rewards (rndt)
+    assertEq(rndt.balanceOf(address(strategy)), 0);
+
+    vm.startPrank(hazel);
+    // Hazel deposits assets into the strategy
+    asset.approve(address(strategy), amount);
+    strategy.deposit(amount, hazel);
+
+    // There are no rewards to claim
+    assertEq(getPendingRewardForStrategy(), 0);
+
+    // 10 days later
+    vm.warp(block.timestamp + 10 days);
+
+    // Some rewards are claimable
+    assertGt(getPendingRewardForStrategy(), 0);
+
+    // Hazel withdraws assets from the strategy
+    strategy.redeem(strategy.balanceOf(hazel), hazel, hazel);
+
+    // No more pending rewards
+    assertEq(getPendingRewardForStrategy(), 0);
+    // Pending rewards are now vested
+    assertGt(getVestingBalanceForStrategy(), 0);
+    // Strategy has no rewards (rndt)
+    assertEq(rndt.balanceOf(address(strategy)), 0);
+
+    vm.stopPrank();
+}
+Recommended mitigation steps
+
+When claiming rewards from the ChefIncentivesController contract, directly withdraw any vested amounts from MultiFeeDistribution.
+
+Add/replace the following in src/strategies/Radiant/IRadiantV2.sol:
+
+interface IMultiFeeDistribution {
+    function exit(bool claimRewards) external;
+    function earnedBalances(address user) external returns (uint256 totalVesting, uint256 unlocked, EarnedBalance[] memory earningsData);
+}
+
+interface IChefIncentivesController {
+    function mfd() external view returns (IMultiFeeDistribution);
+    function rdntToken() external view returns (address);
+    function pendingRewards(address _user, address[] calldata _tokens) external view returns (uint256[] memory);
+    function setEligibilityMode(EligibilityModes _newVal) external;
+    function owner() external view returns (address);
+    function claim(address _user, address[] calldata _tokens) external;
+    function claimAll(address _user) external;
+    function setClaimReceiver(address _user, address _receiver) external;
+}
+
+Add the following in RadiantV2Strategy::_getRewardsToStrategy:
+
+function _getRewardsToStrategy(bytes memory) internal override {
+    if (!rewardsEnabled) return;
+    if (address(incentiveController) == address(0)) return;
+    address[] memory _assets = new address[](1);
+    _assets[0] = address(rToken);
+
+    //slither-disable-next-line unused-return
+    try incentiveController.claim(address(this), _assets) {} catch {}
++   try incentiveController.mfd().exit(true) {} catch {}
+}
+Links to affected code
+RadiantV2Strategy.sol#L129-L137
+Opens in a new window
+Submissions touching same files
+RadiantV2Strategy.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-117.
+explanation
+Edited: Feb 22
+rdturner
+
+We acknowledge this risk. This particular strategy is not currently scheduled to be put into production.
+
+Duplicates
+6
+S-546
+RadiantV2Strategy has no way of claiming RDNT rewards
+sl1
+68
+S-390
+Permanent freeze of earned rewards in RadiantV2Strategy
+blutorque
+65
+S-1311
+Rewards from Radiant can not be claimed
+samuraii77
+63
+S-1445
+Rewards from RadiantV2Strategy are permanently lost due to missing MFD support
+MrPotatoMagic
+59
+S-549
+Radiant rewards cannot be withdrawn
+trachev
+56
+S-393
+RadiantV2 strategy's rewards will be lost
+0x37
+00
+Timeline
+Submitted
+Created: 550d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+High
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

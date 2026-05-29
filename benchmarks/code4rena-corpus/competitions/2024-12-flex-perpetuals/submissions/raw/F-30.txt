@@ -1,0 +1,134 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Flex Perpetuals
+/
+F-30
+Low
+Primary
+S-241
+IntentHandler.sol has no checks validating that market is active.
+Tumelo_Crypto
+38
+Sufficient
+383d ago
+Vulnerability Details
+
+IntentHandler.sol has no checks validating that market is active.
+
+Impact
+
+Delisted Market transactions can still be executed by the IntentHandler.sol contract
+
+Proof of concept
+
+The delistMarket() function was added in the ConfigStorage.sol contract and was not there in the HMX contracts, therefore no checks were done in any of the functions to verify that the market tied to a specific market index is still active and not delisted. The Flex protocol team failed to consider this and add subsequent checks to functions that require markets to be active. Due to this error, delisted market transactions can still be executed by the IntentHandler.sol contract.
+
+Here is the delisted market code in the ConfigStorage.sol contract:
+'''solidity
+
+function delistMarket(uint256 _marketIndex) external onlyOwner {
+    emit LogDelistMarket(_marketIndex);
+    delete marketConfigs[_marketIndex].active;
+}
+
+
+'''
+In the IntentHandler.sol contract here is how the execute function begins:
+'''solidity
+
+function execute(ExecuteIntentInputs memory inputs) external onlyIntentExecutors {
+if (inputs.accountAndSubAccountIds.length != inputs.cmds.length) revert IntentHandler_BadLength();
+
+    ExecuteIntentVars memory _localVars;
+    ExecuteTradeOrderVars memory _vars;
+
+    // Update price to Pyth
+    pyth.updatePriceFeeds(inputs.priceData, inputs.publishTimeData, inputs.minPublishTime, inputs.encodedVaas);
+
+    _localVars.cmdsLength = inputs.accountAndSubAccountIds.length;
+    _localVars.tpTokens = configStorage.getHlpTokens();
+
+    for (uint256 _i; _i < _localVars.cmdsLength; ) {
+        _localVars.mainAccount = address(uint160(inputs.accountAndSubAccountIds[_i].decodeUint(0, 160)));
+        _localVars.subAccountId = uint8(inputs.accountAndSubAccountIds[_i].decodeUint(160, 8));
+        _localVars.cmd = Command(inputs.cmds[_i].decodeUint(0, 3));
+
+        if (_localVars.cmd == Command.ExecuteTradeOrder) {
+            _vars.order.marketIndex = inputs.cmds[_i].decodeUint(3, 8);
+
+
+'''
+As can be seen, there is no verification that the market index connected to the order is delisted. Therefore any delisted market transactions can still can still be executed.
+
+Tools Used
+
+Manual review
+
+Mitigation
+
+Add checks to relevant functions to ensure market is not delisted.
+
+Links to affected code
+ConfigStorage.sol#L603-L606
+Opens in a new window
+IntentHandler.sol#L83
+Opens in a new window
+Submissions touching same files
+ConfigStorage.sol
+IntentHandler.sol
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-241.
+Low Justification Rationale
+Edited: Feb 22
+0xsomeone
+
+The submission outlines that the IntentHandler does not validate the active status of a market, however, any attempt to execute an intent for an inactive market will result in failure as the reduction or increase of a position properly validates the market's activation status. The submission fails to demonstrate any non-negligible impact of the discrepancy rendering it to be at most a QA (L) level observation.
+
+Valid but seems overinflated
+Edited: Feb 22
+0xRobocop
+
+The issue seems valid. There is no validation regarding if the market is currently active. However, the report fails to explain how this can lead to a loss of funds for the protocol or some other security impact. This seems like a valid low issue.
+
+Timeline
+Submitted
+Created: 521d ago
+High
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,302 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-31
+Medium
+Primary
+S-317
+A replaced protect-strategy can steal all the funds from the vault
+t0x1c
+46
+Sufficient
+383d ago
+Description
+
+Calling the addStrategy() function with replace_ = true as a param lets the owner replace a vault's strategy. This internally calls MultiStrategyVaultHelper::addOrReplaceStrategy() which has a logic flaw.
+If a vault's protect-strategy is replaced with a non-protect strategy, then the protectStrategy variable which is meant to point to the address of the protect strategy contract is not reset to address(0) and continues to erroneously point to the old address.
+
+Impact
+
+The impact seems to be high since vaults with a protect-strategy are checked across the protocol. The above vault will now be incorrectly included in the list while executing:
+
+_getStrategy() : supposed to be used to find the best vault with protection-strategy to withdraw from. _getStrategy() is internally called by:
+requestToken() : Used to request assets from the vault and execute a borrow claim through the protection strategy.
+_addTokensToStrategy() : only supposed to consider vaults with a protection-strategy. This messes up the following functions which internally call _addTokensToStrategy():
+addRewards()
+repay()
+_getTokenTotalBorrowDebt : DebtVaults.vaultsWithProtect count is incorrectly calculated. _getTokenTotalBorrowDebt() is internally called by _addTokensToStrategy() mentioned above.
+getTokenTotalAvaliableForProtection : incorrectly calculates the total avalaible tokens for protection across all vaults.
+
+Importantly, it violates the security assumption of trusted roles. A function having the modifier onlyProtect like requestFunds() can still be called by this protect-strategy contract in spite of the fact that it has been removed from the vault. This can be used to pull funds from every other strategy in the vault, including the float amount.
+
+Proof of Concept
+
+Add the following inside test/ConcreteMultiStrategyVault.t.sol to see it pass when run with forge test --mt test_t0x1c_replaceProtectStrategyWithNonProtect -vv:
+
+    function test_t0x1c_replaceProtectStrategyWithNonProtect() public {
+        // Setup: create a vault containing a protect strategy
+        (ConcreteMultiStrategyVault newVault, ) = _createNewVault(false, false, false);
+        MockERC4626Protect protectStrat = new MockERC4626Protect(
+            IERC20(address(asset)), 
+            "Mock Protect", 
+            "MP"
+        );
+        Strategy memory protectStrategy = Strategy({
+            strategy: IStrategy(address(protectStrat)),
+            allocation: Allocation({index: 0, amount: 3333})
+        });
+        vm.startPrank(admin);
+        newVault.addStrategy(0, true, protectStrategy);
+        assertEq(newVault.protectStrategy(), address(protectStrategy.strategy), "incorrect protectStrategy address");
+        // Setup ends
+
+
+        // bug flow: have a non-protect strategy replace the protectStrategy. 
+        // We see that the `newVault.protectStrategy()` is not reset to 0x0 and keeps pointing to the same old address.
+        Strategy memory newNonProtectStrategy = _createMockStrategy(IERC20(address(asset)), false);
+        newVault.addStrategy(0, true, newNonProtectStrategy); // replace strategy
+        assertEq(newVault.protectStrategy(), address(protectStrategy.strategy), "no bug"); // @audit-issue : should have been 0x0
+    }
+Mitigation
+
+Add this single line of code:
+
+  File: src/libraries/MultiStrategyVaultHelper.sol
+
+   204:              function addOrReplaceStrategy(
+   205:                  Strategy[] storage strategies,
+   206:                  Strategy memory newStrategy_,
+   207:                  bool replace_,
+   208:                  uint256 index_,
+   209:                  address protectStrategy_,
+   210:                  IERC20 asset
+   211:              ) public returns (address protectStrategy, IStrategy newStrategyIfc, IStrategy stratToBeReplacedIfc) {
+   212:                  // Calculate total allotments of current strategies
+   213:                  protectStrategy = protectStrategy_;
+   214:                  uint256 allotmentTotals = 0;
+   215:                  uint256 len = strategies.length;
+   216:                  for (uint256 i = 0; i < len; ) {
+   217:                      allotmentTotals += strategies[i].allocation.amount;
+   218:                      unchecked {
+   219:                          i++;
+   220:                      }
+   221:                  }
+   222:
+   223:                  // Adding or replacing strategy based on `replace_` flag
+   224:                  if (replace_) {
+   225:                      if (index_ >= len) revert InvalidIndex(index_);
+   226:
+   227:                      // Ensure replacing doesn't exceed total allotment limit
+   228:                      if (
+   229:                          allotmentTotals - strategies[index_].allocation.amount + newStrategy_.allocation.amount >
+   230:                          MAX_BASIS_POINTS
+   231:                      ) {
+   232:                          revert AllotmentTotalTooHigh();
+   233:                      }
+   234:
+   235:                      // Replace the strategy at `index_`
+   236:                      stratToBeReplacedIfc = strategies[index_].strategy;
+   237:                      protectStrategy_ = removeStrategy(stratToBeReplacedIfc, protectStrategy_, asset);
++  238:                      protectStrategy = protectStrategy_;  // if vault's protect-strategy was removed, this becomes 0x0 here
+   239:                      strategies[index_] = newStrategy_;
+   240:                  } else {
+   241:                      // Ensure adding new strategy doesn't exceed total allotment limit
+   242:                      if (allotmentTotals + newStrategy_.allocation.amount > MAX_BASIS_POINTS) {
+   243:                          revert AllotmentTotalTooHigh();
+   244:                      }
+   245:
+   246:                      // Add the new strategy to the array
+   247:                      strategies.push(newStrategy_);
+   248:                  }
+   249:
+   250:                  // Handle protect strategy assignment if applicable
+   251:                  if (newStrategy_.strategy.isProtectStrategy()) {
+   252:                      if (protectStrategy_ != address(0)) revert MultipleProtectStrat();
+   253:                      protectStrategy = address(newStrategy_.strategy);
+   254:                  }
+   255:
+   256:                  // Approve the asset for the new strategy
+   257:                  asset.forceApprove(address(newStrategy_.strategy), type(uint256).max);
+   258:
+   259:                  // Return the address of the new strategy
+   260:                  newStrategyIfc = newStrategy_.strategy;
+   261:              }
+Links to affected code
+MultiStrategyVaultHelper.sol#L237-L239
+Opens in a new window
+Submissions touching same files
+MultiStrategyVaultHelper.sol
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-317.
+Correct Severity and Status of dupes
+Edited: Feb 22
+t0x1c
+OP
+
+Hi @Picodes,
+As the owner of this report, I would like to address 2 items here:
+
+Response to concerns raised by 0xStalin in the comment above
+Severity of the other reports marked as dupes of this <br>
+Response to concerns raised by 0xStalin in the comment above:
+It's not clear why 0xStalin claims that calling the one-step action of replacing a strategy is "admin-error" while his recommended two-step action of removal + add is not? Is there any indication that calling addStrategy() with replace strategy as true is an incorrect approach and the admins are at fault if they choose to take the more convenient approach? I don't see any evidence to that either in the code, docs or 0xStalin's comments.
+
+I also think he is confused about this:
+
+I'd agree with the severity if there would not be a path to execute such an operation, but, since the codebase allows to execute this operation by calling the functions in the correct order, then, I consider this problem to not be of high severity, but rather a medium severity or even a QA
+
+This comes into picture only if the structure of the vulnerability had been something like this:
+
+I claim that a functionality is blocked and hence users/protocol suffers, hence causing DoS; OR resulting in a situation which blocks future actions expected to be taken by the admin/users.
+Someone provides a counter-argument that it isn't blocked as there is a valid alternative path which can be taken.
+
+However the current report's structure is this:
+
+A perfectly valid (and more convenient) call is made by the admin, expecting things to be perfect i.e. the ProtectStrategy to be removed. Admin had no idea the implementation is flawed.
+Incorrect code logic allows ProtectStrategy address to retain it's access to a function named requestFunds() protetcted by the onlyProtect modifier.
+The removed ProtectStrategy calls requestFunds() and siphons off funds, resulting in High severity.
+
+Moving on to the next point.
+<br>
+
+Severity of the other reports marked as dupes of this:
+Submissions S-875 and S-447 are marked as dupes. I would like to highlight the following:
+Both the submissions report the maximum impact of the bug as: The vault will be unable to add new protected strategies as it will revert since the current entry has not been cleared. S-447 additionally mentions another impact that if In ClaimRounter, we will add some rewards to protected strategies, this will cause that deleted protected strategy can receive some rewards.
+My argument is that the impacts mentioned in these dupes are not High but rather Medium and hence they should be partial-dupes of the primary. None of them mention the theft of funds as an impact.
+
+I am not sure if complete de-duping is an option on C4 based on severity alone, but if it is then I would request that.
+
+Thank you
+
+0xStalin
+01/08/2025
+
+I'd like to clarify something. My point is that calling the one-step action of replacing a strategy is "admin-error" when a ProtectStrategy is being replaced with a normal strategy. A ProtectStrategy is a special strategy that is different from the rest of the strategies.
+
+The recommended two-step action of removal + add is simply the most straightforward execution path to remove a special strategy (ProtectStrategy), and add a new normal strategy.
+
+Moreover, the removed protect strategy is still under the protocol's control, which means, they can simply set the claimRouter to an address so that calls to executeBorrowClaim() would revert, in this way, even though the removed ProtocolStrategy is still registered on the Vault, calls from the ProtectStrategy to the vault will revert, therefore, all the duplicates on this submission have the same impact, and from your own words, the dupes are not High, but rather Medium.
+
+All in all, it is clear the severity of this finding and its dupes is either a Medium or a low/qa.
+
+t0x1c
+OP
+01/09/2025
+
+Once again, your entire argument is based on the premise that an admin calling addStrategy() while replacing protectStrategy with a non-Protect one with replace = true is inherently an error.
+
+In light of that, I see my explanations as sufficient & best to let the judge adjudicate on the fact.
+
+Thanks
+
+Picodes
+01/20/2025
+
+@t0x1c thanks for your comments. I do agree with 0xStalin point that this finding leads to a potential loss of funds with an "external hypothesis" which is that the admin executes such an action. From the overall codebase, it seems that indeed replacing a protected strategy with a non-protected one is inherently a very touchy and forbidden operation has there should be only 1 valid protect strategy. So my understanding in the absence of clarification from the sponsor is that this is an issue with comments and that you're not supposed to change the type of a strategy through this function. I'll therefore downgrade to Med
+
+Dispute severity because replacing a ProtectStrategy for a Non-ProtectStrategy is an admin error.
+Edited: Feb 22
+0xStalin
+
+I'd like to dispute the severity for this finding and its duplicates since the action of replacing a ProtectStrategy for a Non-ProtectStrategy requires the admins to make such a mistake, and, because there is a correct path to execute such an operation.
+
+First, remove the ProtectStrategy and then add the new non-protect strategy.
+
+I'd agree with the severity if there would not be a path to execute such an operation, but, since the codebase allows to execute this operation by calling the functions in the correct order, then, I consider this problem to not be of high severity, but rather a medium severity or even a QA seems to be the correct severity since this relies on the admins executing the replacement of a ProtectStrategy for a Non-ProtectStrategy.
+
+Using the same PoC provided on this report we can verify that is indeed possible to remove a ProtectStrategy and add a new non protect strategy, without causing any problems.
+
+    function test_t0x1c_replaceProtectStrategyWithNonProtect() public {
+        // Setup: create a vault containing a protect strategy
+        (ConcreteMultiStrategyVault newVault, ) = _createNewVault(false, false, false);
+        MockERC4626Protect protectStrat = new MockERC4626Protect(
+            IERC20(address(asset)), 
+            "Mock Protect", 
+            "MP"
+        );
+        Strategy memory protectStrategy = Strategy({
+            strategy: IStrategy(address(protectStrat)),
+            allocation: Allocation({index: 0, amount: 3333})
+        });
+        vm.startPrank(admin);
+        newVault.addStrategy(0, true, protectStrategy);
+        assertEq(newVault.protectStrategy(), address(protectStrategy.strategy), "incorrect protectStrategy address");
+        // Setup ends
+
+
+        // bug flow: have a non-protect strategy replace the protectStrategy. 
+        // We see that the `newVault.protectStrategy()` is not reset to 0x0 and keeps pointing to the same old address.
+        Strategy memory newNonProtectStrategy = _createMockStrategy(IERC20(address(asset)), false);
+
+        //@audit => Comment the next two lines
+        // newVault.addStrategy(0, true, newNonProtectStrategy); // replace strategy
+        // assertEq(newVault.protectStrategy(), address(protectStrategy.strategy), "no bug"); // @audit-issue : should have been 0x0
+
+        //@audit => Remove the protect strategy and then add the nonProtect strategy on the same index
+        newVault.removeStrategy(0);
+        newVault.addStrategy(0, false, newNonProtectStrategy);
+
+        uint256 strategiesLastIndex = newVault.getStrategies().length - 1;
+        assertEq(address(newVault.getStrategies()[strategiesLastIndex].strategy),address(newNonProtectStrategy.strategy));
+
+        //@audit-info => Validate protectStrategy is set as 0x address
+        assertEq(newVault.protectStrategy(),address(0));
+    }
+
+
+Duplicates
+2
+S-875
+Replacing protected strategy for non protected not working correctly
+EPSec
+88
+S-447
+protectStrategy may fail to be cleared when admin replaces one strategy
+0x37
+00
+Timeline
+Submitted
+Created: 546d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

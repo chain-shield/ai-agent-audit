@@ -1,0 +1,416 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-84
+Low
+Primary
+S-1410
+No mechanism to be able to get reward from radiant V2
+grearlake
+47
+Sufficient
+383d ago
+Finding description and impact
+
+To be able to get reward from Radiant, user need to zap RDNT to be eligible, but there is no mechanism to do that in RadiantV2Strategy contract
+
+Proof of Concept
+
+From Radiant documentation, to be eligible to get reward, user have to lock at least 5% ratio between total deposit value and dLP value. It is able by calling zap() function:
+
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/zap/LockZap.sol#L254-#L264
+
+function zap(
+	bool _borrow,
+	address _asset,
+	uint256 _assetAmt,
+	uint256 _rdntAmt,
+	uint256 _lockTypeIndex,
+	uint256 _slippage
+) public payable whenNotPaused returns (uint256) {
+	return
+		_zap(_borrow, _asset, _assetAmt, _rdntAmt, msg.sender, msg.sender, _lockTypeIndex, msg.sender, _slippage);
+}
+
+
+But that function do not exist in RadiantV2Strategy contract, so there is no able to claiming reward
+
+Recommended mitigation steps
+
+Create function that can lock RDNT to be able to get reward from Radiant.
+
+Links to affected code
+RadiantV2Strategy.sol#L13
+Opens in a new window
+Submissions touching same files
+RadiantV2Strategy.sol
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-1410.
+This should be valid one
+Edited: Feb 22
+grearlake
+OP
+
+but problem is it when protocol deposit token to radiant, radiant only mint aTokens back:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/lending/lendingpool/LendingPool.sol#L118-#L138
+
+function deposit(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) public whenNotPaused {
+	DataTypes.ReserveData storage reserve = _reserves[asset];
+
+	ValidationLogic.validateDeposit(reserve, amount);
+
+	address aToken = reserve.aTokenAddress;
+
+	reserve.updateState();
+	reserve.updateInterestRates(asset, aToken, amount, 0);
+
+	IERC20(asset).safeTransferFrom(msg.sender, aToken, amount);
+
+	if (IAToken(aToken).balanceOf(onBehalfOf) == 0) {
+		_usersConfig[onBehalfOf].setUsingAsCollateral(reserve.id, true);
+		emit ReserveUsedAsCollateralEnabled(asset, onBehalfOf);
+	}
+
+	IAToken(aToken).mint(onBehalfOf, amount, reserve.liquidityIndex);
+
+	emit Deposit(asset, msg.sender, onBehalfOf, amount, referralCode);
+}
+
+
+When claiming, it will check if it is eligible to claim reward or not:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/staking/ChefIncentivesController.sol#L533-L537
+
+	if (eligibilityMode != EligibilityModes.DISABLED) {
+		if (!eligibleDataProvider.isEligibleForRewards(_user)) revert EligibleRequired();
+		checkAndProcessEligibility(_user, true, true);
+	}
+
+
+It will check for locked amount is enough or not, which is taked from locked amount of user:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/eligibility/EligibilityDataProvider.sol#L195C1-L199C3
+
+function isEligibleForRewards(address _user) public view returns (bool) {
+	uint256 lockedValue = lockedUsdValue(_user);
+	uint256 requiredValue = (requiredUsdValue(_user) * priceToleranceRatio) / RATIO_DIVISOR;
+	return requiredValue != 0 && lockedValue >= requiredValue;
+}
+
+function lockedUsdValue(address user) public view returns (uint256) {
+	Balances memory _balances = IMultiFeeDistribution(multiFeeDistribution).getBalances(user);
+	return _lockedUsdValue(_balances.locked);  //  <--
+}
+
+
+And locked amount can only increased through _stake() function:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/staking/MultiFeeDistribution.sol#L1078-#L1152
+
+function _stake(uint256 amount, address onBehalfOf, uint256 typeIndex, bool isRelock) internal whenNotPaused {
+	if (amount == 0) return;
+	if (bountyManager != address(0)) {
+		if (amount < IBountyManager(bountyManager).minDLPBalance()) revert InvalidAmount();
+	}
+      .   .   .   .   .   .
+
+	bal.locked = bal.locked + amount;  // <--
+
+      .   .   .   .   .   .
+}
+
+
+It can be called in stake() function:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/staking/MultiFeeDistribution.sol#L482C1-L484C3
+
+function stake(uint256 amount, address onBehalfOf, uint256 typeIndex) external {
+	_stake(amount, onBehalfOf, typeIndex, false);
+}
+
+
+Which is called in zap() function:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/zap/LockZap.sol#L254C1-L264C3
+
+function zap(
+	bool _borrow,
+	address _asset,
+	uint256 _assetAmt,
+	uint256 _rdntAmt,
+	uint256 _lockTypeIndex,
+	uint256 _slippage
+) public payable whenNotPaused returns (uint256) {
+	return
+		_zap(_borrow, _asset, _assetAmt, _rdntAmt, msg.sender, msg.sender, _lockTypeIndex, msg.sender, _slippage);
+}
+
+
+Function _zap():
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/zap/LockZap.sol#L336-#L410
+
+function _zap(
+	bool _borrow,
+	address _asset,
+	uint256 _assetAmt,
+	uint256 _rdntAmt,
+	address _from,
+	address _onBehalf,
+	uint256 _lockTypeIndex,
+	address _refundAddress,
+	uint256 _slippage
+) internal returns (uint256 liquidity) {
+       .   .   .    .   .   .   
+
+	IERC20(poolHelper.lpTokenAddr()).forceApprove(address(mfd), liquidity);
+	mfd.stake(liquidity, _onBehalf, _lockTypeIndex);       // <--
+	emit Zapped(_borrow, _assetAmt, _rdntAmt, _from, _onBehalf, _lockTypeIndex);
+
+	_refundDust(rdntAddr, _asset, _refundAddress);
+}
+
+
+So, to be able to get reward, protocol must zapping token. Despite we can call zapOnBehalf() to zap for protocol, but there is no way for user that zapped token will receive all these token back, so it is valid issue.
+
+grearlake
+OP
+01/08/2025
+
+If im not wrong, if anyone zap for protocol, these token will be stuck in the radiant forever, because it can not call setRelock() function, so autoRelockDisabled of protocol always false:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/staking/MultiFeeDistribution.sol#L442C1-L444C3
+
+function setRelock(bool status) external virtual {
+	autoRelockDisabled[msg.sender] = !status;
+}
+
+
+So these tokens will be staked again through withdrawExpiredLocksForWithOptions() function with isRelockAction = false:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/staking/MultiFeeDistribution.sol#L672C1-L680C3
+
+function withdrawExpiredLocksForWithOptions(
+	address address_,
+	uint256 limit_,
+	bool isRelockAction_
+) external returns (uint256) {
+	if (limit_ == 0) limit_ = _userLocks[address_].length;
+
+	return _withdrawExpiredLocksFor(address_, isRelockAction_, true, limit_);
+}
+
+
+Function _withdrawExpiredLocksFor():
+
+function _withdrawExpiredLocksFor(
+	address address_,
+	bool isRelockAction,
+	bool doTransfer,
+	uint256 limit
+) internal whenNotPaused returns (uint256 amount) {
+	if (isRelockAction && address_ != msg.sender && _lockZap != msg.sender) revert InsufficientPermission();
+	_updateReward(address_);
+
+	uint256 amountWithMultiplier;
+	Balances storage bal = _balances[address_];
+	(amount, amountWithMultiplier) = _cleanWithdrawableLocks(address_, limit);
+	bal.locked = bal.locked - amount;
+	bal.lockedWithMultiplier = bal.lockedWithMultiplier - amountWithMultiplier;
+	bal.total = bal.total - amount;
+	lockedSupply = lockedSupply - amount;
+	lockedSupplyWithMultiplier = lockedSupplyWithMultiplier - amountWithMultiplier;
+
+	if (isRelockAction || (address_ != msg.sender && !autoRelockDisabled[address_])) {   // <-- (condition = true with caller isnt protocol)
+		_stake(amount, address_, defaultLockIndex[address_], true);
+	} else {
+		if (doTransfer) {
+			IERC20(stakingToken).safeTransfer(address_, amount);
+			incentivesController.afterLockUpdate(address_);
+			emit Withdrawn(address_, amount, _balances[address_].locked, 0, 0, stakingToken != address(rdntToken));
+		} else {
+			revert InvalidAction();
+		}
+	}
+	return amount;
+}
+
+grearlake
+OP
+Edited: 01/08/2025
+
+despite the idea of calling zapOnBehalf() is not mentioned in the original report, the core problem is about zapping to get reward is mentioned, so it should be a valid one
+
+Picodes
+02/01/2025
+
+This is of Low severity at max to me. There is clear comments in the radiant strategy (see https://github.com/code-423n4/2024-11-concrete/blob/d2950ec68fdc391c10989d98748e79d1a0017f69/src/strategies/Radiant/RadiantV2Strategy.sol#L21) that it's fine to not support rewards with this version
+
+0xnev-validator-comment-S-1410
+Edited: Feb 22
+0xnev
+
+Radiant rewards are claim from the chefincentivecontroller.claim function as seen here
+
+grearlake
+OP
+01/08/2025
+
+but problem is it when protocol deposit token to radiant, radiant only mint aTokens back:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/lending/lendingpool/LendingPool.sol#L118-#L138
+
+function deposit(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) public whenNotPaused {
+	DataTypes.ReserveData storage reserve = _reserves[asset];
+
+	ValidationLogic.validateDeposit(reserve, amount);
+
+	address aToken = reserve.aTokenAddress;
+
+	reserve.updateState();
+	reserve.updateInterestRates(asset, aToken, amount, 0);
+
+	IERC20(asset).safeTransferFrom(msg.sender, aToken, amount);
+
+	if (IAToken(aToken).balanceOf(onBehalfOf) == 0) {
+		_usersConfig[onBehalfOf].setUsingAsCollateral(reserve.id, true);
+		emit ReserveUsedAsCollateralEnabled(asset, onBehalfOf);
+	}
+
+	IAToken(aToken).mint(onBehalfOf, amount, reserve.liquidityIndex);
+
+	emit Deposit(asset, msg.sender, onBehalfOf, amount, referralCode);
+}
+
+
+When claiming, it will check if it is eligible to claim reward or not:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/staking/ChefIncentivesController.sol#L533-L537
+
+	if (eligibilityMode != EligibilityModes.DISABLED) {
+		if (!eligibleDataProvider.isEligibleForRewards(_user)) revert EligibleRequired();
+		checkAndProcessEligibility(_user, true, true);
+	}
+
+
+It will check for locked amount is enough or not, which is taked from locked amount of user:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/eligibility/EligibilityDataProvider.sol#L195C1-L199C3
+
+function isEligibleForRewards(address _user) public view returns (bool) {
+	uint256 lockedValue = lockedUsdValue(_user);
+	uint256 requiredValue = (requiredUsdValue(_user) * priceToleranceRatio) / RATIO_DIVISOR;
+	return requiredValue != 0 && lockedValue >= requiredValue;
+}
+
+function lockedUsdValue(address user) public view returns (uint256) {
+	Balances memory _balances = IMultiFeeDistribution(multiFeeDistribution).getBalances(user);
+	return _lockedUsdValue(_balances.locked);  //  <--
+}
+
+
+And locked amount can only increased through _stake() function:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/staking/MultiFeeDistribution.sol#L1078-#L1152
+
+function _stake(uint256 amount, address onBehalfOf, uint256 typeIndex, bool isRelock) internal whenNotPaused {
+	if (amount == 0) return;
+	if (bountyManager != address(0)) {
+		if (amount < IBountyManager(bountyManager).minDLPBalance()) revert InvalidAmount();
+	}
+      .   .   .   .   .   .
+
+	bal.locked = bal.locked + amount;  // <--
+
+      .   .   .   .   .   .
+}
+
+
+It can be called in stake() function:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/staking/MultiFeeDistribution.sol#L482C1-L484C3
+
+function stake(uint256 amount, address onBehalfOf, uint256 typeIndex) external {
+	_stake(amount, onBehalfOf, typeIndex, false);
+}
+
+
+Which is called in zap() function:
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/zap/LockZap.sol#L254C1-L264C3
+
+function zap(
+	bool _borrow,
+	address _asset,
+	uint256 _assetAmt,
+	uint256 _rdntAmt,
+	uint256 _lockTypeIndex,
+	uint256 _slippage
+) public payable whenNotPaused returns (uint256) {
+	return
+		_zap(_borrow, _asset, _assetAmt, _rdntAmt, msg.sender, msg.sender, _lockTypeIndex, msg.sender, _slippage);
+}
+
+
+Function _zap():
+https://github.com/radiant-capital/v2/blob/cd618877151896415705468f1b2a43c4b75b3c5b/contracts/radiant/zap/LockZap.sol#L336-#L410
+
+function _zap(
+	bool _borrow,
+	address _asset,
+	uint256 _assetAmt,
+	uint256 _rdntAmt,
+	address _from,
+	address _onBehalf,
+	uint256 _lockTypeIndex,
+	address _refundAddress,
+	uint256 _slippage
+) internal returns (uint256 liquidity) {
+       .   .   .    .   .   .   
+
+	IERC20(poolHelper.lpTokenAddr()).forceApprove(address(mfd), liquidity);
+	mfd.stake(liquidity, _onBehalf, _lockTypeIndex);       // <--
+	emit Zapped(_borrow, _assetAmt, _rdntAmt, _from, _onBehalf, _lockTypeIndex);
+
+	_refundDust(rdntAddr, _asset, _refundAddress);
+}
+
+
+So, to be able to get reward, protocol must zapping token. Despite we can call zapOnBehalf() to zap for protocol, but there is no way for user that zapped token will receive all these token back, so it is valid issue.
+
+Explanation
+Edited: Feb 22
+Picodes
+
+See the comment near the activation toggle
+
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

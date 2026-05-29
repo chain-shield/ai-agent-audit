@@ -1,0 +1,200 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-23
+Medium
+Primary
+S-789
+swapTokensForReward is lack of slippage protect
+ayden
+43
+Sufficient
+383d ago
+Finding description and impact
+
+Users can swap vault tokens for reward tokens, and the amount of reward tokens received depends on the token price and the state of the ERC4626 vault. Both of these factors can influence the actual amount of reward tokens received. However, the swapTokensForReward function lacks slippage protection, which could result in users receiving fewer reward tokens than expected.
+
+Proof of Concept
+
+Scenario:
+
+1.Hazel first previews the reward token amount to be received via the previewSwapTokensForReward method
+2.The price of reward token changed
+3.Hazel submit the swapTokensForReward transaction
+
+Test:
+
+    function test_swap_amount_slippage() public {
+        uint256 rewardAmountInTreasury = 100_000_000 * 10 ** ASSET_DECIMALS;
+        uint256 initialAssetAmount = 1_000 * 10 ** ASSET_DECIMALS;
+        int256 rewardPrice = int256(500 * 10 ** ORACLE_QUOTE_DECIMALS);
+        int256 assetPrice = int256(22 * 10 ** ORACLE_QUOTE_DECIMALS);
+        // mint some reward tokens to the treasury
+        rewardToken.mint(treasury, rewardAmountInTreasury);
+        // Hazel to receive ctAssets from the ctAsset Vault
+        vm.startPrank(hazel);
+        asset.mint(hazel, initialAssetAmount);
+        asset.approve(address(ctAsset), initialAssetAmount);
+        ctAsset.deposit(initialAssetAmount, hazel);
+        vm.stopPrank();
+
+        // set prices for the oracle
+        _setOraclePrices(assetPrice, rewardPrice);
+
+        // Hazel wants to swap half of his ctAsset belongings
+        uint256 hazelCtAssetAmount = ctAsset.balanceOf(hazel);
+        uint256 ctAssetAmountToBeSwapped = hazelCtAssetAmount / 2;
+        // treasury to approve the spending of reward tokens
+        vm.prank(treasury);
+        rewardToken.approve(address(swapper), rewardAmountInTreasury);
+        vm.prank(hazel);
+        ctAsset.approve(address(swapper), ctAssetAmountToBeSwapped);
+
+        // calculate the expected answer
+        uint256 assetAmountFromCtAssetAmount = ctAsset.convertToAssets(ctAssetAmountToBeSwapped);
+        uint256 totalRewardTokenAmount = _getExpectedRewardTokenAmount(
+            assetAmountFromCtAssetAmount,
+            assetPrice,
+            rewardPrice
+        );
+
+        console2.log("expected reward amount:",totalRewardTokenAmount);
+
+        //price changed.
+        oracle.setPriceDecimalsAndTimestamp("REWARD/USDC", int256(600 * 10 ** ORACLE_QUOTE_DECIMALS), ORACLE_QUOTE_DECIMALS, 1);
+
+        //create the swap.
+        vm.startPrank(hazel);
+        swapper.swapTokensForReward(address(ctAsset), address(rewardToken), ctAssetAmountToBeSwapped);
+
+        console2.log("actually reward amount:",rewardToken.balanceOf(hazel));
+    }
+
+Out:
+
+[PASS] test_swap_amount_slippage() (gas: 768209)
+Logs:
+  expected reward amount: 24310000000000000000
+  actually reward amount: 20258333333333333333
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 7.76ms (1.69ms CPU time)
+
+Ran 1 test suite in 145.50ms (7.76ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+From the above test, we can see that the actual reward amount can differ from the expected reward amount.
+
+Recommended mitigation steps
+
+Add a slippage protect
+
+Links to affected code
+Swapper.sol#L78-L98
+Opens in a new window
+Submissions touching same files
+Swapper.sol
+View full submission
+Duplicates
+15
+S-816
+Swapper Slippage Protection Missing
+EPSec
+88
+S-803
+No slippage control/deadline on Swapper
+thekmj
+75
+S-1011
+Missing Slippage Protection in Concrete Swapper
+0xNirix
+72
+S-1359
+No slippage or deadline when swapping tokens for reward
+inh3l
+66
+S-810
+Lack of slippage protection & deadline can lead to loss
+t0x1c
+46
+S-1342
+Missing Slippage Checks in `swapTokensForReward` Function
+honey-k12
+43
+S-1364
+Missing Slippage Protection in Token Swaps
+NexusAudits
+31
+S-1238
+Lack of a slippage check in the `Swapper.swapTokensForReward` function will cause loss of funds to the user
+Udsen
+27
+S-661
+Lack of slippage protection in the Swapper#`swapTokensForReward()`, which lead to a situation that the `rewardAmount` of the `rewardToken_` to be received is much less than the user (`msg.sender`) expected
+0xmuxyz
+12
+S-1085
+Lack of Slippage Protection and Deadline Mechanism in Token Reward Swap
+ro1sharkm
+06
+S-735
+Missing Slippage Protection in `swapTokensForReward`
+Daniel526
+03
+S-1354
+swapTokensForReward lacks slippage protection
+Cyphermonk
+00
+S-1204
+Lack of Slippage Protection in Token Swaps
+0x2517
+00
+S-286
+Missing slippage check on swaps
+OpaBatyo
+00
+S-285
+Missing deadline check on swaps
+OpaBatyo
+00
+Timeline
+Submitted
+Created: 543d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

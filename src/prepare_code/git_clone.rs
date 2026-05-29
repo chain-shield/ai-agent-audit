@@ -237,18 +237,21 @@ async fn collect_repo_paths_after_clone(
         .collect::<Vec<PathBuf>>();
     info!("source_code_folders => {:?}", source_code_folders);
 
-    let effective_custom_doc = generated_context
-        .as_ref()
-        .map(|context| context.docs_md.to_string_lossy().to_string())
-        .or_else(|| cli.custom_doc.clone());
-    let effective_audit_scope = generated_context
-        .as_ref()
-        .map(|context| context.scope_md.to_string_lossy().to_string())
-        .or_else(|| cli.audit_scope.clone());
-    let effective_scoped_files = generated_context
-        .as_ref()
-        .map(|context| context.scope_txt.to_string_lossy().to_string())
-        .or_else(|| cli.scoped_files.clone());
+    let effective_custom_doc = cli.custom_doc.clone().or_else(|| {
+        generated_context
+            .as_ref()
+            .map(|context| context.docs_md.to_string_lossy().to_string())
+    });
+    let effective_audit_scope = cli.audit_scope.clone().or_else(|| {
+        generated_context
+            .as_ref()
+            .map(|context| context.scope_md.to_string_lossy().to_string())
+    });
+    let effective_scoped_files = cli.scoped_files.clone().or_else(|| {
+        generated_context
+            .as_ref()
+            .map(|context| context.scope_txt.to_string_lossy().to_string())
+    });
 
     let excluded_folders = if let Some(folders) = &cli.exclude_folders {
         let folder_paths: Vec<PathBuf> = folders

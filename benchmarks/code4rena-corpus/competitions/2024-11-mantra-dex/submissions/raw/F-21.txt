@@ -1,0 +1,218 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-21
+Low
+Primary
+S-95
+Single-sided liquidity can't be deposited if swaps are disabled
+0xAlix2
+82
+Sufficient
+383d ago
+Finding description and impact
+
+When users deposit liquidity into pools, they call provide_liquidity. If they provide more than 1 asset, the process takes the normal scenario, and assets are deposited into the corresponding pool. However, if the user provides 1 asset, half of the deposited amount is swapped to the other asset and then deposited (single-sided liquidity deposit can only be done on pools with 2 assets). The process is as follows: provide_liquidity -> swap -> rely -> provide_liquidity.
+
+On the other hand, the protocol can independently pause deposits, withdrawals, and swaps. When calling swap the protocol checks if the swaps are paused before swapping assets without checking if the sender is the contract itself (which is the case in single-sided liquidity deposit):
+
+// check if the swap feature is enabled
+ensure!(
+    config.feature_toggle.swaps_enabled,
+    ContractError::OperationDisabled("swap".to_string())
+);
+
+This blocks single-sided liquidity deposits in case swaps were disabled.
+
+Proof of Concept
+
+Add the following test in contracts/pool-manager/src/tests/integration_tests.rs:
+
+#[test]
+fn cant_deposit_single_if_swap_paused() {
+    let mut suite = TestingSuite::default_with_balances(
+        vec![
+            coin(1_000_000_000u128, "uwhale".to_string()),
+            coin(1_000_000_000u128, "uluna".to_string()),
+            coin(1_000u128, "uusd".to_string()),
+            coin(10_000u128, "uom".to_string()),
+        ],
+        StargateMock::new("uom".to_string(), "8888".to_string()),
+    );
+    let creator = suite.creator();
+    let user = suite.senders[1].clone();
+
+    suite.instantiate_default().add_one_epoch().create_pool(
+        &creator,
+        vec!["uwhale".to_string(), "uluna".to_string()],
+        vec![6u8, 6u8],
+        PoolFee {
+            protocol_fee: Fee {
+                share: Decimal::zero(),
+            },
+            swap_fee: Fee {
+                share: Decimal::zero(),
+            },
+            burn_fee: Fee {
+                share: Decimal::zero(),
+            },
+            extra_fees: vec![],
+        },
+        PoolType::ConstantProduct,
+        Some("whale.uluna".to_string()),
+        vec![coin(1000, "uusd"), coin(8888, "uom")],
+        |result| {
+            result.unwrap();
+        },
+    );
+
+    suite
+        .provide_liquidity(
+            &user,
+            "o.whale.uluna".to_string(),
+            None,
+            None,
+            None,
+            None,
+            vec![
+                Coin {
+                    denom: "uwhale".to_string(),
+                    amount: Uint128::from(100_000_000u128),
+                },
+                Coin {
+                    denom: "uluna".to_string(),
+                    amount: Uint128::from(100_000_000u128),
+                },
+            ],
+            |result| {
+                result.unwrap();
+            },
+        )
+        .update_config(
+            &creator,
+            None,
+            None,
+            None,
+            Some(FeatureToggle {
+                withdrawals_enabled: true,
+                deposits_enabled: true,
+                swaps_enabled: false,
+            }),
+            |result| {
+                result.unwrap();
+            },
+        )
+        .provide_liquidity(
+            &user,
+            "o.whale.uluna".to_string(),
+            None,
+            None,
+            None,
+            None,
+            vec![Coin {
+                denom: "uwhale".to_string(),
+                amount: Uint128::from(1_000_000u128),
+            }],
+            |result| {
+                let err = result.unwrap_err().downcast::<ContractError>().unwrap();
+
+                match err {
+                    ContractError::OperationDisabled { .. } => {}
+                    _ => {
+                        panic!("Wrong error type, should return ContractError::OperationDisabled")
+                    }
+                }
+            },
+        );
+}
+Recommended mitigation steps
+
+Allow the contract to call swap even if swaps are disabled:
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn swap(
+        mut deps: DepsMut,
++       env: Env,
+        info: MessageInfo,
+        sender: Addr,
+        ask_asset_denom: String,
+        belief_price: Option<Decimal>,
+        max_spread: Option<Decimal>,
+        receiver: Option<String>,
+        pool_identifier: String,
+    ) -> Result<Response, ContractError> {
+        let config = CONFIG.load(deps.storage)?;
+        // check if the swap feature is enabled
+        ensure!(
+-           config.feature_toggle.swaps_enabled,
++           config.feature_toggle.swaps_enabled || info.sender == env.contract.address,
+            ContractError::OperationDisabled("swap".to_string())
+        );
+
+        // ...
+    }
+Links to affected code
+commands.rs#L25-L28
+Opens in a new window
+Submissions touching same files
+commands.rs
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-95.
+Intended
+Edited: Feb 22
+jvr0x
+
+It's a valid issue but this is intended.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid, it's reasonable as intended behavior though
+
+Timeline
+Submitted
+Created: 530d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

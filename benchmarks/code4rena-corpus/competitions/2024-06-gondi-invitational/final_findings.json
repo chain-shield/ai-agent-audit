@@ -1,0 +1,17 @@
+[
+  {
+    "id": "M-01",
+    "local_markdown_path": "competitions/2024-06-gondi-invitational/ground_truth/accepted/M-01.md",
+    "markdown_fallback_used": false,
+    "poc_section_removed": true,
+    "poc_stripped": true,
+    "raw_excerpt": "[M-01] Delegations cannot be removed in some cases due to vulnerable revokeDelegate() implementation Submitted by oakcobalt An old borrower can use an old delegation to claim on behalf of a new borrower. Proof of Concept A borrower can delegate locked collateral NFT through delegateRegistry to prove token ownership and claim airdrops, event ticketing, etc. delegateRegistry by Delegate.Cash protocol allows custom rights to be configured to a delegatee. Currently, MultiSourceLoan::delegate allows a borrower to configure bytes32 _rights to delegateERC721 . In DelegateRegistry::delegateERC721 , bytes32 rights will be hashed as part of the key to store delegation data. //src/lib/loans/MultiSourceLoan.sol function delegate ( uint256 _loanId , Loan calldata loan , address _delegate , bytes32 _rights , bool _value ) external { if ( loan . hash () != _loans [ _loanId ]) { revert InvalidLoanError ( _loanId ); } if ( msg . sender != loan . borrower ) { revert InvalidCallerError (); } //@audit-info a borrower can pass custom rights to delegateERC721 |> IDelegateRegistry ( getDelegateRegistry ). delegateERC721 ( _delegate , loan . nftCollateralAddress ,",
+    "schema_version": "code4rena-corpus-v1",
+    "selected_primary_mentioned": false,
+    "severity": "Medium",
+    "source_report_url": "https://code4rena.com/reports/2024-06-gondi-invitational",
+    "source_snapshot_path": "competitions/2024-06-gondi-invitational/final_report.html",
+    "source_url": "https://code4rena.com/reports/2024-06-gondi-invitational",
+    "title": "Delegations cannot be removed in some cases due to vulnerable revokeDelegate() implementation"
+  }
+]

@@ -1,0 +1,184 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-14
+Low
+Primary
+S-279
+Wrongly Set Penalty Fee
+EPSec
+88
+Sufficient
+383d ago
+Finding description and impact
+
+In SecondSwap_MarketplaceSetting the penaltyFee is set to 10 ether. This is 10e18. However, the penalty fee is paid with the USDT token. USDT token on all supported chains is a token with 6 decimals. Setting the penaltyFee to 10 ether will set it to 10e18 which is 10000000000000 USDT ~ 10000000000000 $.
+
+The penaltyFee can be changed, however, this mistake renders a big part of the protocol useless until that is done by the owner. What is more, if a user theoretically has this amount of USDT and is using the given contract with an approval set to an equal or bigger number, they will lose funds thinking that the fee should be much less.
+
+Proof of Concept
+
+Add this test to the Marketplace.test.ts file and run it with npx hardhat test:
+
+it("penaltyFee is too big", async function() {
+	const { marketplaceSetting } = await loadFixture(deployProxyFixture);
+
+	// Fetch penaltyFee from the settings contract
+	var penaltyFee = await marketplaceSetting.read.penaltyFee();
+
+	// USDT is a token with 6 decimals, so we divide by 1e6
+	var USDTTokens = penaltyFee / BigInt(1e6);
+
+	// This passes meaning that penalty fee is 10 trillion
+	expect(USDTTokens).to.equal(BigInt(1e13));
+});
+Recommended Mitigation Steps
+
+Change the penaltyFee to a real value that will not render the protocol useless. For example, 10e6 can be used which is ~ 10 $.
+
+Links to affected code
+SecondSwap_MarketplaceSetting.sol#L144
+Opens in a new window
+Submissions touching same files
+SecondSwap_MarketplaceSetting.sol
+View full submission
+Duplicates
+48
+S-214
+PenaltyFee for unlistVesting() early is much higher than expected
+eLSeR17
+83
+S-92
+Early delisting can not pay penalty fee
+0xc0ffEE
+75
+S-89
+In the constructor of SecondSwap_MarketplaceSetting the `penaltyFee` is set to high
+BenRai
+74
+S-766
+First attempts at early unlisting a vesting will revert due to high penalty fee
+tallo
+70
+S-164
+Penalty fee scaling issue with USDT decimals
+fyamf
+69
+S-574
+"Unlisting" of vestings early will always revert due to USDT having only 6 decimals
+Gosho
+66
+S-1094
+Incorrect handling of USDT in penaltyFee
+itsabinashb
+54
+S-826
+Inconsistency in the units used for the Penalty fee can cause temporary DOS or potentially steal User funds
+c0pp3rscr3w3r
+45
+S-572
+Potential for DoS via `unlistVesting` Function
+TheFabled
+44
+S-564
+Penalty Fee Denomination Issue
+TheFabled
+44
+S-1018
+Decimal Precision Mismatch in Penalty Fee Calculation Causes `unlistVesting` Function to revert for seller
+honey-k12
+43
+S-84
+Penalty fee has incorrect decimals for USDT
+typicalHuman
+43
+S-324
+Decimals in PenaltyFee is used incorrectly
+phoenixV110
+42
+S-614
+Sellers may not be able to unlist their vesting or pay more penalty than they should due to too high penaltyFe
+y0ng0p3
+41
+S-288
+Due to incorrect check in `SecondSwap_Marketplace::unlistVesting` users would not be able to remove listing from the marketplace
+mrMorningstar
+37
+S-546
+Penalty fee for early unlisting is too high, making the functionality unusable
+m4k2
+33
+S-650
+loss of fund for the user when deal with usdt as ether
+mgf15
+31
+S-103
+Penalty is scaled to 1e18 for USDT
+ABAIKUNANBAEV
+26
+S-887
+Penalty Fee Misconfiguration Leading to Insufficient Fee Collection or Inability for Users to Cancel Listings
+eta
+22
+S-980
+User would give away more penalty fees during `unlistVesting()` than intended
+smbv-1923
+19
+S-1054
+The user might end up paying a higher penalty fee than intended during the unlistVesting() function.
+ParthMandale
+16
+S-685
+DOS Vulnerability in Early Unlisting Due to Insufficient Penalty Fee Balance
+Daniel526
+03
+S-1019
+Incorrect value of 10ether used for USDT token
+anonymousjoe
+00
+S-1004
+Incorrect Penalty Fee Denomination in `SecondSwap_MarketplaceSetting::constructor()` can cause Denial of Service for Early Unlisting.
+tusharr1411
+00
+Timeline
+Submitted
+Created: 526d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

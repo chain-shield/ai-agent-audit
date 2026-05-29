@@ -1,0 +1,134 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-50
+Low
+Primary
+S-156
+Improper penalty distribution logic caused farm owners to not receive their rightful share of profits.
+Usagi
+00
+Sufficient
+383d ago
+Finding description and impact
+
+When handling scenarios where users trigger an Emergency Unlock, the protocol charges a penalty fee (total_penalty_fee) to the user, which is expected to be distributed as follows:
+
+50% (owner_penalty_fee_commission) allocated to the respective farm owners (farm_owners).
+The remaining 50% allocated to the contract's fee collection address (fee_collector).
+
+However, when calculating the profit share for each farm owner (penalty_fee_share_per_farm_owner), the program applies to_uint_floor(), truncating the fractional part of the share to an integer.
+
+If the penalty fee amount is small and the number of farm owners is large, this can result in each owner’s share being less than 1, which gets truncated to 0.
+In such cases, no distribution is made to farm owners, and the entire penalty fee is allocated to the fee_collector.
+
+Proof of Concept
+
+https://github.com/code-423n4/2024-11-mantra-dex/blob/main/contracts/farm-manager/src/position/commands.rs#L366-L370
+
+Consider the following scenario:
+
+total_penalty_fee = 100
+PENALTY_FEE_SHARE = 50%
+farm_owners.len() = 60
+
+The calculation for owner_penalty_fee_commission is as follows:
+owner_penalty_fee_commission = 100 * 50% = 50
+
+let penalty_fee_share_per_farm_owner = Decimal::from_ratio(
+    owner_penalty_fee_commission,
+    unique_farm_owners.len() as u128,
+)
+.to_uint_floor();
+
+penalty_fee_share_per_farm_owner = 50 / 60 ≈ 0.833...
+
+Using to_uint_floor(), penalty_fee_share_per_farm_owner becomes 0.
+
+When penalty_fee_share_per_farm_owner = 0, the program enters the else branch:
+
+penalty_fee_fee_collector = total_penalty_fee;
+
+The entire total_penalty_fee is allocated to the fee_collector, and farm owners receive no penalty fee distribution.
+
+This issue arises when the penalty fee amount is too small or the number of farm owners is too large.
+
+Links to affected code
+commands.rs#L366-L370
+Opens in a new window
+Submissions touching same files
+commands.rs
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-156.
+Inteded
+Edited: Feb 22
+jvr0x
+
+to_uint_floor is used for settling dust inconsistencies. If after that it goes to zero it means the farms owners were not going to get a significant amount anyway.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Rounding, looks higher impact than only "dust" because it's about a multiplier
+
+Duplicates
+3
+S-88
+Portion of emergency_unlock_fee potentially remains stuck in the farm manager contract
+Tigerfrake
+19
+S-272
+Penalty Fee Rounding Error Results in Zero Distribution to Farm Owners During Emergency Unlock
+Daniel526
+03
+S-333
+Rounding Issues during Penalty fee distribution will lead to tokens being forever locked in the Farm-manager contract
+0xlookman
+00
+Timeline
+Submitted
+Created: 507d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

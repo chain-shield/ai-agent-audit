@@ -1,0 +1,120 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-42
+Medium
+Primary
+S-382
+Users can claim rewards for the epoch even without spending a single epoch duration in the pool
+carrotsmuggler
+77
+Insufficient
+383d ago
+Finding description and impact
+
+The system allows users to lock their LP tokens into positions and then collect farm rewards for the locked epochs. When locking, the user specifies a unlocking_duration amount, which determines the amount of time the user must wait between calling close_position and receiving their funds back.
+
+Users can call close_position at any time to initiate a withdrawal. In this case, the user's position is marked as closed and the user can no longer gain rewards for the position.
+
+The claim function is used to collect the rewards for a position. This function calculates the start_from_epoch and calculates rewards since that epoch till the current one. The issue is that this function also gives out the rewards for the current epoch. This means that a user can call claim and receive rewards for the current epoch even if they have not spent the required epoch duration in the pool.
+
+// @audit until_epoch is upto and including the current epoch
+let until_epoch = if farm.preliminary_end_epoch <= *current_epoch_id {
+    // the preliminary_end_epoch is not inclusive, so we subtract 1
+    farm.preliminary_end_epoch - 1u64
+} else {
+    *current_epoch_id
+};
+//@audit rewards are calculated until and including `until_epoch`
+for epoch_id in start_from_epoch..=until_epoch {
+    //...
+}
+
+Say the epoch duration is 1 day and it changes over at 12:00AM everyday. Then on 01.01.2025 @11.59pm Alice canter enter a position when the current_epoch was 1000. This will update Alice's weight for epoch 1001. Then on 02.01.2025 @12.01am Alice can call claim and receive the rewards for 1 full epoch. This is because now the current_epoch is 1001 and Alice has weight in the pool. Then Alice can immediately call close_position and wait for the unlocking_duration to pass. This way Alice can receive rewards for the epoch while only spending 2 seconds in the pool legitimately.
+
+Furthermore, if epoch duration is more than 1 day and Alice sets here unlocking_duration to be 1 day, Alice can even claim the rewards for an entire epoch while still receiving back her funds in that same epoch.
+
+Thus users receive rewards for epochs even if they spend a few seconds in the pool with an open position. This should not be the case, and the epoch rewards should only be given out if the user has spent the required epoch duration in the pool. Otherwise, users can game the system and receive rewards without risking any liquidity lock. It is unfair that Alice only spent 2 secs+unlocking_duration risking her funds while other legitimate users spent the entire epoch duration in the pool.
+
+Proof of Concept
+
+Say the epoch duration is 1 day and it changes over at 12:00AM everyday. Then on 01.01.2025 @11.59pm Alice canter enter a position when the current_epoch was 1000. This will update Alice's weight for epoch 1001. Then on 02.01.2025 @12.01am Alice can call claim and receive the rewards for 1 full epoch. This is because now the current_epoch is 1001 and Alice has weight in the pool. Then Alice can immediately call close_position and wait for the unlocking_duration to pass. This way Alice can receive rewards for the epoch while only spending 2 seconds in the pool legitimately.
+
+Recommended mitigation steps
+
+Modify the claim function so that only epochs till current_epoch - 1 are eligible for claims.
+
+Links to affected code
+commands.rs#L45-L52
+Opens in a new window
+Submissions touching same files
+commands.rs
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-382.
+Judging
+Edited: Feb 22
+3docSec
+
+Marking as insufficient proof as what the report describes looks intended behavior
+
+Not clear
+Edited: Feb 22
+jvr0x
+
+The rule of the contract is that if you locked LP tokens on epoch X, you get to claim on epoch X+1, no matter if you locked 10 hours or 1 second before epoch X finished. That rule applies to all users.
+
+Additionally, the user assumes the unlocking period can be shorter than the and the epoch duration, hint: it won't. The epoch duration will be set at 1 day, while the unlocking period to at least 1 day. So if you try to game the system and lock 1 second before epoch X finishes and then close the position, you would be able to claim for X+1 but then your liquidity will be locked for 1 day there anyway.
+
+Why wouldn't the contract allow to claim rewards for the current epoch if the user qualifies for it based on the previous rule?
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Seems reasonable
+
+Timeline
+Submitted
+Created: 497d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Medium
+Valid
+Insufficient
+Post-judging QA
+Complete
+Reporting
+Complete

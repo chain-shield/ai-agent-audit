@@ -1,0 +1,126 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-37
+Low
+Primary
+S-147
+`tokenfactory::Mint` msg emit wrong `mint_to_address`, which may seriously impact off-chain integrations
+Egis_Security
+67
+Sufficient
+383d ago
+Finding description and impact
+
+Mint msg in tokenfactory module takes care of minting tokens to address specified by the caller sender of the transaction. The problem is inside the event emission in the end of the msgServer corresponding function:
+
+    ctx.EventManager().EmitEvents(sdk.Events{
+        sdk.NewEvent(
+            types.TypeMsgMint,
+            sdk.NewAttribute(types.AttributeMintToAddress, msg.Sender),
+            sdk.NewAttribute(types.AttributeAmount, msg.Amount.String()),
+        ),
+    })
+
+
+You can see that we will set mint_to_address field of the event to the address of the sender of the transaction.
+The following will result in compromised data being emitted on each Mint msg, which is in the core logic of the project.
+Note that the same is also present in Burn
+
+For reference, you can see that in the original osmosis the following is fixed
+
+Proof of Concept
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/tokenfactory/keeper/msg_server.go#L83-L85
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/tokenfactory/keeper/msg_server.go#L125-L127
+
+Recommended mitigation steps
+
+Change msg.Sender param to msg.MintToAddress
+
+Links to affected code
+msg_server.go#L83-L85
+Opens in a new window
+msg_server.go#L125-L127
+Opens in a new window
+Submissions touching same files
+msg_server.go
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-147.
+Judging comment
+Edited: Feb 22
+3docSec
+
+Marking as valid L as there's too much speculation involved on external usage of these events to justify an H/M impact
+
+nmirchev8
+OP
+02/13/2025
+
+Hey.
+I believe the issues deserve to be rated as Medium because minting and burning demons is one of the protocol's root functionalities. This means that the problem will reproduce frequently and the probability of affecting off-chain listeners is high.
+
+3docSec
+02/15/2025
+
+@nmirchev8 please review the standard categorization of event related impacts:
+
+Failure to demonstrate the broader level impacts above shall cap the severity to Low
+
+L
+Edited: Feb 22
+mantra_lance
+
+Agree with 3docSec
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Incorrect event is probably more of an L than M
+
+Timeline
+Submitted
+Created: 509d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -28,8 +28,75 @@ benchmarks/code4rena-2026-01-olas/runs/run-001/
   verification_decisions.jsonl
   codeblock_manifest.jsonl
   finding_lifecycle.jsonl
-  baseline_report.md
+  final_candidates.jsonl
+  benchmark_score.json
+  benchmark_score.md
 ```
+
+## Corpus-Aware Scoring
+
+Use the Code4rena corpus scorer for benchmark runs whose ground truth lives under
+`benchmarks/code4rena-corpus/competitions/<slug>/`:
+
+```bash
+python3 scripts/score_code4rena_benchmark.py score \
+  --slug 2025-11-megapot \
+  --run-dir benchmarks/code4rena-2025-11-megapot/runs/2025-11-megapot-538649/megapot-clean-r1r2-10-inv3-actor2-001 \
+  --three-shot-run-id run-001 \
+  --prompt-version v2
+```
+
+The scorer writes `benchmark_score.json` and `benchmark_score.md` into the run
+directory. It automatically matches app candidates to archived accepted H/M
+findings, matches unmatched final-stage candidates against rejected primaries,
+and attributes accepted-root losses by pipeline stage.
+
+Compare before/after experiments with:
+
+```bash
+python3 scripts/score_code4rena_benchmark.py compare \
+  --score benchmarks/code4rena-2025-11-megapot/runs/<project-id>/<baseline-run>/benchmark_score.json \
+  --score benchmarks/code4rena-2025-11-megapot/runs/<project-id>/<experiment-run>/benchmark_score.json \
+  --out-dir benchmarks/code4rena-2025-11-megapot/comparisons/<comparison-id>
+```
+
+## Phase 4 Failure Analysis
+
+After a run has a scorecard, generate root-by-root failure analysis:
+
+```bash
+python3 scripts/score_code4rena_benchmark.py analyze \
+  --score benchmarks/code4rena-2025-11-megapot/runs/<project-id>/<run-id>/benchmark_score.json
+```
+
+This writes `failure_analysis.json` and `failure_analysis.md` next to the
+scorecard. The analysis checks accepted-root context coverage, raw discovery,
+Rust dedup/verification/export survival, three-shot survival, PoC/report/judge
+survival, and final-stage FP triage.
+
+## Whitepaper Evidence Packs
+
+Preserve all data needed for later whitepaper analysis with:
+
+```bash
+python3 scripts/score_code4rena_benchmark.py archive-evidence \
+  --score benchmarks/code4rena-2025-11-megapot/runs/<project-id>/<run-id>/benchmark_score.json
+```
+
+The archive command copies benchmark telemetry, scorecards, failure analysis,
+Code4rena corpus ground truth, generated audit context docs, three-shot
+validation artifacts, and cross-run comparisons into:
+
+```text
+benchmarks/whitepaper-data/<slug>/<run-id>/
+  evidence_manifest.json
+  evidence_manifest.md
+  files/
+```
+
+The manifest records source paths, archive paths, byte sizes, categories, and
+SHA-256 hashes so whitepaper claims can be traced back to immutable local
+evidence.
 
 ## Manifest Schema
 

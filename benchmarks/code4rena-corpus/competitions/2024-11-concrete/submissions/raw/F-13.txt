@@ -1,0 +1,122 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-13
+Medium
+Primary
+S-1326
+Wrong rounding direction when applying fees
+samuraii77
+63
+Sufficient
+383d ago
+Finding description and impact
+
+Wrong rounding direction when applying fees causing a potential difference of 0.01-0.02$ on every redeem/withdrawal
+
+Proof of Concept
+
+Upon redeeming, we round up the fee shares:
+
+        uint256 feeShares = shares_.mulDiv(uint256(fees.withdrawalFee), MAX_BASIS_POINTS, Math.Rounding.Ceil);
+
+Upon withdrawing however, we round them down:
+
+shares.mulDiv(MAX_BASIS_POINTS, MAX_BASIS_POINTS - withdrawalFee, Math.Rounding.Floor) - shares
+
+This results in a different amount of fees upon withdrawing compared to when redeeming. Depending on the intended design, this results in a difference of 1-2 wei between the 2 flows. For tokens such as GUSD which are intended to be used, this is a 0.01-0.02$ difference on each redeem/withdrawal that causes a floating number result. Over a long enough timeframe, the fee difference could reach hundreds and thousands of dollars.
+
+Recommended mitigation steps
+
+Round up or round down in both scenarios depending on your intended design
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L360
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Duplicates
+12
+S-1208
+`ConcreteMultiStrategyVault.deposit` function can be called to deposit asset tokens into vault without minting any deposit fee shares
+rbserver
+71
+S-518
+User can avoid paying the fee when depositing or withdrawing due to rounding.
+S-708
+Fees should round up in favour of the protocol
+inh3l
+66
+S-401
+Users can avoid paying deposit fees in case underlying token is low decimals
+deadrxsezzz
+61
+S-188
+User can escape deposit fee by making multiple small deposits due to incorrect rounding direction
+t0x1c
+46
+S-1105
+Wrong rounding direction causes loss of funds to the protocol
+Udsen
+27
+S-131
+Fee Evasion Through Precision Manipulation of Multi-Strategy Vault
+S-1214
+First Depositor Can Bypass Deposit Fee
+0x2517
+00
+S-1023
+Deposit fees are rounded down instead of rounding up resulting in a loss for the protocol
+S-530
+Users can deposit and redeem without incurring a fee.
+ITCruiser
+00
+S-445
+first depositor could avoid paying depositFee and bypass the depositlimit in ConcreteMultiStrategyVault through direct transfer
+S-298
+A malicious User can avoid fee sahres by depositing small tokens consistently
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Sufficient
+Review
+Accepted
+Judging
+Medium
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

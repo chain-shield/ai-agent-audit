@@ -1,0 +1,83 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-236
+Low
+Primary
+S-243
+Using block timestamp in salt passed to cloneDeterministic() breaks deterministic deployment
+muellerberndt
+00
+Sufficient
+383d ago
+Finding description and impact
+
+New vaults are deployed by that vault admin via the DeploymentManager. In deployNewVault(), a salt is created as follows:
+
+        bytes32 salt = keccak256(
+            abi.encode(address(this), implementationData.implementationAddress, vaultCount, block.timestamp)
+        );
+
+
+The salt is then passed on to the VaultFactory which eventually calls the OpenZeppelin library function cloneDeterministic((address implementation, bytes32 salt), which uses the create2 opcode and the salt to deterministically deploy the code.
+
+The problem here is that the timestamp is unknown before the block that includes the transaction that executes deployVault() has been mined, defeating the entire point of deterministic deployment.
+
+Proof of Concept
+
+Can't create a PoC of this issue because we can't demonstrate the impossible.
+
+Recommended mitigation steps
+
+Exclude the block timestamp from the salt calculation.
+
+Links to affected code
+VaultFactory.sol#L28-L50
+Opens in a new window
+DeploymentManager.sol#L58-L73
+Opens in a new window
+Submissions touching same files
+VaultFactory.sol
+DeploymentManager.sol
+Timeline
+Submitted
+Created: 546d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

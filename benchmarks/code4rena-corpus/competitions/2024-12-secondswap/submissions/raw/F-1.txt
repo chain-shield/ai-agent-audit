@@ -1,0 +1,225 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-1
+Medium
+Primary
+S-161
+Incorrect listing type validation bypasses enforcement of minimum purchase amount
+fyamf
+69
+Sufficient
+383d ago
+Finding description and impact
+
+Incorrect validation of the listing type allows bypassing the enforcement of _minPurchaseAmt being within the range of 0 to _amount.
+
+Proof of Concept
+
+A listing can have two types: Single or Partial:
+
+    enum ListingType {  
+        PARTIAL,  
+        SINGLE  
+    }  
+
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L37
+
+For Partial listings, _minPurchaseAmt must be set to ensure buyers cannot purchase less than the specified minimum amount.
+
+However, during the listing of a vesting, _minPurchaseAmt is not validated correctly. Specifically, the following line is implemented improperly:
+
+        require(  
+            _listingType != ListingType.SINGLE || (_minPurchaseAmt > 0 && _minPurchaseAmt <= _amount),  
+            "SS_Marketplace: Minimum Purchase Amount cannot be more than listing amount"  
+        );  
+
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L253
+
+This implementation mistakenly enforces that for Single listings, _minPurchaseAmt must fall within 0 and _amount. Instead, it should validate _minPurchaseAmt for Partial listings. The corrected implementation is as follows:
+
+        require(  
+            _listingType == ListingType.SINGLE || (_minPurchaseAmt > 0 && _minPurchaseAmt <= _amount),  
+            "SS_Marketplace: Minimum Purchase Amount cannot be more than listing amount"  
+        );  
+
+With this change, the check ensures that _minPurchaseAmt falls within 0 and _amount for Partial listings, as intended.
+
+Recommended mitigation steps
+
+The validation logic should be updated as follows:
+
+        require(  
+-           _listingType != ListingType.SINGLE || (_minPurchaseAmt > 0 && _minPurchaseAmt <= _amount),  
++           _listingType == ListingType.SINGLE || (_minPurchaseAmt > 0 && _minPurchaseAmt <= _amount),  
+            "SS_Marketplace: Minimum Purchase Amount cannot be more than listing amount"  
+        );  
+
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L253
+
+Links to affected code
+SecondSwap_Marketplace.sol#L253
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-161.
+Looks like a valid issue
+Edited: Feb 22
+calvinx
+
+This looks like a valid issue
+
+calvinx
+01/30/2025
+
+Please put this as a medium issue
+
+Koolex
+01/30/2025
+
+Thank you for the input. Since it is valuable to the sponsor, I believe medium is appropriate.
+
+Duplicates
+32
+S-46
+It is not possible to create a SINGLE vesting sell order
+BenRai
+74
+S-636
+Wrong `_minPurchaseAmt` check in `Marketplace::listVesting`
+Abdessamed
+72
+S-450
+listVesting performs error checking on the order type.
+shaflow2
+71
+S-897
+Incorrect requirement in the `SecondSwap_Marketplace.listVesting()` function.
+KupiaSec
+66
+S-452
+Partial listing can be created with `minPurchaseAmt = 0`.
+DanielArmstrong
+62
+S-1026
+Incorrect validation of listing type parameters
+pontifex
+54
+S-770
+Incorrect require statement check inside SecondSwap_MarketPlace.listVesting() allows to set 0 as _minPurchaseAmt for PARTIAL listings.
+itsabinashb
+54
+S-683
+Logic error in SecondSwap_Marketplace.listVesting. Partial listings can be set with 0 minAmount
+peanuts
+50
+S-1013
+Incorrect Validation Logic for `SINGLE` Listing Type in `listVesting` Function
+honey-k12
+43
+S-459
+There is a bug in the check for minPurchaseAmt that may cause the check to be incorrect and the creation of the SINGLE type to fail.
+Drynooo
+42
+S-238
+SecondSwap_Marketplace.sol :: listVesting() _minPurchaseAmt can be bypassed in PARTIAL vestings.
+Fitro
+40
+S-306
+Condition for minPurchaseAmount is not correctly set when listing the tokens allowing for the minimum amount to be greater than the amount provided
+ABAIKUNANBAEV
+26
+S-170
+Wrong check allow to create Partial listing with a `_minPurchaseAmt` equal to 0
+oualidpro
+23
+S-471
+PARTIAL listing type rendered ineffective by first-purchase full balance acquisition
+Sabit
+20
+S-123
+Purchase amount validation bypass in partial listings
+Sabit
+20
+S-1061
+Weak invariant check allows users to create single listings with: minPurchaseAmt > 0 && minPurchaseAmt <= amount
+lightoasis
+18
+S-80
+Insufficient validation of minPurchaseAmt for partial listings allow unpurchasable orders
+0xastronatey
+11
+S-1106
+Inefficient check in `SecondSwap_Marketplace::listVesting()` function for `PARTIAL` type listing allows seller to list a vesting with `_minPurchaseAmt > _amount`.
+tusharr1411
+00
+S-1072
+Issue in listVesting and spotPurchase Function for SINGLE Listing Type
+0xKann
+00
+S-1023
+`ListingType` and `_minPurchaseAmt` validations are incorrect in `listVesting`
+4rk4rk
+00
+S-919
+Insufficient checks for the listing types and associated parameters.
+aster
+00
+S-788
+Incorrect Handling of Listing Types in listVesting()
+BajagaSec
+00
+S-712
+Incomplete `ListingType` input validation during vesting listing could lead to unexpected outcomes
+bugvorus
+00
+S-661
+Incorrect Validation for Listing Vesting
+ITCruiser
+00
+Timeline
+Submitted
+Created: 528d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,226 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-36
+High
+Primary
+S-925
+Incorrect total assets calculation in SiloV1Strategy
+nnez
+87
+Sufficient
+383d ago
+Impact
+
+The SiloV1Strategy implementation underestimates the totalAssets value by incorrectly calculating the baseAsset balance. This leads to:
+
+Inaccurate Share Pricing: Vault share price is undervalued, causing a misrepresentation of user holdings.
+Description
+
+The _totalAssets function of the SiloV1Strategy contract is responsible for reporting the equivalent baseAsset holdings of the strategy. However, it incorrectly calculates the value by directly returning the balance of collateralToken (a share token) instead of converting the shares into baseAsset using the pool's exchange rate.
+
+Incorrect logic
+function _totalAssets() internal view override returns (uint256) {
+    uint256 shares = collateralToken.balanceOf(address(this));
+    return shares; // @audit: fails to account for the exchange rate between shares and baseAsset
+    // return balanceOfUnderlying(shares); // @audit: correct logic is actually commented out
+}
+Correct logic
+function balanceOfUnderlying(uint256 shares) public view returns (uint256) {
+    ISilo.AssetStorage memory assetStorage = silo.assetStorage(asset());
+    return shares.toAmount(assetStorage.totalDeposits, collateralToken.totalSupply());
+}
+
+The correct implementation should use balanceOfUnderlying function to convert the share token balance into baseAsset units based on the exchange rate. The absence of this conversion results in underestimated asset reporting.
+
+Example Scenario
+Initial State
+Underlying pool:
+totalDeposits = 1,000,000 USDC
+totalSupply = 500,000 shares
+Exchange Rate = 2 (1 share = 2 USDC).
+Strategy holdings:
+The strategy holds 10,000 collateralToken shares.
+The strategy should report 20,000 USDC as its total holding of baseAsset
+Current _totalAssets implementation
+function _totalAssets() internal view override returns (uint256) {
+    uint256 shares = collateralToken.balanceOf(address(this)); // 10,000
+    return shares; // Returns 10,000 instead of converting to baseAsset
+}
+The function reports 10,000 USDC as the strategy's total assets.
+Correct implementation using balanceOfUnderlying
+function balanceOfUnderlying(uint256 shares) public view returns (uint256) {
+    ISilo.AssetStorage memory assetStorage = silo.assetStorage(asset());
+    return shares.toAmount(assetStorage.totalDeposits, collateralToken.totalSupply());
+}
+The correct calculation is:
+totalAssets = 10_000 * 1_000_000/500_000 = 20_000 USDC
+Proof-of-Concept
+
+The following test demonstrates that current implementation returns an underestimated value, it does so by showing that even after accruing interest event on Silo, this function still return the same value.
+
+Steps
+Paste the following test in 2024-11-concrete/test/strategies/SiloV1Strategy.t.sol
+  function test_incorrect_totalAssets() public{
+      uint amount = 100e18;
+      _mintAsset(amount, hazel);
+
+      vm.prank(hazel);
+      asset.approve(address(strategy), type(uint).max);
+
+      vm.prank(hazel);
+      strategy.deposit(amount, hazel);
+
+      console.log("-- before accrue interest --");
+      console.log("totalAssets: %d", strategy.totalAssets());
+      console.log("balanceOfUnderlying: %d", strategy.balanceOfUnderlying(collateralTokenBal()));
+      
+      // warping time to accrue interest
+      vm.warp(block.timestamp + 86400);
+      console.log("warp time and call accrueInterest on Silo");
+      address(strategy.silo()).call(abi.encodeWithSignature("accrueInterest(address)", WETH));
+
+      console.log("-- after accrue interest --");
+      console.log("totalAssets: %d", strategy.totalAssets());
+      console.log("balanceOfUnderlying: %d", strategy.balanceOfUnderlying(collateralTokenBal()));
+  }
+Run forge t --match-contract SiloV1StrategyTest --match-test test_incorrect_totalAssets -vv
+Observe the result:
+Ran 1 test for test/strategies/SiloV1Strategy.t.sol:SiloV1StrategyTest
+[PASS] test_incorrect_totalAssets() (gas: 479445)
+Logs:
+  strategy 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  -- before accrue interest --
+  totalAssets: 97501394347432852957
+  balanceOfUnderlying: 99999999999999999999
+  warp time and call accrueInterest on Silo
+  -- after accrue interest --
+  totalAssets: 97501394347432852957
+  balanceOfUnderlying: 100003737721816976129
+
+Recommended Mitigations
+
+Use balanceOfUnderlying to calculate _totalAssets
+
+Links to affected code
+SiloV1Strategy.sol#L122-L126
+Opens in a new window
+SiloV1Strategy.sol#L188-L191
+Opens in a new window
+Submissions touching same files
+SiloV1Strategy.sol
+View full submission
+Duplicates
+17
+S-757
+Total and withdrawable assets are under-evaluated in `SiloV1Strategy`
+stuart_the_minion
+83
+S-127
+`getAvailableAssetsForWithdrawal` and `_totalAssets` in `SiloV1Strategy` return shares instead of assets, leading to a loss of funds for depositors
+0xAlix2
+82
+S-516
+SiloV1Strategy does not convert share balance to token balance.
+sl1
+68
+S-714
+`SiloV1Strategy._totalAssets()` return shares amount instead of underlying assets, contaminating the critical function such as `_convertToShares/_convertToAssets()` which require _totalAssets for shares/assets calculation
+blutorque
+65
+S-986
+Incorrectly computing the assets under management on the SiloStrategy.
+0xStalin
+64
+S-1339
+Wrong implementation of Silo strategy causing issues
+samuraii77
+63
+S-853
+`SiloV1Strategy` incorrectly returns the shares held by the protocol, instead of the corresponding underlying amount
+deadrxsezzz
+61
+S-1455
+SiloV1Strategy incorrectly retrieves underlying asset balance leading to incorrect price exchange rate
+MrPotatoMagic
+59
+S-622
+SiloV1 Strategy does not convert shares into assets
+trachev
+56
+S-455
+Share balance reported instead of underlying asset value
+Rhaydden
+30
+S-663
+Silo Strategy returns the wrong value for total asset and getAvailableAssetsForWithdrawal
+Bigsam
+29
+S-1181
+`SiloV1Strategy._totalAssets` returns the wrong value as the asset amount thus breaking core protocol functionalities
+Udsen
+27
+S-429
+Silo Strategy Incorrectly Reports Asset Value Leading to lose of funds
+a2security
+00
+S-394
+Incorrect _totalAssets calculation will cause the incorrect vault share's price
+0x37
+00
+S-377
+Incorrect Share-to-Asset Conversion in Silo Strategy Causing Users to Receive Fewer Assets or Shares
+Prosperity
+00
+S-372
+SiloV1Strategy's getAvailableAssetsForWithdrawal Returns Incorrect Value Due to Missing Share-to-Asset Conversion
+Prosperity
+00
+S-141
+SiloV1Strategy returns incorrect values in _totalAssets() and getAvailableAssetsForWithdrawal(), breaking vault functions and causing funds to be stuck
+muellerberndt
+00
+Timeline
+Submitted
+Created: 542d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+High
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

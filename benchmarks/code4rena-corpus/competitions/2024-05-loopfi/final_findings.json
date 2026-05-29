@@ -1,0 +1,17 @@
+[
+  {
+    "id": "H-01",
+    "local_markdown_path": "competitions/2024-05-loopfi/ground_truth/accepted/H-01.md",
+    "markdown_fallback_used": false,
+    "poc_section_removed": true,
+    "poc_stripped": true,
+    "raw_excerpt": "[H-01] Availability of deposit invariant can be bypassed Submitted by 0xnev , also found by Krace , 0xrex ( 1 , 2 ), gumgumzum , novamanbg , Greed , y4y , DMoore , 0x04bytes , 0xBugSlayer , sldtyenj12 , yovchev_yoan , 0xJoyBoy03 ( 1 , 2 ), sandy , Evo , Kirkeelee , Sajjad , d3e4 , samuraii77 , Pechenite , TheFabled , Rhaydden ( 1 , 2 ), web3er , ZanyBonzy , SBSecurity , nfmelendez , Topmark , XDZIBECX , Bigsam , shaflow2 , 0xSecuri , petarP1998 , bbl4de , _karanel , and btk Impact One of the main invariants stated in the audit is the following: Deposits are active up to the lpETH contract and lpETHVault contract are set However, there are currently two ways this invariant can be broken, allowing users to gain lpETH without explicitly locking tokens before contracts are set. Sandwich a call to convertAllETH by front-running to directly donate ETH and then back-running to claim lpETH via multiple lock positions Bundle a transaction of donation and claiming with a previously locked position of wrapped LRT This bypasses the onlyBeforeDate(loopActivation) modifier included in all lock functions. It also potentially allows no cap in lpETH minted and also discourages users from locking ETH in the",
+    "schema_version": "code4rena-corpus-v1",
+    "selected_primary_mentioned": false,
+    "severity": "High",
+    "source_report_url": "https://code4rena.com/reports/2024-05-loopfi",
+    "source_snapshot_path": "competitions/2024-05-loopfi/final_report.html",
+    "source_url": "https://code4rena.com/reports/2024-05-loopfi",
+    "title": "Availability of deposit invariant can be bypassed"
+  }
+]

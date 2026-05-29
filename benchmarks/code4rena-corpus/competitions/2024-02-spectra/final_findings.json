@@ -1,0 +1,32 @@
+[
+  {
+    "id": "M-01",
+    "local_markdown_path": "competitions/2024-02-spectra/ground_truth/accepted/M-01.md",
+    "markdown_fallback_used": false,
+    "poc_section_removed": true,
+    "poc_stripped": true,
+    "raw_excerpt": "[M-01] PrincipalToken is not ERC-5095 compliant Submitted by jnforja , also found by sl1 , dimulski , wangxx2026 ( 1 , 2 ), JohnSmith , 0xLogos , 14si2o_Flint , erosjohn , Aymen0909 , Limbooo , Giorgio ( 1 , 2 ), smaul , ZanyBonzy , 0xhacksmithh , Brenzee , btk , 0xDemon , lsaudit ( 1 , 2 ), mrudenko , memforvik , Franklin , Shubham , and nmirchev8 https://github.com/code-423n4/2024-02-spectra/blob/main/src/tokens/PrincipalToken.sol#L483-L485 https://github.com/code-423n4/2024-02-spectra/blob/main/src/tokens/PrincipalToken.sol#L460-L462 https://github.com/code-423n4/2024-02-spectra/blob/main/src/tokens/PrincipalToken.sol#L278-L287 https://github.com/code-423n4/2024-02-spectra/blob/main/src/tokens/PrincipalToken.sol#L229-L237 Protocols that try to integrate with Spectra, expecting PrincipalToken to be ERC-5095 compliant, will face an array of issues that may damage Spectra\u2019s brand and limit Spectra\u2019s growth in the market. Proof of Concept All official ERC-5095 requirements are on their official page . Non-compliant methods are listed below along with why they are not compliant and code POCs demonstrating the issues. To run the POCs, copy-paste them into PrincipalToken.t.sol : PrincipalToken::redeem and PrincipalToken::withdraw As specified in ERC-5095, both withdraw and redeem must support a flow where msg.sender has approval over the owner\u2019s tokens: MUST support a redeem flow where the Principal Tokens are burned from holder directly where holder is msg.sender or msg.sender has EIP-20 approval over the principal tokens of holder. MUST support a withdraw flow where the principal tokens are burned from holder directly where holder is msg.sender or msg.sender has EIP-20 approval over the principal tokens of holder. However, neither PrincipalToken::redeem nor PrincipalToken::withdraw support this flow type: //copy-paste into `PrincipalToken.sol` function testRedeemDoesNotSupportERC20ApprovalFlow () public { uint256 amountToDeposit =",
+    "schema_version": "code4rena-corpus-v1",
+    "selected_primary_mentioned": false,
+    "severity": "Medium",
+    "source_report_url": "https://code4rena.com/reports/2024-02-spectra",
+    "source_snapshot_path": "competitions/2024-02-spectra/final_report.html",
+    "source_url": "https://code4rena.com/reports/2024-02-spectra",
+    "title": "PrincipalToken is not ERC-5095 compliant"
+  },
+  {
+    "id": "M-02",
+    "local_markdown_path": "competitions/2024-02-spectra/ground_truth/accepted/M-02.md",
+    "markdown_fallback_used": false,
+    "poc_section_removed": true,
+    "poc_stripped": true,
+    "raw_excerpt": "[M-02] All yield generated in the IBT vault can be drained by performing a vault deflation attack using the flash loan functionality of the Principal Token contract Submitted by Arabadzhiev , also found by ArmedGoose and blutorque The current implementation of the PrincipalToken has a flash lending functionality: function flashLoan ( IERC3156FlashBorrower _receiver , address _token , uint256 _amount , bytes calldata _data ) external override returns ( bool ) { if ( _amount > maxFlashLoan ( _token )) revert FlashLoanExceedsMaxAmount (); uint256 fee = flashFee ( _token , _amount ); _updateFees ( fee ); // Initiate the flash loan by lending the requested IBT amount IERC20 ( ibt ). safeTransfer ( address ( _receiver ), _amount ); // Execute the flash loan if ( _receiver . onFlashLoan ( msg . sender , _token , _amount , fee , _data ) != ON_FLASH_LOAN )",
+    "schema_version": "code4rena-corpus-v1",
+    "selected_primary_mentioned": false,
+    "severity": "Medium",
+    "source_report_url": "https://code4rena.com/reports/2024-02-spectra",
+    "source_snapshot_path": "competitions/2024-02-spectra/final_report.html",
+    "source_url": "https://code4rena.com/reports/2024-02-spectra",
+    "title": "All yield generated in the IBT vault can be drained by performing a vault deflation attack using the flash loan functionality of the Principal Token contract"
+  }
+]

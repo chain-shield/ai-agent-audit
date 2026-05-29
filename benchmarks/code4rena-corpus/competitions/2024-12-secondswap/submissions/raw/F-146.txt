@@ -1,0 +1,140 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-146
+Low
+Primary
+S-912
+Creating a vesting for a user that is past the last claim step will lock the tokens
+gesha17
+57
+Sufficient
+383d ago
+Finding description and impact
+
+When creating a vesting, the amount that is being assigned to the benificiary is calculated based on how many steps are left. If the beneficiary has claimed past the last step, then the releaseRate is set to 0. This means that any new tokens that are assigned to this beneficiary will essentially become locked.
+
+This can happen by chance or by an honest mistake E.g. a token owner decides to grant some extra tokens to a benificiary at the last step, seeing the beneficiary has not yet claimed his tokens, but the beneficiary decides to claim his tokens just before the owners transaction executes, so the tokens become locked.
+
+This can be somewhat mitigated by the beneficiary - he can make a listing and spot purchase the amount using another address that has not claimed any steps, so the funds will be only temporarily locked, he will however have to pay buyer and seller fee. So impact is temporarily locked funds, broken protocol function and loss of fees.
+
+Proof of Concept
+
+The createVesting function will set the release rate to 0 if the user has already claimed all steps:
+
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_StepVesting.sol#L279
+
+    function _createVesting(
+        ...
+            if (numOfSteps - _vestings[_beneficiary].stepsClaimed != 0) {
+                _vestings[_beneficiary].releaseRate =
+                    (_vestings[_beneficiary].totalAmount - _vestings[_beneficiary].amountClaimed) /
+                    (numOfSteps - _vestings[_beneficiary].stepsClaimed);
+            } else {
+                // @audit if all steps are claimed by the beneficiary, set releaseRate to 0
+                _vestings[_beneficiary].releaseRate = 0;
+            }
+        ...
+    }
+Recommended mitigation steps
+
+If the beneficiary has already claimed all steps, make the transction revert instead of setting the releaseRate to 0.
+
+Links to affected code
+SecondSwap_StepVesting.sol#L279
+Opens in a new window
+Submissions touching same files
+SecondSwap_StepVesting.sol
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-912.
+Valid low
+Edited: Feb 22
+Koolex
+
+Since token issuer is a trusted role and this need a mistake action, low is appropriate
+
+gesha17
+OP
+Edited: 01/30/2025
+
+Hello Judge,
+
+Please consider that this can happen just by user mistake as well, without the mistake of the token issuer. E.g. a user that has claimed all his steps decides to buy an additional vesting that is listed for sale. He thinks that the protocol will let him claim his purchased vesting, but then finds out that his newly purchased tokens are in fact locked.
+
+This would be almost the same situation as F-150, which I see you judged medium.
+
+Koolex
+01/30/2025
+
+Not mentioned above anyway. Furthermore, user mistakes tends to be QA
+
+Low likely hood scenario
+Edited: Feb 22
+calvinx
+
+This is a low likely hood scenario
+
+Dedupe from F-16
+Edited: Feb 22
+gesha17
+OP
+
+Hello Judge,
+
+This submission describes a very different issue from F-16. I checked the other findings and I am not sure which one this should be grouped with. I submitted it as a medium severity issue because the impact is the funds of end users being temporarily locked, and they will need to pay extra fees to unlock them via a workaround.
+
+gesha17
+OP
+Edited: 01/29/2025
+
+Hello judge,
+
+I am confused on the status of this finding. I see it's deduped but it is not assigned to any finding group, same for S-928. Is this a bug on my side, or is it still in progress? Thank you.
+
+Koolex
+Edited: 01/30/2025
+
+If no comment from my side, it means still in progress. It is not a bug, but I did the deduping beforehand.
+
+Timeline
+Submitted
+Created: 522d ago
+Medium
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

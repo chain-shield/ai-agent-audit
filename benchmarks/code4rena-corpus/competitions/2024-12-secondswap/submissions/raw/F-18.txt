@@ -1,0 +1,151 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-18
+Low
+Primary
+S-842
+Admin of the marketplace can prevent users from claiming their allocations.
+sl1
+68
+Sufficient
+383d ago
+Bug description
+
+As stated by the contest page, admin of the protocol is expected to only be able to pause and unpause the marketplace, but shouldn't be able to prevent users from claiming their vesting allocations.
+However, currently if user a has vesting that is listed on the marketplace and decides to unlist and claim it, they won't be able to do so while the market is paused due to unlistVesting() function having isFreeze modifier
+
+SecondSwap_Marketplace.sol#L339
+
+function unlistVesting(
+    address _vestingPlan,
+    uint256 _listingId
+) external isFreeze {
+Impact
+
+Admin of the marketplace can prevent users from claiming their vesting allocations.
+
+Recommended Mitigation
+
+Remove isFreeze modifier from the unlistVesting() function.
+
+Links to affected code
+SecondSwap_Marketplace.sol#L339
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-842.
+Appeal
+Edited: Feb 22
+sl1
+OP
+
+Hey Koolex, thank you for juding!
+
+The contest page does not mention that the admin role is fully trusted, instead it provides a list of actions an admin should be able to do, and it does not mention that admin should be able to prevent users from claiming their vesting allocations. Because of that I believe this issue should be valid.
+
+BenRai
+01/25/2025
+
+Second this. And I think sl1 means it should be Medium (since it is already a valid Low)
+
+sl1
+OP
+01/25/2025
+
+Yes, should've specified it, but I meant valid medium. Thank you, BenRai.
+
+Koolex
+01/29/2025
+
+I believe, it still goes under centralization risk.
+
+BenRai
+01/30/2025
+
+The issue here is not the centralization risk but what the admin should and should not be able to do. According to the description on the contest page, the admin should be able to:
+
+Can: - Assign token issuers to tokens, Configure marketplace settings, Enable and disable marketplace listing for vesting plans, Pause and unpause the marketplace
+
+There is nothing about preventing users to claim their vestings which is done in the current implementation when the contracts are paused. I would agrue that if the admin should be able to do so, it would have been mentioned in the description. Therfore the issue should be valid a valid Medium since it was never intended that the admin is able to prevent users from claiming their vesting.
+
+sl1
+OP
+Edited: 01/30/2025
+
+Here's the very similiar finding from past C4 contest that was judged as MED. The same exact thing happens there, as the readme mentions what the guardian role should and shouldn't be able to do.
+
+I would also say that an unexpected pause of the marketplace impacting users that interacted with it previous to that pause is a form of leak value, especially given the fact that stepVesting contract itself is not paused.
+
+Koolex
+01/30/2025
+
+while the market is paused
+
+"Pause and unpause the marketplace" is mentioned in the list of actions.
+
+Furthermore, it is not mentioned that only those actions can be done. especially if it is an admin role, any other role is arguable.
+
+Duplicates
+4
+S-401
+`unlistVesting()` should not have the `isFreeze` modifier
+BenRai
+74
+S-901
+Unlisting should be allowed when the marketplace is frozen.
+KupiaSec
+66
+S-729
+User funds can become locked if Marketplace is frozen and tokens are listed
+EaglesSecurity
+33
+S-304
+Users are not able to return their tokens back from the markeplace if the freeze mode is set
+ABAIKUNANBAEV
+26
+Timeline
+Submitted
+Created: 522d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

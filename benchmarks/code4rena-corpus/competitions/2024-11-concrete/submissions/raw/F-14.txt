@@ -1,0 +1,204 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-14
+Low
+Primary
+S-550
+If user is blocklisted for any of the reward tokens they won't be able to withdraw assets from the vault.
+sl1
+68
+Sufficient
+383d ago
+Bug description
+
+Holders of the vault shares not only receive yield through the increase in their share values but also are entitled to a portion of the rewards from third-party protocols integrated with vault's strategies. When a user wishes to withdraw his assets from the vault, the internal _withdraw() function burns his shares.
+
+ConcreteMultiStrategyVault.sol#L419-L423
+
+function _withdraw(uint256 assets_, address receiver_, address owner_, uint256 shares, uint256 feeShares) private {
+    if (msg.sender != owner_) {
+       _approve(owner_, msg.sender, allowance(owner_, msg.sender) - shares);
+    }
+    _burn(owner_, shares);
+
+Before actually burning the shares, _update() function will first claim all of the accrued rewards for the user.
+
+ConcreteMultiStrategyVault.sol#L852-L856
+
+function _update(
+    address from,
+    address to,
+    uint256 value
+) internal override {
+    if (from != address(0)) updateUserRewardsToCurrent(from);
+    if (to != address(0)) updateUserRewardsToCurrent(to);
+    super._update(from, to, value);
+}
+
+If there are rewards accrued, the updateUserRewardsToCurrent() function will try to transfer them to a user.
+
+ConcreteMultiStrategyVault.sol#L1042-L1045
+
+if (rewardsToTransfer != 0) {
+    totalRewardsClaimed[userAddress][
+        rewardAddresses[i]
+    ] += rewardsToTransfer;
+    IERC20(rewardAddresses[i]).safeTransfer(
+        userAddress,
+        rewardsToTransfer
+    );
+}
+
+However, this introduces an issue, where if a user is blocklisted for any of the reward tokens, the transfer will fail resulting in a permanent DoS of withdrawals.
+
+Impact
+
+If a user is blocklisted for any of the reward tokens they are then unable to withdraw funds from the vault.
+
+Recommended Mitigation
+
+Consider using attemptSafeTransfer() function of the TokenHelper library with revertOnBadAttempt flag set to false.
+
+ConcreteMultiStrategyVault.sol#L1042-L1045
+
+if (rewardsToTransfer != 0) {
+    totalRewardsClaimed[userAddress][
+        rewardAddresses[i]
+    ] += rewardsToTransfer;
+-    IERC20(rewardAddresses[i]).safeTransfer(
+-        userAddress,
+-        rewardsToTransfer
+-    );
++    TokenHelper.attemptSafeTransfer(
++    rewardAddresses[i],
++    userAddress,
++    rewardsToTransfer,
++    false
++     );
+}
+Links to affected code
+ConcreteMultiStrategyVault.sol#L1042-L1045
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-550.
+QA
+Edited: Feb 22
+samuraii77
+
+Blacklisted user is a malicious entity, him not being able to withdraw is not protocol's problem
+
+a_kalout
+01/08/2025
+
+If a user is blacklisted for a certain token, it is intended for him not to receive this token, no? I agree that this is low/QA at best.
+
+Picodes
+01/27/2025
+
+I agree with the above comments and will downgrade this finding to Low.
+
+0xnev-validator-comment-S-550
+Edited: Feb 22
+0xnev
+
+The user would have to be malicious himself to cause a blacklist, so QA could be more appropriate. No protocols are responsible for blacklists that self-sabotages user with no protocol specific impact.
+
+Duplicates
+12
+S-222
+If a depositor in `ConcreteMultiStrategyVault` is blocklisted for one of the reward tokens, he won’t be able to redeem/withdraw from the vault
+Egis_Security
+67
+S-1102
+User blocklisted by one asset will be unable to withdraw rewards for all assets
+gesha17
+57
+S-1351
+Blocked user unable to claim reward
+grearlake
+47
+S-1308
+`ConcreteMultiStrategyVault.sol::withdraw` is not compatible with USDT
+honey-k12
+43
+S-1179
+`USDC` blacklisted user cannot claim any reward tokens
+honey-k12
+43
+S-1133
+if a user is blacklisted from receiving reward tokens, they would be unable to perform protocol specific functionalities
+silver_eth
+37
+S-186
+Potential stuck rewards due to token blocklisting
+Tigerfrake
+19
+S-967
+Vault Withdrawals Can Fail Due to Blocked USDT/USDC Accounts Leaving Vault in Inconsistent State
+PolarizedLight
+00
+S-590
+User Unable to Withdraw Due to USDC Blacklisting
+Shawon
+00
+S-564
+Automatic Reward Distribution on Balance Updates Could DoS the `ConcreteMultiStrategyVault` Contract
+a2security
+00
+S-329
+Failure to claim rewards if user is blacklisted on a single token
+OpaBatyo
+00
+S-82
+Single Revert in ClaimRouter Breaks Entire Reward Distribution
+zubyoz
+00
+Timeline
+Submitted
+Created: 544d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

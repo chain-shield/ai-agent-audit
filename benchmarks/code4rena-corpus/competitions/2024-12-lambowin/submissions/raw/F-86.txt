@@ -1,0 +1,172 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-86
+Medium
+Primary
+S-715
+Accumulated ETH in the LamboVEthRouter will be irretrievable
+inh3l
+66
+Sufficient
+383d ago
+Finding description and impact
+
+Overtime, ETH will be accumulated in the LamboVEthRouter and it will be irretrievable leading to loss of funds.
+
+Proof of Concept
+
+First, LamboVEthRouter.sol has a receive function that allows users to send ETH to the contract.
+
+>>      receive() external payable {}
+
+Also, in the _buyQuote function, there is a check for if the msg.value is greater than the amountXIn + fee + 1. If it is, it will refund the user the excess ETH minus 1 wei.
+
+    function _buyQuote(address quoteToken, uint256 amountXIn, uint256 minReturn) internal returns (uint256 amountYOut) {
+        require(msg.value >= amountXIn, "Insufficient msg.value");
+//...
+
+>>       if (msg.value > (amountXIn + fee + 1)) {
+            (bool success, ) = payable(msg.sender).call{value: msg.value - amountXIn - fee - 1}("");
+            require(success, "ETH transfer failed");
+        }
+
+        emit BuyQuote(quoteToken, amountXIn, amountYOut);
+    }
+
+Overtime, with the amount of transactions that will be processed, the accumulated 1 weis including any other excess ETH will all add up to a much significant amount. Also, as ETH price increases, these small costs can eventually become quite substantial. But there's no way to sweep the tokens out of the contract. Hence loss of funds for both users and the protcol.
+
+Recommended mitigation steps
+
+Include a sweep function in the contract, or refund actual excess amount to the users.
+
+Links to affected code
+LamboVEthRouter.sol#L179-L183
+Opens in a new window
+LamboVEthRouter.sol#L188
+Opens in a new window
+Submissions touching same files
+LamboVEthRouter.sol
+View full submission
+Duplicates
+19
+S-169
+Ether Can Get Stuck in the Contract
+Ryonen
+80
+S-280
+Owner cannot extract ETH profit if any
+inh3l
+66
+S-67
+ETH Sent Directly to `LamboVEthRouter` is Permanently Locked
+gajiknownnothing
+52
+S-698
+Native ETH sent to LamboRebalanceOnUniwap contract can become permanently locked
+Evo
+52
+S-487
+Lack of withdrawal function for stuck ETH
+m4k2
+33
+S-513
+No way to extract excess funds from `LamboVEthRouter` incase of any emergency
+Shubham
+29
+S-411
+Excess ETH Accumulation in the LamboVEthRouter.sol Contract Without Withdrawal Mechanism
+eta
+22
+S-466
+submitted Potential Fund Lockup Risk Due to Missing ETH Withdrawal Mechanism.
+aua_oo7
+09
+S-723
+Lack of Token/ETH Recovery Mechanism in LamboVEthRouter Leading to Permanent Fund Lock
+mansa11
+05
+S-147
+Contract contains payable functions but no withdraw/sweep function
+bareli
+03
+S-106
+Unhandled Native Token (ETH) Transfers
+Daniel526
+03
+S-103
+small amounts of ETH can be left behind to accumulate in the `LamboVEthRouter` contract
+Daniel526
+03
+S-694
+Lack of Protocol-level Ether Withdrawal Mechanism
+Vagabond
+00
+S-578
+Founds can be stuck in the `LamboVEthRouter.sol` contract
+Le_Rems
+00
+S-560
+Dust accumulation in LamboVEthRouter with no recovery mechanism
+bumbleb33
+00
+S-420
+Locked Ether Due to Missing Withdrawal Mechanism
+phenom80
+00
+S-305
+Lack of Mechanism to Withdraw Native Ether in `LamboRebalanceOnUniwap`
+saikumar279
+00
+S-222
+Ether can be locked in `LamboVEthRouter.sol` contract
+MrMatrix
+00
+S-196
+M-02: `_buyQuote` retains 1 wei in the contract for certain transactions, leading to fund accumulated to be stucked
+0xLasadie
+00
+Timeline
+Submitted
+Created: 532d ago
+Medium
+Triage
+High
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Medium
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

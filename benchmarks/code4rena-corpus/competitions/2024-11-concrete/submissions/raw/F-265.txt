@@ -1,0 +1,109 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-265
+Low
+Primary
+S-1330
+`removeRewardToken()` fails to claim the pending rewards tokens before removing them from the vault
+blutorque
+65
+Sufficient
+383d ago
+Finding description and impact
+
+The ConcreateMultiStrategyVault contract do support multiple strategies. Rewards accrues to these strategies over time are claimable through a harvesRewards() call on the vault. The issue here is in the method removeRewardToken() which leaves pending reward unclaimed when being called. This method is defined in StrategyBase contract, and the different strategies inherit this method from the StrategyBase. Some strategy such as AaveV3Strategy can have more than one reward tokens,
+
+    /**
+     * @dev Retrieves the addresses of reward tokens available for this strategy.
+     * @return An array of addresses of reward tokens.
+     */
+    function getRewardTokenAddresses() public view override returns (address[] memory) {
+        return aaveIncentives.getRewardsByAsset(address(aToken));
+    }
+
+,removing a single reward tokens without claiming them first, could lead to loss of earned reward tokens,
+
+Also note that, the $RDNT(used in RadiantV2Strategy as reward token), are vested for a 90-day period. Even if the strategy claims them earlier, they cannot be withdrawn immediately.
+
+Proof of Concept
+
+https://github.com/code-423n4/2024-11-concrete/blob/c9219f304ed8ce71b8dc8ef67790d76fb42f370d/src/strategies/StrategyBase.sol#L217
+
+Recommended mitigation steps
+
+Some flexible fix required for radiant as mentioned above, however, in other strategies before removing _getRewardsToStrategy can be call to claim any pending rewards, followed by a harvestRewards() call to multi strategy vault to update global rewardIndex for that token.
+
+Links to affected code
+StrategyBase.sol#L217
+Opens in a new window
+Submissions touching same files
+StrategyBase.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1330.
+Downgrading
+Edited: Feb 22
+Picodes
+
+Downgrading to Low as this can be mitigated by admin actions. In the case of Radiant, 90 days isn't compatible with removing the reward token instantly anyway
+
+Duplicates
+3
+S-1096
+Rewards will be stuck in `StrategyBase` contract if the owner removes the reward token & there are still rewards remaining to be harvested
+Shubham
+29
+S-1165
+The eligible `rewards` are not claimed during reward token removal in the `StrategyBase.removeRewardToken` function
+Udsen
+27
+S-969
+Inadequate Handling of Pending Rewards During Token Removal
+ro1sharkm
+06
+Timeline
+Submitted
+Created: 542d ago
+High
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

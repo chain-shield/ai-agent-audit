@@ -59,6 +59,9 @@ const HTTP_TIMEOUT_SECS: u64 = 20;
 const MAX_REMOTE_LINK_FETCHES: usize = 12;
 const MAX_REMOTE_PRIOR_AUDIT_FETCHES: usize = 2;
 const MAX_EXTERNAL_CONTRACT_METADATA_FETCHES: usize = 100;
+const MAX_GITHUB_TREE_DOC_FILES: usize = 24;
+const MAX_GITHUB_TREE_DOC_TOKENS: usize = 12_000;
+const MAX_SCOPED_CODE_DOC_TOKENS_PER_FILE: usize = 1_200;
 const ENTRY_CONTEXT_REASON: &str = "Configured context file";
 const IMMUNEFI_BOUNTY_ENTRY_REASON: &str = "Configured Immunefi bounty tab";
 const CODE4RENA_BOUNTY_ENTRY_REASON: &str = "Configured Code4rena bounty page";
@@ -78,6 +81,8 @@ pub struct GeneratedAuditContext {
     pub scope_md: PathBuf,
     /// Generated markdown protocol docs document.
     pub docs_md: PathBuf,
+    /// Generated validation-only sidecar; not injected into discovery docs.
+    pub validation_md: PathBuf,
     /// JSON report of source files/links considered during generation.
     pub sources_json: PathBuf,
     /// Additional docs injected for bounty modes, such as rubric/runtime files.
@@ -135,6 +140,12 @@ pub enum ContextSourceKind {
     LocalScopeTxt,
     /// Local known-issues/security/audit markdown.
     LocalKnownIssues,
+    /// Local protocol documentation discovered from README-adjacent root files, docs/, or audits/.
+    LocalProtocolDocs,
+    /// Contest README/docs/scope material fetched from a Code4rena contest repository.
+    Code4renaContestRepo,
+    /// Documentation extracted directly from scoped Solidity source files.
+    ScopedCodeDocs,
     /// Remote GitHub markdown page.
     GithubMarkdown,
     /// Remote GitHub raw text file.
@@ -547,6 +558,7 @@ pub async fn generate_audit_context(
     let scope_txt = output_dir.join(format!("{artifact_prefix}-scope.txt"));
     let scope_md = output_dir.join(format!("{artifact_prefix}-scope.md"));
     let docs_md = output_dir.join(format!("{artifact_prefix}-docs.md"));
+    let validation_md = output_dir.join(format!("{artifact_prefix}-validation.md"));
     let sources_json = output_dir.join(format!("{artifact_prefix}-context-sources.json"));
     // Bounty modes emit platform-specific rule/rubric files alongside the
     // generic context artifacts. Keep path construction centralized so C4 and
@@ -569,6 +581,7 @@ pub async fn generate_audit_context(
     let all_outputs_exist = scope_txt.exists()
         && scope_md.exists()
         && docs_md.exists()
+        && validation_md.exists()
         && extra_docs.iter().all(|path| path.exists());
     if all_outputs_exist && !context_config.force_regenerate {
         // Cached artifacts are safe to reuse only when every mode-specific
@@ -583,6 +596,7 @@ pub async fn generate_audit_context(
             scope_txt,
             scope_md,
             docs_md,
+            validation_md,
             sources_json,
             extra_docs,
             regenerated: false,
@@ -606,12 +620,12 @@ pub async fn generate_audit_context(
         protocol_root.display()
     );
 
-    let (sources, link_decisions) = collect_context_sources(
+    let (mut sources, link_decisions) = collect_context_sources(
         &context_config,
         workspace_root,
         protocol_root,
         repo_name,
-        &cli.audit_type,
+        cli,
         code4rena_bounty,
         immunefi_bounty,
     )
@@ -650,6 +664,26 @@ pub async fn generate_audit_context(
     )
     .await?;
     report.warnings.extend(scope_file_list.warnings.clone());
+
+    let scoped_code_sources =
+        collect_scoped_code_documentation_sources(protocol_root, &scope_file_list);
+    for source in scoped_code_sources {
+        let token_count = get_token_count(&source.content);
+        info!(
+            "Context source included: id={}, kind={:?}, decision={:?}, tokens={}, location={}",
+            source.id, source.kind, source.decision, token_count, source.location
+        );
+        report.sources.push(ContextSource {
+            id: source.id.clone(),
+            kind: source.kind.clone(),
+            location: source.location.clone(),
+            title: source.title.clone(),
+            token_count,
+            decision: source.decision.clone(),
+            reason: source.reason.clone(),
+        });
+        sources.push(source);
+    }
 
     let agent = build_context_agent(cli)?;
     let scope_context_bundle = build_context_bundle(
@@ -707,6 +741,16 @@ pub async fn generate_audit_context(
         context_config.max_tokens_per_file
     );
 
+    let validation_markdown =
+        render_validation_sidecar(&artifact_prefix, &scope_file_list, &sources);
+    fs::write(&validation_md, &validation_markdown)
+        .with_context(|| format!("Failed to write {}", validation_md.display()))?;
+    info!(
+        "Wrote generated validation sidecar: path={}, tokens={}",
+        validation_md.display(),
+        get_token_count(&validation_markdown)
+    );
+
     fs::write(&sources_json, serde_json::to_string_pretty(&report)?)
         .with_context(|| format!("Failed to write {}", sources_json.display()))?;
     info!(
@@ -720,6 +764,7 @@ pub async fn generate_audit_context(
         scope_txt,
         scope_md,
         docs_md,
+        validation_md,
         sources_json,
         extra_docs,
         regenerated: true,
@@ -898,7 +943,7 @@ async fn collect_context_sources(
     workspace_root: &Path,
     protocol_root: &Path,
     repo_name: &str,
-    audit_type: &AuditType,
+    cli: &Cli,
     code4rena_bounty: Option<&Code4renaBountyData>,
     immunefi_bounty: Option<&ImmunefiBountyData>,
 ) -> Result<(Vec<SourceContent>, Vec<LinkDecision>)> {
@@ -909,9 +954,14 @@ async fn collect_context_sources(
     let mut sources = Vec::new();
     let mut link_decisions = Vec::new();
     let mut seen_locations = HashSet::new();
+    let audit_type = &cli.audit_type;
     let code4rena_competition = matches!(audit_type, AuditType::Code4rena);
     let code4rena_bounty_audit = matches!(audit_type, AuditType::Code4renaBounty);
     let immunefi_bug_bounty = matches!(audit_type, AuditType::ImmunefiBugBounty);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .user_agent("ai-agent-audit-context-generator/0.1")
+        .build()?;
 
     // Entry sources are the high-trust roots. Immunefi uses captured tabs;
     // other modes start from configured local files, usually README.md.
@@ -948,6 +998,33 @@ async fn collect_context_sources(
                 warn!("Configured context file missing: {}", path.display());
             }
         }
+    }
+
+    if code4rena_competition {
+        let discovered_docs = discover_local_protocol_doc_files(protocol_root);
+        debug!(
+            "Codex context discovery: found {} local protocol doc candidates",
+            discovered_docs.len()
+        );
+        for path in discovered_docs {
+            push_local_source(
+                &mut sources,
+                &mut seen_locations,
+                ContextSourceKind::LocalProtocolDocs,
+                &path,
+                SourceDecision::UsedForDocs,
+                "Auto-discovered local protocol documentation",
+            )?;
+        }
+
+        push_code4rena_contest_repo_sources(
+            &client,
+            cli,
+            protocol_root,
+            &mut sources,
+            &mut seen_locations,
+        )
+        .await?;
     }
 
     if let Some(bounty) = code4rena_bounty {
@@ -1068,11 +1145,6 @@ async fn collect_context_sources(
         v12_links.len()
     );
     links.extend(v12_links);
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .user_agent("ai-agent-audit-context-generator/0.1")
-        .build()?;
 
     let deduped_links = dedupe_links(links);
     debug!(
@@ -1292,6 +1364,180 @@ fn push_local_source(
         reason: reason.to_string(),
     });
     Ok(())
+}
+
+async fn push_code4rena_contest_repo_sources(
+    client: &reqwest::Client,
+    cli: &Cli,
+    protocol_root: &Path,
+    sources: &mut Vec<SourceContent>,
+    seen_locations: &mut HashSet<String>,
+) -> Result<()> {
+    let Some(contest_repo) = code4rena_contest_context_repo_url(cli) else {
+        return Ok(());
+    };
+
+    let explicit_contest_context =
+        cli.code4rena_contest_repo.is_some() || cli.code4rena_contest_url.is_some();
+    let same_as_analyzed_repo = cli
+        .repo
+        .as_deref()
+        .and_then(normalize_github_repo_url)
+        .map(|repo| repo.eq_ignore_ascii_case(&contest_repo))
+        .unwrap_or(false);
+    if !explicit_contest_context
+        && same_as_analyzed_repo
+        && protocol_root.join("README.md").exists()
+    {
+        debug!(
+            "Codex context discovery: using cloned Code4rena contest repo files instead of refetching {}",
+            contest_repo
+        );
+        return Ok(());
+    }
+
+    let mut refs = Vec::new();
+    if same_as_analyzed_repo && let Some(branch) = &cli.repo_branch {
+        refs.push(branch.clone());
+    }
+    refs.push("main".to_string());
+    refs.push("master".to_string());
+    refs.sort();
+    refs.dedup();
+
+    let candidates = [
+        (
+            "README.md",
+            SourceDecision::UsedForBoth,
+            "Code4rena contest README from contest repository",
+        ),
+        (
+            "scope.txt",
+            SourceDecision::UsedForScope,
+            "Code4rena contest machine-readable scope from contest repository",
+        ),
+        (
+            "out_of_scope.txt",
+            SourceDecision::UsedForScope,
+            "Code4rena contest out-of-scope notes from contest repository",
+        ),
+        (
+            "out-of-scope.txt",
+            SourceDecision::UsedForScope,
+            "Code4rena contest out-of-scope notes from contest repository",
+        ),
+    ];
+
+    for (path, decision, reason) in candidates {
+        let mut fetched = None;
+        for repo_ref in &refs {
+            if let Some(raw_url) = github_repo_raw_file_url(&contest_repo, repo_ref, path)
+                && let Some(content) = fetch_optional_text(client, &raw_url).await?
+            {
+                fetched = Some((raw_url, content));
+                break;
+            }
+        }
+        let Some((location, content)) = fetched else {
+            continue;
+        };
+        if !seen_locations.insert(location.clone()) {
+            continue;
+        }
+        log_source_content_loaded(&location, &content);
+        sources.push(SourceContent {
+            id: format!("source-{}", sources.len() + 1),
+            kind: ContextSourceKind::Code4renaContestRepo,
+            location,
+            title: Some(path.to_string()),
+            content,
+            decision,
+            reason: reason.to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+async fn fetch_optional_text(client: &reqwest::Client, url: &str) -> Result<Option<String>> {
+    let response = client.get(url).send().await?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "Fetch failed with status {} for {}",
+            response.status(),
+            url
+        ));
+    }
+    Ok(Some(response.text().await?))
+}
+
+fn code4rena_contest_context_repo_url(cli: &Cli) -> Option<String> {
+    cli.code4rena_contest_repo
+        .as_deref()
+        .or(cli.code4rena_contest_url.as_deref())
+        .or(cli.repo.as_deref())
+        .and_then(code4rena_contest_url_to_github_repo)
+}
+
+fn code4rena_contest_url_to_github_repo(url: &str) -> Option<String> {
+    if let Some(github_url) = normalize_github_repo_url(url) {
+        return Some(github_url);
+    }
+
+    let clean = url.trim().trim_end_matches('/');
+    let lower = clean.to_ascii_lowercase();
+    if !lower.contains("code4rena.com/audits/") {
+        return None;
+    }
+    let slug = clean
+        .split("/audits/")
+        .nth(1)?
+        .split('/')
+        .next()?
+        .split('?')
+        .next()?
+        .split('#')
+        .next()?;
+    if slug.is_empty() {
+        None
+    } else {
+        Some(format!("https://github.com/code-423n4/{slug}"))
+    }
+}
+
+fn normalize_github_repo_url(url: &str) -> Option<String> {
+    let clean = url
+        .trim()
+        .split('#')
+        .next()
+        .unwrap_or(url)
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
+    let after_host = clean
+        .split("github.com/")
+        .nth(1)
+        .or_else(|| clean.split("www.github.com/").nth(1))?;
+    let parts = after_host.split('/').collect::<Vec<_>>();
+    if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return None;
+    }
+    Some(format!("https://github.com/{}/{}", parts[0], parts[1]))
+}
+
+fn github_repo_raw_file_url(repo_url: &str, repo_ref: &str, path: &str) -> Option<String> {
+    let normalized = normalize_github_repo_url(repo_url)?;
+    let after_host = normalized.split("github.com/").nth(1)?;
+    let (owner, repo) = after_host.split_once('/')?;
+    Some(format!(
+        "https://raw.githubusercontent.com/{owner}/{repo}/{repo_ref}/{}",
+        path.trim_start_matches('/')
+    ))
 }
 
 fn push_immunefi_bounty_sources(
@@ -2193,11 +2439,102 @@ fn discover_known_issue_files(protocol_root: &Path) -> Vec<PathBuf> {
     paths
 }
 
+fn discover_local_protocol_doc_files(protocol_root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for entry in WalkDir::new(protocol_root)
+        .max_depth(4)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if !has_protocol_doc_extension(path) {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(protocol_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if is_protocol_doc_candidate(&rel) {
+            paths.push(path.to_path_buf());
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn has_protocol_doc_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("md" | "mdx" | "txt")
+    )
+}
+
+fn is_protocol_doc_candidate(relative: &str) -> bool {
+    let rel = relative.trim_start_matches("./").to_ascii_lowercase();
+    if rel == "readme.md" || default_generated_scope_path_excludes(&rel) {
+        return false;
+    }
+
+    let file_name = rel.rsplit('/').next().unwrap_or(&rel);
+    if matches!(
+        file_name,
+        "license.md"
+            | "license.txt"
+            | "copying.md"
+            | "copying.txt"
+            | "changelog.md"
+            | "changelog.txt"
+            | "contributing.md"
+            | "contributing.txt"
+            | "code_of_conduct.md"
+            | "package.md"
+            | "package.txt"
+    ) {
+        return false;
+    }
+
+    if rel.starts_with("docs/") || rel.starts_with("audits/") {
+        return true;
+    }
+
+    if rel.contains('/') {
+        return false;
+    }
+
+    [
+        "architecture",
+        "audit",
+        "contract",
+        "deploy",
+        "design",
+        "invariant",
+        "issue",
+        "known",
+        "protocol",
+        "risk",
+        "scope",
+        "security",
+        "spec",
+    ]
+    .iter()
+    .any(|needle| file_name.contains(needle))
+}
+
 fn should_extract_links_from_source(source: &SourceContent) -> bool {
     let entry_kind = matches!(
         source.kind,
         ContextSourceKind::LocalReadme
             | ContextSourceKind::LocalMarkdown
+            | ContextSourceKind::LocalProtocolDocs
+            | ContextSourceKind::Code4renaContestRepo
             | ContextSourceKind::Code4renaBountyPage
             | ContextSourceKind::ImmunefiInformation
             | ContextSourceKind::ImmunefiScope
@@ -2206,7 +2543,8 @@ fn should_extract_links_from_source(source: &SourceContent) -> bool {
     entry_kind
         && (source.reason == ENTRY_CONTEXT_REASON
             || source.reason == IMMUNEFI_BOUNTY_ENTRY_REASON
-            || source.reason == CODE4RENA_BOUNTY_ENTRY_REASON)
+            || source.reason == CODE4RENA_BOUNTY_ENTRY_REASON
+            || matches!(source.kind, ContextSourceKind::Code4renaContestRepo))
 }
 
 #[derive(Debug, Clone)]
@@ -2312,6 +2650,14 @@ fn classify_link(url: &str, label: &str) -> LinkClassification {
     if text.contains("audit") || text.ends_with(".pdf") {
         return LinkClassification::PriorAudit;
     }
+    if text.contains("github.com") && text.contains("/tree/") {
+        if text.contains("docs") || text.contains("documentation") {
+            return LinkClassification::Documentation;
+        }
+        if text.contains("audit") {
+            return LinkClassification::PriorAudit;
+        }
+    }
     if text.contains("docs")
         || text.contains("doc.")
         || text.contains("gitbook")
@@ -2388,13 +2734,15 @@ fn link_skip_reason(url: &str, classification: &LinkClassification) -> Option<&'
         );
     }
 
-    if is_binary_or_pdf_url(url) {
-        return Some("Skipped binary/PDF link; only text and HTML sources are fetched");
+    if is_binary_or_pdf_url(url) && !is_pdf_url(url) {
+        return Some(
+            "Skipped binary link; only text, HTML, and best-effort PDF sources are fetched",
+        );
     }
 
-    if is_github_tree_url(url) {
+    if is_github_tree_url(url) && *classification == LinkClassification::SourceCode {
         return Some(
-            "Skipped GitHub tree/directory link; only text files and documentation pages are fetched",
+            "Skipped source-code GitHub tree; entry link traversal follows documentation trees only",
         );
     }
 
@@ -2413,6 +2761,7 @@ fn link_skip_reason(url: &str, classification: &LinkClassification) -> Option<&'
     if *classification == LinkClassification::PriorAudit
         && is_remote_link(url)
         && !has_text_like_extension(url)
+        && !is_pdf_url(url)
     {
         return Some(
             "Skipped prior-audit website link; prior-audit web pages are too noisy unless provided as text/markdown",
@@ -2503,6 +2852,10 @@ fn is_binary_or_pdf_url(url: &str) -> bool {
     )
 }
 
+fn is_pdf_url(url: &str) -> bool {
+    url_extension(url).as_deref() == Some("pdf")
+}
+
 fn url_extension(url: &str) -> Option<String> {
     let clean = url
         .split('#')
@@ -2545,15 +2898,7 @@ async fn resolve_or_fetch_link(
                 url,
                 local_path.display()
             );
-            let decision = match classification {
-                LinkClassification::Documentation => SourceDecision::UsedForDocs,
-                LinkClassification::Scope
-                | LinkClassification::KnownIssues
-                | LinkClassification::PriorAudit
-                | LinkClassification::V12
-                | LinkClassification::BountyRules => SourceDecision::UsedForScope,
-                _ => SourceDecision::UsedForBoth,
-            };
+            let decision = source_decision_for_link_classification(classification);
             let kind = if local_path.file_name().and_then(|n| n.to_str()) == Some("scope.txt") {
                 ContextSourceKind::LocalScopeTxt
             } else {
@@ -2582,6 +2927,10 @@ async fn resolve_or_fetch_link(
         return Ok(None);
     }
 
+    if is_github_tree_url(url) {
+        return fetch_github_tree_text_bundle(client, url, classification).await;
+    }
+
     let Some(fetch_url) = github_raw_url(url).or_else(|| {
         if url.starts_with("http://") || url.starts_with("https://") {
             Some(url.to_string())
@@ -2600,6 +2949,10 @@ async fn resolve_or_fetch_link(
         "Codex context discovery: fetching remote link classification={:?}, url={}",
         classification, fetch_url
     );
+    if is_pdf_url(&fetch_url) {
+        return fetch_pdf_text_source(client, url, &fetch_url, classification).await;
+    }
+
     let response = client.get(&fetch_url).send().await?;
     if !response.status().is_success() {
         return Err(anyhow!(
@@ -2631,15 +2984,7 @@ async fn resolve_or_fetch_link(
         _ if is_html => ContextSourceKind::WebHtml,
         _ => ContextSourceKind::WebMarkdown,
     };
-    let decision = match classification {
-        LinkClassification::Documentation => SourceDecision::UsedForDocs,
-        LinkClassification::Scope
-        | LinkClassification::KnownIssues
-        | LinkClassification::PriorAudit
-        | LinkClassification::V12
-        | LinkClassification::BountyRules => SourceDecision::UsedForScope,
-        _ => SourceDecision::UsedForBoth,
-    };
+    let decision = source_decision_for_link_classification(classification);
     let location = fetch_url;
     log_source_content_loaded(&location, &content);
 
@@ -2695,6 +3040,218 @@ fn github_raw_url(url: &str) -> Option<String> {
         "https://raw.githubusercontent.com/{}/{}/{}/{}",
         parts[0], parts[1], parts[3], parts[4]
     ))
+}
+
+fn source_decision_for_link_classification(classification: &LinkClassification) -> SourceDecision {
+    match classification {
+        LinkClassification::Documentation => SourceDecision::UsedForDocs,
+        LinkClassification::Scope
+        | LinkClassification::KnownIssues
+        | LinkClassification::PriorAudit
+        | LinkClassification::V12
+        | LinkClassification::BountyRules => SourceDecision::UsedForScope,
+        _ => SourceDecision::UsedForBoth,
+    }
+}
+
+async fn fetch_github_tree_text_bundle(
+    client: &reqwest::Client,
+    url: &str,
+    classification: &LinkClassification,
+) -> Result<Option<SourceContent>> {
+    let Some(tree) = parse_github_tree_url(url) else {
+        return Ok(None);
+    };
+    let mut stack = vec![tree.path.clone()];
+    let mut files = Vec::<(String, String)>::new();
+
+    while let Some(path) = stack.pop() {
+        if files.len() >= MAX_GITHUB_TREE_DOC_FILES {
+            break;
+        }
+        let api_url = github_contents_api_url(&tree.owner, &tree.repo, &path, &tree.repo_ref);
+        let response = client.get(&api_url).send().await?;
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "GitHub contents fetch failed with status {} for {}",
+                response.status(),
+                api_url
+            ));
+        }
+        let value: serde_json::Value = response.json().await?;
+        let items = match value {
+            serde_json::Value::Array(items) => items,
+            single @ serde_json::Value::Object(_) => vec![single],
+            _ => Vec::new(),
+        };
+
+        for item in items {
+            let item_type = item
+                .get("type")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let item_path = item
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if item_path.is_empty() || default_generated_scope_path_excludes(item_path) {
+                continue;
+            }
+
+            if item_type == "dir" {
+                stack.push(item_path.to_string());
+                continue;
+            }
+
+            if item_type != "file" || !has_text_like_extension(item_path) {
+                continue;
+            }
+            let Some(download_url) = item.get("download_url").and_then(|value| value.as_str())
+            else {
+                continue;
+            };
+            if let Some(text) = fetch_optional_text(client, download_url).await? {
+                files.push((item_path.to_string(), text));
+                if files.len() >= MAX_GITHUB_TREE_DOC_FILES {
+                    break;
+                }
+            }
+        }
+    }
+
+    if files.is_empty() {
+        return Ok(None);
+    }
+
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut bundle = format!(
+        "# GitHub Documentation Tree\n\nSource tree: {}\nRepository: {}/{}\nRef: {}\n\n",
+        url, tree.owner, tree.repo, tree.repo_ref
+    );
+    for (path, content) in files {
+        let excerpt = if get_token_count(&content) > MAX_PROMPT_SOURCE_TOKENS_PER_ITEM {
+            truncate_to_token_limit(content, MAX_PROMPT_SOURCE_TOKENS_PER_ITEM)
+        } else {
+            content
+        };
+        let candidate = format!("## `{path}`\n\n{excerpt}\n\n");
+        if get_token_count(&format!("{bundle}{candidate}")) > MAX_GITHUB_TREE_DOC_TOKENS {
+            bundle.push_str(&format!(
+                "\n[Omitted remaining GitHub tree files after reaching {} token bundle budget]\n",
+                MAX_GITHUB_TREE_DOC_TOKENS
+            ));
+            break;
+        }
+        bundle.push_str(&candidate);
+    }
+
+    log_source_content_loaded(url, &bundle);
+    Ok(Some(SourceContent {
+        id: "github-tree".to_string(),
+        kind: ContextSourceKind::GithubMarkdown,
+        location: url.to_string(),
+        title: Some("GitHub documentation tree".to_string()),
+        content: bundle,
+        decision: source_decision_for_link_classification(classification),
+        reason: "Fetched text files from linked GitHub documentation tree".to_string(),
+    }))
+}
+
+#[derive(Debug)]
+struct GithubTreeRef {
+    owner: String,
+    repo: String,
+    repo_ref: String,
+    path: String,
+}
+
+fn parse_github_tree_url(url: &str) -> Option<GithubTreeRef> {
+    let clean = url
+        .split('#')
+        .next()
+        .unwrap_or(url)
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    let after_host = clean
+        .split("github.com/")
+        .nth(1)
+        .or_else(|| clean.split("www.github.com/").nth(1))?;
+    let parts = after_host.split('/').collect::<Vec<_>>();
+    if parts.len() < 5 || parts[2] != "tree" {
+        return None;
+    }
+    Some(GithubTreeRef {
+        owner: parts[0].to_string(),
+        repo: parts[1].to_string(),
+        repo_ref: parts[3].to_string(),
+        path: parts[4..].join("/"),
+    })
+}
+
+fn github_contents_api_url(owner: &str, repo: &str, path: &str, repo_ref: &str) -> String {
+    format!(
+        "https://api.github.com/repos/{owner}/{repo}/contents/{}?ref={repo_ref}",
+        path.trim_start_matches('/')
+    )
+}
+
+async fn fetch_pdf_text_source(
+    client: &reqwest::Client,
+    original_url: &str,
+    fetch_url: &str,
+    classification: &LinkClassification,
+) -> Result<Option<SourceContent>> {
+    let response = client.get(fetch_url).send().await?;
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "PDF fetch failed with status {} for {}",
+            response.status(),
+            fetch_url
+        ));
+    }
+    let bytes = response.bytes().await?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let pdf_path = std::env::temp_dir().join(format!(
+        "ai-agent-audit-context-{}-{stamp}.pdf",
+        std::process::id()
+    ));
+    fs::write(&pdf_path, &bytes)
+        .with_context(|| format!("Failed to write temporary PDF {}", pdf_path.display()))?;
+    let output = std::process::Command::new("pdftotext")
+        .arg("-layout")
+        .arg(&pdf_path)
+        .arg("-")
+        .output();
+    let _ = fs::remove_file(&pdf_path);
+    let output = output.with_context(|| {
+        "pdftotext is required to extract linked PDF audit/documentation content".to_string()
+    })?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "pdftotext failed for {}: {}",
+            fetch_url,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let content = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if content.is_empty() {
+        return Ok(None);
+    }
+    log_source_content_loaded(fetch_url, &content);
+    Ok(Some(SourceContent {
+        id: "linked-pdf".to_string(),
+        kind: ContextSourceKind::WebMarkdown,
+        location: fetch_url.to_string(),
+        title: Some(original_url.to_string()),
+        content,
+        decision: source_decision_for_link_classification(classification),
+        reason: "Extracted text from linked PDF with pdftotext".to_string(),
+    }))
 }
 
 async fn v12_candidate_links(config: &ContextConfig, repo_name: &str) -> Vec<ExtractedLink> {
@@ -2996,6 +3553,8 @@ fn deterministic_scope_extract(
             source.kind,
             ContextSourceKind::LocalReadme
                 | ContextSourceKind::LocalMarkdown
+                | ContextSourceKind::LocalProtocolDocs
+                | ContextSourceKind::Code4renaContestRepo
                 | ContextSourceKind::GithubMarkdown
                 | ContextSourceKind::GithubRaw
                 | ContextSourceKind::WebMarkdown
@@ -3035,6 +3594,105 @@ fn deterministic_scope_extract(
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     entries.dedup_by(|a, b| a.path == b.path);
     entries
+}
+
+fn collect_scoped_code_documentation_sources(
+    protocol_root: &Path,
+    scope_file_list: &ScopeFileList,
+) -> Vec<SourceContent> {
+    let mut sources = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in &scope_file_list.files {
+        if !entry.exists || !entry.path.ends_with(".sol") {
+            continue;
+        }
+        let relative = entry.path.trim_start_matches("./");
+        if !seen.insert(relative.to_string()) {
+            continue;
+        }
+        let path = protocol_root.join(relative);
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let excerpt = extract_solidity_documentation_excerpt(&content);
+        if excerpt.trim().is_empty() {
+            continue;
+        }
+        let excerpt = if get_token_count(&excerpt) > MAX_SCOPED_CODE_DOC_TOKENS_PER_FILE {
+            truncate_to_token_limit(excerpt, MAX_SCOPED_CODE_DOC_TOKENS_PER_FILE)
+        } else {
+            excerpt
+        };
+        let rendered = format!(
+            "# Scoped Solidity Documentation\n\nFile: `{}`\n\n{}",
+            entry.path, excerpt
+        );
+        log_source_content_loaded(&path.to_string_lossy(), &rendered);
+        sources.push(SourceContent {
+            id: format!("scoped-code-docs-{}", sources.len() + 1),
+            kind: ContextSourceKind::ScopedCodeDocs,
+            location: path.to_string_lossy().to_string(),
+            title: Some(entry.path.clone()),
+            content: rendered,
+            decision: SourceDecision::UsedForDocs,
+            reason:
+                "Extracted NatSpec, comments, declarations, inheritance, and local imports from scoped Solidity"
+                    .to_string(),
+        });
+    }
+    sources
+}
+
+fn extract_solidity_documentation_excerpt(content: &str) -> String {
+    let declaration_re = Regex::new(
+        r"\b(contract|interface|library)\s+\w+|\bfunction\s+\w+|\bevent\s+\w+|\berror\s+\w+",
+    )
+    .unwrap();
+    let state_var_re = Regex::new(
+        r"\b(public|external)\b.*\b(address|bool|bytes\d*|int\d*|uint\d*|string|mapping)\b",
+    )
+    .unwrap();
+    let mut out = Vec::new();
+    let mut in_block_comment = false;
+    let mut pending_comment = false;
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            pending_comment = false;
+            continue;
+        }
+
+        if line.starts_with("import ") {
+            if line.contains('"') || line.contains('\'') {
+                out.push(line.to_string());
+            }
+            continue;
+        }
+
+        let starts_comment = line.starts_with("//")
+            || line.starts_with("/*")
+            || line.starts_with('*')
+            || line.starts_with("*/");
+        if starts_comment || in_block_comment {
+            out.push(line.to_string());
+            pending_comment = true;
+            if line.starts_with("/*") && !line.contains("*/") {
+                in_block_comment = true;
+            }
+            if line.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+
+        if declaration_re.is_match(line) || (pending_comment && state_var_re.is_match(line)) {
+            out.push(line.to_string());
+            pending_comment = false;
+        }
+    }
+
+    out.join("\n")
 }
 
 #[derive(Debug, Default)]
@@ -5375,7 +6033,7 @@ Hard requirements:
 - Include public known issues, files in/out of scope, areas of concern, invariants, trusted roles, and V12/prior findings when present.
 - For Code4rena bounty sources, explicitly preserve the global bounty out-of-scope scenarios and Critical/High eligibility criteria from the bounty criteria page.
 - For Immunefi bounty sources, explicitly preserve assets in scope, impacts in scope, out-of-scope rules, prohibited activities, PoC requirements, primacy rules, and prior-audit/known-issue exclusions.
-- For V12/prior findings, do not copy full reports. Summarize finding titles, affected areas, and audit implications.
+- For V12/prior findings, do not copy full reports. Summarize finding titles, affected areas, and audit implications under known issues/out-of-scope so discovery does not resubmit them.
 - Prefer exact file/path tables for scope. Prefer concise summaries for prose-heavy docs and historical reports.
 - If a source is generic, duplicated, marketing-oriented, or low-signal, omit it and record that in `omitted_items`.
 - Do not invent facts or files.
@@ -5426,6 +6084,7 @@ Hard requirements:
 - Explain what the protocol does and how it works.
 - Focus on architecture, main flows, accounting/value flow, external integrations, trust boundaries, and security-relevant assumptions.
 - Pull only useful protocol documentation from entry and second-level sources.
+- Treat scoped-code documentation extracts as primary evidence for contracts, inheritance, NatSpec, local imports, events, errors, and public/external function behavior.
 - For Immunefi bounty sources, treat Resources documentation links and the program overview as primary protocol documentation.
 - Be highly discriminating: include docs that help an auditor understand mechanics, assets, permissions, invariants, integrations, and failure modes.
 - Summarize large documentation pages instead of copying them. Do not include exhaustive docs, changelogs, marketing copy, setup instructions, or generic contest rules.
@@ -5455,6 +6114,66 @@ Source material:
         config.max_tokens_per_file,
     )
     .await
+}
+
+fn render_validation_sidecar(
+    artifact_prefix: &str,
+    scope_file_list: &ScopeFileList,
+    sources: &[SourceContent],
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# {artifact_prefix} Validation Context\n\n"));
+    out.push_str("Use this file only after discovery, during three-step validation and PoC planning. Do not feed this file into discovery prompts.\n\n");
+    out.push_str("## Scoped Files\n\n");
+    for entry in &scope_file_list.files {
+        out.push_str(&format!(
+            "- {}{}\n",
+            entry.path,
+            if entry.exists {
+                ""
+            } else {
+                " (not found locally)"
+            }
+        ));
+    }
+
+    let v12_sources = sources
+        .iter()
+        .filter(|source| matches!(source.kind, ContextSourceKind::V12Report))
+        .collect::<Vec<_>>();
+    out.push_str("\n## Known-Issue Sources\n\n");
+    if v12_sources.is_empty() {
+        out.push_str("- No V12 findings detected in collected context.\n");
+    } else {
+        for source in v12_sources {
+            out.push_str(&format!("- V12/prior findings: {}\n", source.location));
+        }
+    }
+
+    let known_issue_sources = sources
+        .iter()
+        .filter(|source| {
+            matches!(
+                source.kind,
+                ContextSourceKind::LocalKnownIssues | ContextSourceKind::Code4renaContestRepo
+            ) && matches!(
+                source.decision,
+                SourceDecision::UsedForScope | SourceDecision::UsedForBoth
+            )
+        })
+        .collect::<Vec<_>>();
+    for source in known_issue_sources {
+        out.push_str(&format!(
+            "- Scope/known-issue context: {}\n",
+            source.location
+        ));
+    }
+
+    out.push_str("\n## Validation Guidance\n\n");
+    out.push_str("- Validate candidates against generated scope, docs, V12/prior known issues, and local source code.\n");
+    out.push_str("- Use repository tests and user-supplied PoC config (`poc_instructions`, `poc_template`, `test_folder`) when present.\n");
+    out.push_str("- Do not require PoC mechanics during discovery; apply them only when validating surviving candidate findings.\n");
+    out
 }
 
 async fn enforce_markdown_token_limit(
@@ -5918,6 +6637,96 @@ mod tests {
     }
 
     #[test]
+    fn local_protocol_doc_discovery_includes_relevant_root_and_docs_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("README.md"), "# readme").unwrap();
+        fs::write(tmp.path().join("ARCHITECTURE.md"), "# architecture").unwrap();
+        fs::write(tmp.path().join("CHANGELOG.md"), "# changes").unwrap();
+        fs::create_dir_all(tmp.path().join("docs")).unwrap();
+        fs::write(tmp.path().join("docs/protocol.md"), "# protocol docs").unwrap();
+        fs::create_dir_all(tmp.path().join("audits")).unwrap();
+        fs::write(tmp.path().join("audits/report.txt"), "audit").unwrap();
+
+        let rels = discover_local_protocol_doc_files(tmp.path())
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(tmp.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+
+        assert!(rels.contains(&"ARCHITECTURE.md".to_string()));
+        assert!(rels.contains(&"docs/protocol.md".to_string()));
+        assert!(rels.contains(&"audits/report.txt".to_string()));
+        assert!(!rels.contains(&"README.md".to_string()));
+        assert!(!rels.contains(&"CHANGELOG.md".to_string()));
+    }
+
+    #[test]
+    fn scoped_code_documentation_extracts_natspec_imports_and_declarations() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("contracts")).unwrap();
+        fs::write(
+            tmp.path().join("contracts/Vault.sol"),
+            r#"
+import {Math} from "../src/Math.sol";
+
+/// @notice Stores user deposits.
+contract Vault is Ownable {
+    /// @notice Total managed assets.
+    uint256 public totalAssets;
+
+    /// @notice Deposit assets for a receiver.
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares) {}
+
+    /// @notice Emitted after a deposit.
+    event Deposit(address indexed receiver, uint256 assets);
+}
+"#,
+        )
+        .unwrap();
+        let scope = ScopeFileList {
+            files: vec![ScopeFileEntry {
+                path: "./contracts/Vault.sol".to_string(),
+                exists: true,
+                reason: None,
+            }],
+            source: ScopeFileSource::CopiedScopeTxt,
+            warnings: Vec::new(),
+        };
+
+        let sources = collect_scoped_code_documentation_sources(tmp.path(), &scope);
+
+        assert_eq!(sources.len(), 1);
+        assert!(matches!(sources[0].kind, ContextSourceKind::ScopedCodeDocs));
+        assert!(sources[0].content.contains("import {Math}"));
+        assert!(sources[0].content.contains("@notice Stores user deposits"));
+        assert!(sources[0].content.contains("contract Vault is Ownable"));
+        assert!(sources[0].content.contains("function deposit"));
+        assert!(sources[0].content.contains("event Deposit"));
+    }
+
+    #[test]
+    fn code4rena_contest_url_normalizes_to_github_repo() {
+        assert_eq!(
+            code4rena_contest_url_to_github_repo(
+                "https://code4rena.com/audits/2025-11-megapot/submissions?page=1"
+            )
+            .unwrap(),
+            "https://github.com/code-423n4/2025-11-megapot"
+        );
+        assert_eq!(
+            code4rena_contest_url_to_github_repo(
+                "https://github.com/code-423n4/2025-11-megapot.git"
+            )
+            .unwrap(),
+            "https://github.com/code-423n4/2025-11-megapot"
+        );
+    }
+
+    #[test]
     fn explorer_network_inference_covers_major_mainnets_and_testnets() {
         assert_eq!(
             infer_explorer_network(
@@ -6163,6 +6972,7 @@ audit_type: "Code4rena"
             "protocol-scope.txt",
             "protocol-scope.md",
             "protocol-docs.md",
+            "protocol-validation.md",
             "protocol-immunefi-bounty-rules.md",
             "protocol-immunefi-severity-rubric.md",
             "protocol-immunefi-poc-runtime.md",
@@ -6609,7 +7419,14 @@ code_folders:
                 "https://example.com/audit.pdf",
                 &LinkClassification::PriorAudit,
             ),
-            Some("Skipped binary/PDF link; only text and HTML sources are fetched")
+            None
+        );
+        assert_eq!(
+            link_skip_reason(
+                "https://example.com/audit.zip",
+                &LinkClassification::PriorAudit,
+            ),
+            Some("Skipped binary link; only text, HTML, and best-effort PDF sources are fetched")
         );
         assert_eq!(
             link_skip_reason(

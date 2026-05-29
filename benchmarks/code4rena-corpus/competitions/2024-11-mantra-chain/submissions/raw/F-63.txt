@@ -1,0 +1,168 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-63
+Low
+Primary
+S-192
+Oracle will fail to post prices to Mantrachain due to missing vote extensions enable height
+crypticdefense
+39
+Sufficient
+383d ago
+Finding description and impact
+
+Mantrachain currently registers the skip-mev connect oracle within the application:
+
+app.go#L144-L146
+
+	oracle "github.com/skip-mev/connect/v2/x/oracle"
+	oraclekeeper "github.com/skip-mev/connect/v2/x/oracle/keeper"
+	oracletypes "github.com/skip-mev/connect/v2/x/oracle/types"
+
+app.go#L585-L590
+
+	oracleKeeper := oraclekeeper.NewKeeper(runtime.NewKVStoreService(keys[oracletypes.StoreKey]),
+		appCodec,
+		app.MarketMapKeeper,
+		authtypes.NewModuleAddress(govtypes.ModuleName))
+	app.OracleKeeper = &oracleKeeper
+	oracleModule := oracle.NewAppModule(appCodec, *app.OracleKeeper)
+
+Both Cosmos sdk and Connect docs explain that Vote Extension (enable height) must be enabled for the oracle to post prices to the chain, otherwise the oracle usage will fail. Users and validators will not be able to confirm the price of off-chain assets, which contradicts the purpose of the Mantrachain project (tokenization and trading of real-world assets). Users can simply use any price to tokenize real-world assets and trade them at unfair prices, which will result in less participation overall and defeat the core purpose of Mantrachain if no oracle is utilized.
+
+Proof of Concept
+
+There a few ways to enable vote extensions so that connect oracle will begin to read prices from that block height, such as setting the consensus parameter in init chainer within app.go:
+
+    consensusParams.Params.Abci = &types.ABCIParams{
+            VoteExtensionsEnableHeight: 5, // must be greater than 1
+    }
+
+Connect docs give more examples here.
+
+Currently, Mantrachain does not configure this, thus Connect will not be able to post prices to the chain (as explained in the documentation linked).
+
+Despite registering the oracle module in the application, Mantrachain will not be able to properly utilize this.
+
+Coded PoC:
+
+After following the steps in the contest page on how to run tests, proceed to execute the following command:
+
+make build-and-run-single-node
+
+While the node is running, open another terminal and run the following command:
+
+./build/mantrachaind query consensus params --node http://127.0.0.1:26657
+
+This will query the consensus parameters, and display the following output:
+
+params:
+  abci: {}
+  block:
+    max_bytes: "22020096"
+    max_gas: "-1"
+  evidence:
+    max_age_duration: 48h0m0s
+    max_age_num_blocks: "100000"
+    max_bytes: "1048576"
+  validator:
+    pub_key_types:
+    - ed25519
+  version: {}
+
+We can see that vote_extensions_enable_height is non-existent. I compared with this Neutron Network, which uses the same oracle as Mantrachain, and ran the same commands above. The following output was displayed:
+
+params:
+  abci:
+    vote_extensions_enable_height: "1"
+  block:
+    max_bytes: "22020096"
+    max_gas: "1000000000"
+  evidence:
+    max_age_duration: 48h0m0s
+    max_age_num_blocks: "100000"
+    max_bytes: "1048576"
+  validator:
+    pub_key_types:
+    - ed25519
+  version: {}
+
+We can see in Neutron Network that the vote extension height is correctly enabled, as required by the Connect oracle. (As a side note the connect oracle is a major feature of the Neutron Network, where Mantrachain has forked the same tokenfactory module. Here is further proof that Mantrachain intend to use a working version of this oracle).
+
+Recommended mitigation steps
+
+Follow the Connect documentation to enable vote extension and specify the height in which connect oracle will begin to read prices.
+
+Links to affected code
+app.go#L144-L146
+Opens in a new window
+Submissions touching same files
+app.go
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-192.
+Judging
+Edited: Feb 22
+3docSec
+
+Marking as valid L - if a correct setup can be made via genesis.json, we assume admins will do (would be admin error otherwise)
+
+Not Valid
+Edited: Feb 22
+mantra_lance
+
+If you check our mainnet it is enabled as well. We enabled it directly through modifying the genesis.json. The code suggested from connect oracle simply adds to what was read from the genesis.json as well. We just added it directly into the json file.
+
+You would not find the same code in Neutron as well as they likely added it through genesis.json as well.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid
+
+Timeline
+Submitted
+Created: 504d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

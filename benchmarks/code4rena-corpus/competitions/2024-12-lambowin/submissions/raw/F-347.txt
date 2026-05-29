@@ -1,0 +1,212 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-347
+Medium
+Primary
+S-652
+Rebalance will be completely dossed if OKX commision rate goes beyond the fee limits
+inh3l
+66
+Sufficient
+383d ago
+Finding description and impact
+
+Rebalancing interacts with OKXRouter to swap weth for tokens in certain pools and vice versa. But OKXRouter may charge commissions on both the from token and to token, which reduces potential profit to be made from the rebalance operation, if high enough cause there to be no profit made, which will cause the operation to fail, or in extreme cases, if the commision is set beyond its expected limits, cause a permanent dos of the function.
+
+Proof of Concept
+
+rebalance calls morpho flashloan which calls the onMorphoFlashLoan hook.
+
+    function rebalance(uint256 directionMask, uint256 amountIn, uint256 amountOut) external nonReentrant {
+        uint256 balanceBefore = IERC20(weth).balanceOf(address(this));
+        bytes memory data = abi.encode(directionMask, amountIn, amountOut);
+>>      IMorpho(morphoVault).flashLoan(weth, amountIn, data);
+        uint256 balanceAfter = IERC20(weth).balanceOf(address(this));
+        uint256 profit = balanceAfter - balanceBefore;
+        require(profit > 0, "No profit made");
+    }
+
+onMorphoFlashLoan, depending on the set direction executes buy or sell transaction using OKXRouter.
+
+    function onMorphoFlashLoan(uint256 assets, bytes calldata data) external {
+        require(msg.sender == address(morphoVault), "Caller is not morphoVault");
+        (uint256 directionMask, uint256 amountIn, uint256 amountOut) = abi.decode(data, (uint256, uint256, uint256));
+        require(amountIn == assets, "Amount in does not match assets");
+
+        uint256 _v3pool = uint256(uint160(uniswapPool)) | (directionMask);
+        uint256[] memory pools = new uint256[](1);
+        pools[0] = _v3pool;
+
+        if (directionMask == _BUY_MASK) {
+>>          _executeBuy(amountIn, pools);
+        } else {
+>>          _executeSell(amountIn, pools);
+        }
+
+        require(IERC20(weth).approve(address(morphoVault), assets), "Approve failed");
+    }
+
+OKXRouter, for its transactions charges a fee from both the from and to token. This is important as according to the readme, issues from external integrations enabling fees while affecting the protocol are in scope.
+
+    function _executeBuy(uint256 amountIn, uint256[] memory pools) internal {
+        uint256 initialBalance = address(this).balance;
+
+        // Execute buy
+        require(IERC20(weth).approve(address(OKXTokenApprove), amountIn), "Approve failed");
+>>      uint256 uniswapV3AmountOut = IDexRouter(OKXRouter).uniswapV3SwapTo(
+            uint256(uint160(address(this))),
+            amountIn,
+            0,
+            pools
+        );
+        VirtualToken(veth).cashOut(uniswapV3AmountOut);
+
+        // SlowMist [N11]
+        uint256 newBalance = address(this).balance - initialBalance;
+        if (newBalance > 0) {
+            IWETH(weth).deposit{value: newBalance}();
+        }
+    }
+
+    function _executeSell(uint256 amountIn, uint256[] memory pools) internal {
+        IWETH(weth).withdraw(amountIn);
+        VirtualToken(veth).cashIn{value: amountIn}(amountIn);
+>>      require(IERC20(veth).approve(address(OKXTokenApprove), amountIn), "Approve failed");
+        IDexRouter(OKXRouter).uniswapV3SwapTo(uint256(uint160(address(this))), amountIn, 0, pools);
+    }
+
+From the router's uniswapV3SwapTo function, we can see that a commission is taken from the "from" token and from the "to" token after swap. The presence of these fees, for the first part reduces the potential profit that the protocol stands to make from the flashloan, leading to a loss of "positive yield". Worse still is if the commision is high enough, no profit will be made, causing the rebalance function to revert due to the requirement that profit is made during every rebalance operation.
+
+    function _uniswapV3SwapTo(
+        address payer,
+        uint256 receiver,
+        uint256 amount,
+        uint256 minReturn,
+        uint256[] calldata pools
+    ) internal returns (uint256 returnAmount) {
+        CommissionInfo memory commissionInfo = _getCommissionInfo();
+
+        (
+            address middleReceiver,
+            uint256 balanceBefore
+>>      ) = _doCommissionFromToken(
+                commissionInfo,
+                address(uint160(receiver)),
+                amount
+            );
+
+        (uint256 swappedAmount, ) = _uniswapV3Swap(
+            payer,
+            payable(middleReceiver),
+            amount,
+            minReturn,
+            pools
+        );
+
+>>      uint256 commissionAmount = _doCommissionToToken(
+            commissionInfo,
+            address(uint160(receiver)),
+            balanceBefore
+        );
+
+        return swappedAmount - commissionAmount;
+    }
+
+And finally, if the commission rate exceeds exceeds its preset commissionRateLimit either for the fromToken or toToken, will also cause the function to also revert, dossing rebalancing.
+
+    function _doCommissionFromToken(
+        CommissionInfo memory commissionInfo,
+        address receiver,
+        uint256 inputAmount
+    ) internal returns (address, uint256) {
+//...
+            let rate := mload(add(commissionInfo, 0x40))
+>>          if gt(rate, commissionRateLimit) {
+                _revertWithReason(
+                    0x0000001b6572726f7220636f6d6d697373696f6e2072617465206c696d697400,
+                    0x5f
+                ) //"error commission rate limit"
+            }
+//...
+    function _doCommissionToToken(
+        CommissionInfo memory commissionInfo,
+        address receiver,
+        uint256 balanceBefore
+    ) internal returns (uint256 amount) {
+        if (!commissionInfo.isToTokenCommission) {
+            return 0;
+        }
+//...
+            let rate := mload(add(commissionInfo, 0x40))
+>>           if gt(rate, commissionRateLimit) {
+                _revertWithReason(
+                    0x0000001b6572726f7220636f6d6d697373696f6e2072617465206c696d697400,
+                    0x5f
+                ) //"error commission rate limit"
+            }
+//...
+Recommended mitigation steps
+Links to affected code
+LamboRebalanceOnUniwap.sol#L89-L114
+Opens in a new window
+Submissions touching same files
+LamboRebalanceOnUniwap.sol
+View full submission
+Duplicates
+3
+S-656
+`previewRebalance()` does not take into account OKX DEX commission
+Evo
+52
+S-152
+Rebalancing would be broken when OKX router adds the commission fee
+Bauchibred
+27
+S-331
+OKX Commision fee and lack of slippage while rebalancing may cause inconvinence
+MSaptarshi
+10
+Timeline
+Submitted
+Created: 532d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

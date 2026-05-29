@@ -1,0 +1,158 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-125
+Low
+Primary
+S-195
+Changing minListingDuration after a listing Is created alters unlisting penalties for ongoing listings
+0xastronatey
+11
+Sufficient
+383d ago
+Finding description and impact
+
+The marketplace contract uses the current value of minListingDuration from MarketplaceSetting contract at the time of unlisting, rather than the value that was in place when the listing was originally created. This means if minListingDuration is modified mid-way, sellers face new and unexpected conditions when they try to unlist. They might avoid or incur penalties they never anticipated, simply because the rules changed after they listed their tokens.
+
+if ((listing.listTime + IMarketplaceSetting(marketplaceSetting).minListingDuration()) > block.timestamp) {
+    //.. Apply penalty fee
+}
+
+Here, minListingDuration() is fetched dynamically at unlisting time rather than using a stored value from the moment the listing was created. Any adjustments made to minListingDuration afterward will impact all existing listings.
+
+Proof of Concept
+Set minListingDuration (e.g., to 24 hours) and create a listing.
+Move time forward by only half that duration and attempt to unlist, triggering the penalty fee
+requirement (as expected).
+Now reduce minListingDuration (e.g., from 24 hours down to 1 hour) after the listing is already
+active.
+Without waiting any further, attempt unlisting again. This time, it succeeds without a penalty
+because the reduced minListingDuration is applied retroactively.
+
+Here is a coded POC you can insert in the "Fee Collector and Duration Settings" describe block of the Marketplace.test.ts file:
+
+it("Demonstrates that changing minListingDuration after listing affects penalty conditions unexpectedly", async function () {
+    const {
+        vesting,
+        token,
+        marketplace,
+        marketplaceSetting,
+        user1,
+        s2admin
+    } = await loadFixture(deployProxyFixture);
+
+    // Initial setup:
+    // 1. Set minListingDuration to 1 day (86400 seconds).
+    await marketplaceSetting.write.setMinListingDuration([BigInt(86400)], { account: s2admin.account });
+
+    // 2. Seller approves marketplace and lists a vesting
+    const amount = parseEther("100");
+    const cost = parseEther("100");
+    const discountPct = BigInt(0);
+    const listingType = 1; // single fill
+    const discountType = 0; // no discount
+    const maxWhitelist = BigInt(0);
+    const privateListing = false;
+    const minPurchaseAmt = parseEther("1");
+    await token.write.approve([marketplace.address, parseEther("1000")], { account: user1.account });
+    
+    await marketplace.write.listVesting(
+        [
+            vesting.address,
+            amount,
+            cost,
+            discountPct,
+            listingType,
+            discountType,
+            maxWhitelist,
+            token.address,
+            minPurchaseAmt,
+            privateListing
+        ],
+        { account: user1.account }
+    );
+
+    // The listing is created now. According to current rules, the seller must wait 86400 seconds before unlisting without penalty.
+
+    // 3. Increase time by only 12 hours (43200 seconds), which is less than 1 day.
+    await time.increase(43200n);
+
+    // Under the original condition (minListingDuration = 86400), unlisting now should trigger a penalty.
+    // Let's verify that trying to unlist at this point requires a penalty:
+    await expect(
+        marketplace.write.unlistVesting([vesting.address, BigInt(0)], { account: user1.account })
+    ).to.be.revertedWith("SS_Marketplace: Penalty fee required for early unlisting");
+
+    // 4. Now, change the minListingDuration to something shorter, e.g., 1 hour (3600 seconds),
+    // after the listing has already been created and partially elapsed.
+    await marketplaceSetting.write.setMinListingDuration([BigInt(3600)], { account: s2admin.account });
+
+    // At this point, the contract still references minListingDuration dynamically. 
+    // The listing was started 12 hours ago, and now minListingDuration is just 1 hour.
+    // According to the new minListingDuration, the seller should no longer need to pay a penalty, 
+    // even though they originally listed under a 24-hour condition.
+
+    // 5. Attempt unlisting again immediately, without waiting longer:
+    // Now it should allow unlisting without penalty due to the changed minListingDuration.
+    await token.write.approve([marketplace.address, parseEther("1000")], { account: user1.account });
+    await marketplace.write.unlistVesting([vesting.address, BigInt(0)], { account: user1.account });
+
+    // If we reach here, it means no penalty was required after minListingDuration was changed,
+    // showing that the minListingDuration is not snapshotted at listing time.
+    // Essentially this behaviour shows that minListingDuration changes retroactively affect penalty 
+    // logic.
+});
+
+The test passing confirms that the parameter is not locked in at listing creation. Instead, it’s being read “live” from MarketplaceSetting at the time of unlisting, allowing retroactive changes to affect existing listings.
+
+Recommended mitigation steps
+
+To fix this, snapshot the minListingDuration at the time the listing is created. Store it in the listing’s data structure so that when unlisting occurs, the contract checks against the duration originally in place rather than a dynamically updated one. For example, when listVesting() is called, record the current MarketplaceSetting.minListingDuration() and use that stored value later instead of querying it again.
+
+Links to affected code
+SecondSwap_Marketplace.sol#L349
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+Timeline
+Submitted
+Created: 527d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

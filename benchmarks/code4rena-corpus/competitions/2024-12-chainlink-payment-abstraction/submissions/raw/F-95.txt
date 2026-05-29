@@ -1,0 +1,173 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink Payment Abstraction
+/
+F-95
+Low
+Primary
+S-390
+`SwapAutomator._getAssetPrice()` doesn't validate returned price against `minAnswer` & `maxAnswer`
+hals
+35
+Sufficient
+383d ago
+Finding description and impact
+SwapAutomator._getValidatedAssetPrice() function is used to fetch the assets prices from chainlink price feeds, and used in:
+chekUpkeep() : to check if there is any asset passing the minimum swap size and price is within an acceptable slippage and can be swapped into $LINK token.
+performUpkeep() : when the assets are swapped into $LINK tokens via UniswapV3 router.
+  function _getValidatedAssetPrice(
+    AggregatorV3Interface oracle
+  ) private view returns (uint256 assetPrice) {
+    (uint256 answer, uint256 updatedAt) = _getAssetPrice(oracle);
+
+    if (answer == 0) revert Errors.ZeroOracleData();
+    if (updatedAt < block.timestamp - STALENESS_THRESHOLD) {
+      revert Errors.StaleOracleData();
+    }
+
+    return answer;
+  }
+
+where _getAssetPrice():
+
+  function _getAssetPrice(
+    AggregatorV3Interface oracle
+  ) private view returns (uint256 assetPrice, uint256 updatedAtTimestamp) {
+    (, int256 answer,, uint256 updatedAt,) = oracle.latestRoundData();
+    return (answer.toUint256(), updatedAt);
+  }
+Knowing that some chainlink aggregators still have a built in circuit breaker if the price is below minAnswer or above maxAnswer, where it will return the minAnswer if the asset price crashes below the minAnswer, and the contract will consume this minAnswer price when the asset price falls below it.
+But as can be noticed; _getAssetPrice() doesn't validate the returned price against min/max price (to be set for each asset).
+
+Impact:
+
+This will result in using an invalid price to execute the swap transaction when the asset price crashes, resulting in a loss of the received link tokens from the swap, hence less funds available to be allocated for the the service providers.
+
+Proof of Concept
+
+SwapAutomator._getValidatedAssetPrice()
+
+  function _getValidatedAssetPrice(
+    AggregatorV3Interface oracle
+  ) private view returns (uint256 assetPrice) {
+    (uint256 answer, uint256 updatedAt) = _getAssetPrice(oracle);
+
+
+    if (answer == 0) revert Errors.ZeroOracleData();
+    if (updatedAt < block.timestamp - STALENESS_THRESHOLD) {
+      revert Errors.StaleOracleData();
+    }
+
+
+    return answer;
+  }
+
+SwapAutomator._getAssetPrice()
+
+    function _getAssetPrice(
+        AggregatorV3Interface oracle
+    ) private view returns (uint256 assetPrice, uint256 updatedAtTimestamp) {
+        (, int256 answer, , uint256 updatedAt, ) = oracle.latestRoundData();
+
+        return (answer.toUint256(), updatedAt);
+    }
+
+Recommended mitigation steps
+
+Update _getAssetPrice() to check against min/max answer of the chailink price feed before consuming the price (bounds set for each allowlisted asset).
+
+Links to affected code
+SwapAutomator.sol#L655-L666
+Opens in a new window
+SwapAutomator.sol#L645-L650
+Opens in a new window
+Submissions touching same files
+SwapAutomator.sol
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-390.
+Low Downgrade Rationale
+Edited: Feb 22
+0xsomeone
+
+The submission revolves around the enforcement of minimum/maximum price measurements on the Chainlink system directly, and the lack of any on-chain security guards for when an asset's price closes in towards the maximum/minimum permitted.
+
+Akin to my response regarding the 24-hour data threshold, the maximum impact of this exhibit would be that the minimum price is achieved but AMMs have reduced even further (thereby preventing swaps) or that the maximum price has been achieved and the system utilizes the higher output of the AMM swap, thereby operating properly.
+
+I do not believe that this is a valid HM concern, however, I do not agree that off-chain safeguards are the main mechanism to detect this issue as on-chain security measures such as permitted time-based price deltas coupled with the price approaching either end can adequately be built on-chain.
+
+As such, I believe a severity rating of QA (L) is appropriate.
+
+inclined to Low
+Edited: Feb 22
+KingNFT
+
+But worth to take a consideration, refer https://docs.chain.link/data-feeds#check-the-latest-answer-against-reasonable-limits
+
+cll_rayxpub
+Edited: 01/08/2025
+
+The official recommendation to guard against this is with off-chain monitoring which we will have but is out of scope here.
+
+Duplicates
+4
+S-487
+Missing Circuit Breakers for Oracle Price Bounds
+NexusAudits
+31
+S-148
+_getAssetPrice() does not check for the min/max prices returned
+air_0x
+11
+S-395
+Chainlink Feed Will Return the Wrong Price if the Aggregator Hits `minAnswer`
+SUPERMAN_I4G
+00
+S-170
+unchecked max/min Answer for some tokens will cause loss of funds/DOS in two scenarios
+IlIlHunterlIlI
+00
+Timeline
+Submitted
+Created: 508d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

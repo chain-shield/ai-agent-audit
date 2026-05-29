@@ -1,0 +1,293 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink Payment Abstraction
+/
+F-11
+Low
+Primary
+S-288
+`SwapAutomator` assumes heartbeat of 24 hours for all price feeds
+zanderbyte
+100
+Sufficient
+383d ago
+Finding description and impact
+
+The SwapAutomator contract uses a hardcoded staleness threshold of 24 hours for all price feeds:
+
+  /// @dev The threshold is set to 1 day to match the Chainlink feeds heartbeat requirement
+  uint256 private constant STALENESS_THRESHOLD = 1 days;
+
+This does not account for the fact that different price feeds have varying heartbeat intervals. For example:
+
+The ETH/USD price feed on Ethereum Mainnet has a heartbeat of 1 hour, meaning prices should not be considered valid after this interval.
+
+When a price feed becomes stale, but remains within the hardcoded STALENESS_THRESHOLD, the system incorrectly assumes the data is valid. This can lead to operations being executed based on outdated and potentially inaccurate price. This issue becomes even more problematic in scenarios involving volatile assets, where accurate pricing is critical.
+
+Proof of Concept
+  function _getValidatedAssetPrice(
+    AggregatorV3Interface oracle
+  ) private view returns (uint256 assetPrice) {
+    (uint256 answer, uint256 updatedAt) = _getAssetPrice(oracle);
+
+    if (answer == 0) revert Errors.ZeroOracleData();
+    if (updatedAt < block.timestamp - STALENESS_THRESHOLD) {
+      revert Errors.StaleOracleData();
+    }
+
+Consider the following scenario:
+
+The ETH/USD price feed has a heartbeat of 1 hour.
+The price data becomes stale after 3 hours due to an oracle issue.
+Since the STALENESS_THRESHOLD is hardcoded to 24 hours, the _getValidatedAssetPrice function will not detect the staleness and will allow the operation to proceed using outdated price data.
+Recommended mitigation steps
+
+Replace the hardcoded STALENESS_THRESHOLD with a dynamic mechanism that uses real staleness thresholds for each price feed. Introducing a mapping to store these thresholds is an appropriate and effective mitigation.
+
+Links to affected code
+SwapAutomator.sol#L147
+Opens in a new window
+SwapAutomator.sol#L467
+Opens in a new window
+SwapAutomator.sol#L661
+Opens in a new window
+Submissions touching same files
+SwapAutomator.sol
+View full submission
+Comments for the judge
+4
+You are viewing comments for the primary submission, S-288.
+Disagree with downgrade
+Edited: Feb 22
+zanderbyte
+OP
+
+The reasoning misses the risks of this issue, particularly regarding MEV exploits and price manipulation. The use of a fixed 24-hour staleness threshold allows the system to process outdated price data as valid, enabling flash loan attacks where an attacker manipulates Uniswap prices to align with stale oracle data. This issue should be considered a valid Medium.
+
+0xsomeone
+01/19/2025
+
+Hey @zanderbyte, thank you for your PJQA contribution!
+
+I have laid out some information on your peer's escalation but will rehash some items that are more applicable to your argument.
+
+The code will presently select the Uniswap pool if its price is considered higher than the Chainlink oracle's output. As such, a "natural" AMM price that is higher than the Chainlink oracle one will be chosen rendering such arbitrages impossible.
+
+Furthermore, the price oracles of Chainlink are updated either due to a heartbeat or a price deviation threshold, the latter of which is almost uniformly configured to 0.5%. This infers that the oracles will at most be outdated by 0.5% in price, a negligible price discrepancy.
+
+Appeal
+Edited: Feb 22
+serial-coder
+
+Appeal. This is a valid medium issue.
+
+Case 1 -- When price feed's heartbeat < 24 hours (e.g., 1 hour)
+
+The vulnerability allows attackers to perform MEV and pool manipulation attacks, leading to the loss of funds to the protocol.
+
+Please consider the following scenario:
+
+Assume that while invoking the checkUpkeep(), the performData is generated with a valid asset price of $10.
+The asset price moves up to $15, for instance, but Chainlink's network fails to update the asset price on-chain. Thus, the reported asset price becomes stale.
+The performUpkeep() is executed.
+
+The Chainlink feed reports a stale asset price of $10 (the actual price is $15).
+
+The swapWithPriceFeedValidation() consumes the stale price.
+
+Subsequently, the function fails to enforce the price deviation/slippage check. Instead of reverting a transaction, the function allows the swap to perform. Since the actual asset price is now $15 but the reported price is only $10, an attacker profits from the MEV attack.
+
+In other words, the vulnerability allows attackers to perform MEV and pool manipulation attacks, leading to the loss of funds to the protocol.
+
+Case 2 -- When price feed's heartbeat > 24 hours (e.g. 48 hours)
+
+Some price feed can have a heartbeat greater than 24 hours. For example, on Ethereum, the AMPL / USD feed has a configured heartbeat of 172800s (i.e., 48 hours).
+
+Consequently, the checkUpkeep() will skip processing the asset and refuse to include it in the performData payload.
+
+The following case is unlikely to happen since the checkUpkeep() will not include the asset in the performData payload. However, assume that the asset is forced to be included in the performData payload off-chain. The swapWithPriceFeedValidation() will skip the asset from swapping (due to transaction revert).
+
+For this reason, setting a proper heartbeat for each price feed is necessary. Hence, this issue is a valid medium.
+
+0xsomeone
+01/19/2025
+
+Hey @serial-coder, thank you for your PJQA contribution! Utilizing authoritative language is discouraged when attempting to debate the validity of an issue so as to avoid stating false truths.
+
+Case 1
+
+The Chainlink oracles are updated either due to a heartbeat or a price deviation. Here's an example data feed of LINK/USD. As you can observe, the deviation for this pair is 0.5% meaning that the example of a price jump from $10 to $15 is invalid. Thus, the maximum price staleness of an oracle is guarded by its slippage trigger threshold which is usually configured to 0.5% by Chainlink.
+
+Utilizing invalid cases to argue the validity of an issue is discouraged per C4's guidelines, and I implore you to study the Chainlink oracle documentation further before attempting to argue such vulnerabilities in future contests.
+
+Case 2
+
+The checkUpkeep is invoked very frequently (per block), meaning that a swap of an asset with a heartbeat greater than 24 hours will simply be performed with a delay yet an accurate price. This is not a vulnerability, nor a problem from a project's operational security standpoint.
+
+Verdict
+
+Both cases outlined are invalid and do not comprehend how the Chainlink oracle or automated trigger mechanisms work, rendering the escalation argument to medium severity to be invalid.
+
+Low Downgrade Rationale
+Edited: Feb 22
+0xsomeone
+
+The submission and its duplicates outline that fixed data staleness for oracle queries might be insecure for certain asset classes that have an update frequency that is more aggressive than 24 hours.
+
+I do not consider the severity of this item to be medium given its impact. Specifically, the price movement in the delta between the 24 hours threshold and the update frequency of the oracle would be permitted (i.e. in the most extreme cases a delta of 23 hours).
+
+A negative price movement in this time window would cause the swap to be skipped, resulting in no impact on the system's operation.
+
+A positive price movement in this time window would result in the Uniswap AMM price measurement to be higher than the oracle one thus causing it to be used as the swap output's control variable. We need to keep in mind that the checkUpkeep function is invoked externally and thus cannot be manipulated in a cost-efficient manner.
+
+I do not believe that there has been an instance of an oracle misbehaving for positive price movements and even in those cases, the impact would be negligible. A price update can presently occur between the invocation of the checkUpkeep and performUpkeep functions, and this deviation is acknowledged by the Chainlink team.
+
+Combining the above thoughts, I believe this issue is better suited as a valid albeit QA (L) recommendation that the Chainlink team should consider but may wish to acknowledge.
+
+Valid
+Edited: Feb 22
+KingNFT
+
+It's better to set STALENESS_THRESHOLD per asset
+
+Duplicates
+31
+S-101
+Different feed prices have different heartbeats
+AlexCzm
+89
+S-378
+Uniform staleness threshold exceeds price feed update frequencies
+adriro
+81
+S-494
+`SwapAutomator` contract's `checkUpkeep()`, `performUpkeep()`, and their related functions can consume stale prices
+serial-coder
+78
+S-174
+Potential stale price data in `SwapAutomator` because the same `STALENESS_THRESHOLD` is used for all price feeds
+BenRai
+74
+S-430
+Stale prices can be consumed by `SwapAutomator`
+Aamir
+72
+S-120
+Malicious MEV and pool manipulation bypasses slippage control for assets with shorter than 1-day heartbeat in case of stale price feed
+fyamf
+69
+S-9
+Hardcoded CL staleness threshold is problematic
+samuraii77
+63
+S-76
+Stalness Check is constant for all Tokens
+Al-Qa-qa
+62
+S-27
+Using the same staleness threshold for multiple price feeds leads to incorrect checks
+0xlemon
+59
+S-322
+Hardcoded 1 day staleness threshold is insufficient for some price feeds like LINK/USD and will result in increased slippage loss when swapping
+gesha17
+57
+S-455
+SwapAutomator uses the same heartbeat for all price feeds, causing a loss of funds
+trachev
+56
+S-344
+Using hardcoded staleness threshold may lead to multi problems.
+bearonbike
+54
+S-345
+Using a global `STALENESS_THRESHOLD` leads to unexpected price slippage validation
+gajiknownnothing
+52
+S-340
+Using the same heartbeat for multiple price feeds
+0xG0P1
+52
+S-326
+SwapAutomator uses the same STALENESS_THRESHOLD for all oracles
+peanuts
+50
+S-286
+Incorrect Staleness Threshold for Chainlink Price Feeds
+y0ng0p3
+41
+S-108
+SwapAutomator.sol :: Using a hardcoded heartbeat can result in stale prices, leading to incorrect price calculations.
+Fitro
+40
+S-80
+Fixed hearbeat used for price validation is too stale for some tokens
+Maroutis
+37
+S-388
+`SwapAutomator` contract uses a constant heartbeat (`STALENESS_THRESHOLD`) that doesn't guarantee the freshness of the price
+hals
+35
+S-491
+Hardcoded Staleness Threshold Undermines LINK/USD Feed Design Parameters
+NexusAudits
+31
+S-456
+1 days is hardcoded as the heartbeat for Link/Usd price feed for all network deployments.
+Kaysoft
+27
+S-358
+using same heartbeart for different assets and link token leads to potential issues
+zhuying
+25
+S-440
+Protocol is using same heart beat for all assets and wrong heartbeat for LINK/USD pair.
+OxTenma
+00
+S-410
+Hardcoded Staleness threshold breaks oracle price validation across different feeds
+XYSecurity
+00
+Timeline
+Submitted
+Created: 510d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

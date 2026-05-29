@@ -1,0 +1,147 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-377
+Low
+Primary
+S-392
+Incompatibility with Non-WETH ERC20 Tokens in LamboRebalanceOnUniwap and LamboVethRouter
+Mushow
+00
+Sufficient
+383d ago
+Overview
+
+Considering the USDC and USDT ERC20 Tokens have been added in scope. The currently provided contracts, including LamboRebalanceOnUniwap and LamboVethRouter contracts are designed with a heavy reliance on WETH (Wrapped Ether) and msg.value to handle Ether transactions. This reliance on WETH and Ether-specific mechanisms (like msg.value) creates a significant limitation when attempting to work with other ERC20 tokens such as USDC, USDT, or any other virtual token.
+
+For LamboRebalanceOnUniwap, the contract uses hardcoded WETH token addresses, and functions like _executeBuy and _executeSell depend on methods like IWETH(weth).deposit and IWETH(weth).withdraw, which are specific to WETH. Similarly, in LamboVethRouter, functions like _buyQuote rely on msg.value to perform token swaps. This limits the contract's ability to adapt to tokens other than WETH, as msg.value is only applicable for Ether transactions and not for ERC20 tokens.
+
+I didn't add all lines of code containing the variable weth but you get the gist.
+
+Root Cause
+
+The core issue arises from the hardcoded dependence on WETH in both contracts:
+
+LamboRebalanceOnUniwap: The contract uses the weth address as a constant and assumes that all token interactions, including deposits and withdrawals, will be done with WETH. This leads to a situation where any other ERC20 token cannot be used in place of WETH, as the contract lacks the logic to handle other tokens.
+LamboVethRouter: The _buyQuote function in this contract relies on msg.value to ensure that the correct amount of Ether (ETH) is provided for a transaction. However, this mechanism is not compatible with ERC20 tokens such as USDC or USDT, as these tokens do not utilize msg.value in transactions. This reliance on msg.value makes it impossible for the contract to properly handle non-Ether transactions without significant modifications.
+Impact
+
+The impact of this issue is substantial:
+
+Incompatibility with Non-WETH Tokens: Functions in both contracts are hardcoded to expect WETH, and msg.value is only suitable for Ether-based operations. Therefore, any attempt to use ERC20 tokens like USDC, USDT, or any other non-WETH tokens will result in failures.
+Reverts on Non-WETH Token Operations: When attempting to interact with non-WETH tokens, calls to functions such as IWETH(weth).deposit, IWETH(weth).withdraw, or _buyQuote will cause the contract to revert because these functions do not support other tokens and expect WETH or Ether.
+Failed Token Swaps and Deposits: The LamboRebalanceOnUniwap contract will fail to execute swaps and deposits if any token other than WETH is used. Similarly, LamboVethRouter will fail to process transactions when attempting to use ERC20 tokens due to its dependence on msg.value for ETH transactions.
+
+The reliance on WETH and Ether-specific mechanisms severely restricts the flexibility and usability of these contracts, making them unsuitable for a broader range of token interactions.
+
+Proof of Concept (PoC) – Impact of Hardcoded WETH in LamboRebalanceOnUniwap and LamboVethRouter
+1. Hardcoded WETH in LamboRebalanceOnUniwap
+
+Explanation:
+In LamboRebalanceOnUniwap, the WETH contract address is hardcoded as a constant state variable. This design limits flexibility by binding the contract to a specific WETH address. The contract assumes that WETH will be used in several critical functions, including deposit/withdraw operations, and any logic involving token transfers.
+
+Failure Case:
+When trying to interact with other ERC20 tokens (e.g., USDC or USDT), the contract will fail due to:
+
+Hardcoded WETH address: The contract always expects WETH as the input token and has logic directly tied to it, such as calling WETH::withdraw and WETH::deposit.
+Incompatibility with other tokens: ERC20 tokens like USDC/USDT cannot be used directly in place of WETH, causing functions to revert due to missing functionality (e.g., withdraw and deposit don’t exist for ERC20 tokens).
+
+Example:
+
+In the _executeBuy and _executeSell functions, the contract expects a WETH address to approve, deposit, and withdraw funds. If USDC or USDT are passed instead, the functions will fail as these tokens do not support WETH::withdraw or WETH::deposit.
+2. _buyQuote in LamboVethRouter
+
+Explanation:
+The _buyQuote function in LamboVethRouter uses msg.value to handle native ETH deposits for trades. This function is designed to accept ETH or WETH when interacting with liquidity pools. However, this approach causes issues when trying to process non-WETH ERC20 tokens like USDC or USDT.
+
+Failure Case:
+
+Issue with msg.value: The _buyQuote function assumes the input token is ETH or WETH and relies on msg.value to perform the trade. When users attempt to interact with ERC20 tokens like USDC or USDT, the contract will revert since ERC20 tokens do not use msg.value.
+Contract logic mismatch: The failure happens because msg.value can only carry native tokens like ETH, and the contract expects this for performing calculations and transfers. Non-WETH ERC20 tokens require a different method of transfer (e.g., transferFrom), but the current logic does not account for this.
+
+Example:
+
+If a user tries to perform a buy operation using USDC, the _buyQuote function will fail as it checks msg.value and expects the provided amount to match the required input amount. Since USDC is not a native token, the contract cannot process the transaction correctly.
+3. Combined Impact
+
+Incompatibility with Non-WETH ERC20 Tokens:
+
+LamboRebalanceOnUniwap: Since WETH is hardcoded, any attempt to use other ERC20 tokens will break the contract. Functions like _executeBuy, _executeSell, and others that depend on WETH-specific logic (e.g., WETH::withdraw and WETH::deposit) will fail when non-WETH tokens are used.
+LamboVethRouter: The _buyQuote function is designed to handle ETH or WETH via msg.value, meaning non-native tokens like USDC or USDT cannot be processed without significant changes to the contract logic.
+
+Required Fixes:
+
+For LamboRebalanceOnUniwap: The contract needs to be modified to dynamically accept different ERC20 tokens by removing the hardcoded WETH address and adapting the logic to use IERC20 methods for token transfers.
+For LamboVethRouter: The _buyQuote function should be refactored to handle ERC20 tokens by accepting tokens via transferFrom rather than relying on msg.value, which is only valid for native ETH or WETH.
+Remediation Recommendations
+Token Agnosticism: Modify the contract to be token-agnostic by removing the hardcoded WETH dependency. Introduce a flexible token handling system that can support multiple ERC20 tokens, like USDC or USDT.
+ERC20 Token Support: Update the functions that currently rely on WETH-specific operations (deposit, withdraw) to work with any ERC20 token by using the IERC20 interface instead.
+Testing with Multiple Tokens: After making the required changes, thoroughly test the contract with various ERC20 tokens, including USDC and USDT, to ensure full compatibility and functionality.
+
+If the following contracts have been made only for WETH. Consider creating other contracts for USDC and USDT, and any other future ERC20 Tokens. As of now, the contracts provided DO NOT support other tokens, hence is a vulnerability.
+
+Links to affected code
+LamboVEthRouter.sol#L149
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L30
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L63
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L65
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L66
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L86
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L93
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L105
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L110
+Opens in a new window
+Submissions touching same files
+LamboVEthRouter.sol
+LamboRebalanceOnUniwap.sol
+Timeline
+Submitted
+Created: 533d ago
+High
+Triage
+High
+Out of Scope
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

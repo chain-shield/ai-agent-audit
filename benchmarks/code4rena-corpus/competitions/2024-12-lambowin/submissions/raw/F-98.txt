@@ -1,0 +1,159 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-98
+Low
+Primary
+S-57
+Improper Validation in `LamboVEthRouter::updateFeeRate` Allows Fee Misconfiguration, Breaking Swap Functionality in the `LamboVEthRouter::_buyQuote` function
+deeney
+00
+Sufficient
+383d ago
+Finding description and impact
+
+Description:
+The updateFeeRate function lacks proper validation which allows setting the newFeeRate <= feeDenominator. This misconfiguration allows the fee to consume 100% of the input amount (amountXIn) during the _buyQuote function. As a result, the adjusted amountXIn becomes zero.
+Note the feeDenominator has a constant value of 10000
+
+Write a detailed description of the root cause and impact(s) of this finding.
+Impact:
+
+if the owner update the feeRate to feeDenominator (100%) using the updateFeeRate function results in 100% of amountXIn being taken as a fee, leaving amountXIn = 0 for the swap.
+This causes the _buyQuote function to revert due to insufficient output (amountYOut < minReturn), effectively breaking the swap functionality.
+Users lose their entire msg.value (ETH) as fees, which are transferred to the contract owner without receiving any tokens in return.
+Proof of Concept
+
+Here is proof of code:
+
+ function testUpdateFeeRateCausesSwapFailure() public {
+        uint256 amountIn = 2e18;
+        uint256 minReturn = 1e18;
+        vm.startPrank(user);
+        // Initial fee rate was set to 100
+        uint256 expectedFee =(amountIn * feeRate)/ feeDenominator;
+        uint256 amount = amountIn - expectedFee;
+        console.log("Amount X in minus fee: ", amount);
+        console.log("Expected Fee: ", expectedFee); 
+        vm.stopPrank();
+
+        // new feeRate is updated.
+        vm.startPrank(owner);
+        uint256 newFeeRate = 10000;
+
+        lr.updateFeeRate(newFeeRate);
+        uint256 expectedFeewithUpdatefeeRate =(amountIn * newFeeRate)/ feeDenominator;
+        console.log("Expected Fee with update feeRate: ", expectedFeewithUpdatefeeRate);
+        // 1000000000000000000 1e18
+        vm.stopPrank();
+
+        vm.startPrank(user);
+        uint256 expectedAmountMinusnewFeeRate = amountIn - expectedFeewithUpdatefeeRate;
+        console.log("Expected Amount Minus new Fee Rate: ", expectedAmountMinusnewFeeRate);
+        vm.expectRevert();
+        uint256 expectedAmountQuote = UniswapV2Library.getAmountOut(expectedAmountMinusnewFeeRate, 10 ether, 20 ether);
+        
+        // console.log("Expected Amount Quote: ", expectedAmountQuote);
+
+        vm.stopPrank();
+    }
+
+
+
+here are the logs:
+Expected amount after fee deduction: 1980000000000000000
+Expected Fee: 20000000000000000
+Expected Fee with update feeRate: 2000000000000000000
+Expected amount after update feeRate deduction: 0
+
+├─ [8483] LamboVEthRouter.0.8.20::updateFeeRate(10000 [1e4])
+│ ├─ emit UpdateFeeRate(newFeeRate: 10000 [1e4])
+│ └─ ← [Return]
+├─ [0] console::log("Expected Fee with update feeRate: ", 2000000000000000000 [2e18]) [staticcall]
+│ └─ ← [Stop]
+├─ [0] VM::stopPrank()
+│ └─ ← [Return]
+├─ [0] VM::startPrank(0x0000000000000000000000000000000000000456)
+│ └─ ← [Return]
+├─ [0] console::log("Expected Amount Minus new Fee Rate: ", 0) [staticcall]
+│ └─ ← [Stop]
+├─ [0] VM::expectRevert(custom error 0xf4844814)
+│ └─ ← [Return]
+└─ ← [Revert] revert: UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 112.25ms (14.00ms CPU time)
+after the fee was deducted from amountxIn the new amountxIn was zero.
+To now calculate the amount of quote token to be received by the user using the getAmountOut function from the uniswapV2Library, the call reverted with INSUFFICIENT_INPUT_AMOUNT
+
+Breaks Core Functionality:
+The _buyQuote function is a critical part of the contract's purpose (performing token swaps), and setting the feeRate to feeDenominator effectively renders this function inoperable by reverting every call due to insufficient output.
+This impacts all users interacting with _buyQuote.
+
+Loss of Funds:
+The user's entire amountXIn (ETH sent with msg.value) is consumed as a fee without performing any swap. This creates unintended fund mismanagement, with all ETH going to the owner and no token output for the user.
+This could lead to user trust issues and financial loss for unsuspecting users
+
+Recommended mitigation steps
+
+Update the updateFeeRate function to enforce stricter validation
+
+  function updateFeeRate(uint256 newFeeRate) external onlyOwner {
+-     require(newFeeRate <= feeDenominator, "Fee rate must be less than or equal to feeDenominator");
++     require(newFeeRate < feeDenominator, "Fee rate must be less than or equal to feeDenominator");
+        feeRate = newFeeRate;
+        emit UpdateFeeRate(newFeeRate);
+    }
+
+
+the newFeeRate should always be lesser than the feeDenominator would completely mitigate the issue, making this a clear.
+
+Links to affected code
+LamboVEthRouter.sol#L35
+Opens in a new window
+LamboVEthRouter.sol#L149
+Opens in a new window
+Submissions touching same files
+LamboVEthRouter.sol
+Timeline
+Submitted
+Created: 537d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

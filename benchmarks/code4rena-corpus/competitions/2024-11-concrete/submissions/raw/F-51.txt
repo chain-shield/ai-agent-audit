@@ -1,0 +1,151 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-51
+Low
+Primary
+S-1017
+Withdrawal queue can be spammed, forcing the admin to huge gas costs to resolve legit withdraw requests
+thekmj
+75
+Sufficient
+383d ago
+Finding description
+
+When the user wants to withdraw assets, but the vault doesn't have enough funds (for example, if the protect strategy has high utilization), the withdraw is then inserted into a queue.
+
+https://github.com/code-423n4/2024-11-concrete/blob/main/src/vault/ConcreteMultiStrategyVault.sol#L425-L433
+
+if (availableAssetsForWithdrawal >= assets_) {
+    _withdrawStrategyFunds(assets_, receiver_);
+} else {
+    if (address(withdrawalQueue) == address(0)) {
+        revert InsufficientVaultFunds(address(this), assets_, availableAssetsForWithdrawal);
+    }
+    withdrawalQueue.requestWithdrawal(receiver_, assets_); // @audit inserted into a queue
+}
+
+The admin can later claim these withdrawals for the user, using batchClaimWithdrawal
+
+https://github.com/code-423n4/2024-11-concrete/blob/main/src/vault/ConcreteMultiStrategyVault.sol#L1059
+
+/**
+* @notice Claims multiple withdrawal requests starting from the lasFinalizedRequestId.
+* @dev This function allows the contract owner to claim multiple withdrawal requests in batches.
+* @param maxRequests The maximum number of withdrawal requests to be processed in this batch.
+*/
+function batchClaimWithdrawal(uint256 maxRequests) external onlyOwner nonReentrant {
+
+However, the function batchClaimWithdrawal forces the admin to resolve all withdrawal requests in the sequential order, without skipping over any requests.
+
+uint256 max = lastCreatedId < lastFinalizedId + maxRequests ? lastCreatedId : lastFinalizedId + maxRequests;
+for (uint256 i = lastFinalizedId + 1; i <= max; ) {
+    uint256 newAvailiableAssets = claimWithdrawal(i, availableAssets);
+    // ...
+
+Combined with the fact that redeem() has no dust protection, this allows an adversary to spam 1-wei withdrawal requests to fill up the queue. This will incur the admin a huge gas cost to resolve all of the dust withdrawals, until they reach the legit withdrawal request.
+
+For specific strategy allocations, this can be turned into exploit in combination with the fact that the protect strategy's available assets is directly linked to the Borrow flow, by making a large borrow and artificially deflating the protect strategy pool's available balance.
+
+Proof of concept
+
+We show the exploit scenario.
+
+Alice deposits some amount of funds into the earn Vault.
+Alice makes a large borrow using Blueprint's earn flow.
+The borrow flow makes a claim to the protect strategy, and the protect strategy deploys most of its funds to Alice.
+
+At this point, the earn vault's available assets for withdrawal has been significantly reduced, and all new withdrawals are routed to the withdrawal queue. Alice can now spam the withdrawal queue with requests, forcing the admin to withdraw all of Alice's spam requests before reaching the legit requests.
+
+Impact
+
+Withdrawal queue can be grief-spammed, incurring the admin huge gas cost before legit withdrawals can be resolved.
+
+Recommended mitigation steps
+
+Allow the admin to settle specific withdraw requests only (or ranges of withdrawals), skipping over dust requests.
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L1069
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1017.
+Low severity argument
+Edited: Feb 22
+gesha17
+
+Hello Judge,
+
+I believe this finding can be viewed as low severity because there is no incentive to the attacker, and also the attacker will have to spend a huge amount of gas to be successful with this attack. There is no disproportionate attacker spending/damage done to justify medium severity. On the contrary, the attacker is likely to incur more gas loss than the admin since he needs to submit separate withdrawal requests while the admin can just batch resolve them.
+
+Picodes
+01/20/2025
+
+I do agree with this comment. The max impact is a "gas" war between attacker and resolver, and there is nothing to gain from this + the war is not clearly disproportionate
+
+Duplicates
+4
+S-1233
+`withdrawalQueue` can be spammed
+rscodes
+92
+S-1331
+Withdrawal queue can be filled with dust orders causing a DoS or huge costs to withdraw
+samuraii77
+63
+S-151
+WithdrawalQueue can be DoS'd with small withdrawals through the redeem function
+peanuts
+50
+S-206
+Gas Griefing Vulnerability in `WithdrawalQueue` Contract
+1ultimat3
+00
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

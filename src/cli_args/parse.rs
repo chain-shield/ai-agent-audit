@@ -343,6 +343,16 @@ pub struct Cli {
     #[serde(default)]
     pub code4rena_bounty: Option<String>,
 
+    /// Code4rena contest GitHub repo used to derive contest docs, scope, and V12 context.
+    #[arg(long)]
+    #[serde(default)]
+    pub code4rena_contest_repo: Option<String>,
+
+    /// Alias for `code4rena_contest_repo`; accepts a Code4rena contest GitHub repo URL.
+    #[arg(long)]
+    #[serde(default)]
+    pub code4rena_contest_url: Option<String>,
+
     /// Optional git branch/ref derived from external bounty metadata.
     #[arg(skip)]
     #[serde(default)]
@@ -474,6 +484,16 @@ impl Cli {
             if config_cli.code4rena_bounty.is_none() && config_values.code4rena_bounty.is_some() {
                 config_cli.code4rena_bounty = config_values.code4rena_bounty;
             }
+            if config_cli.code4rena_contest_repo.is_none()
+                && config_values.code4rena_contest_repo.is_some()
+            {
+                config_cli.code4rena_contest_repo = config_values.code4rena_contest_repo;
+            }
+            if config_cli.code4rena_contest_url.is_none()
+                && config_values.code4rena_contest_url.is_some()
+            {
+                config_cli.code4rena_contest_url = config_values.code4rena_contest_url;
+            }
             if config_values.repo_branch.is_some() {
                 config_cli.repo_branch = config_values.repo_branch;
             }
@@ -539,6 +559,24 @@ impl Cli {
             anyhow::bail!(
                 "code4rena_bounty or repo must be provided when audit_type is Code4renaBounty"
             );
+        }
+
+        if config_cli.code4rena_contest_repo.is_some() && config_cli.code4rena_contest_url.is_some()
+        {
+            anyhow::bail!(
+                "code4rena_contest_repo and code4rena_contest_url are aliases; provide only one"
+            );
+        }
+
+        if config_cli.repo.is_none()
+            && matches!(config_cli.audit_type, AuditType::Code4rena)
+            && let Some(contest_repo) = config_cli
+                .code4rena_contest_repo
+                .as_deref()
+                .or(config_cli.code4rena_contest_url.as_deref())
+                .and_then(code4rena_contest_source_repo)
+        {
+            config_cli.repo = Some(contest_repo);
         }
 
         // Validate that repo is provided either via CLI/YAML or derivable from a supported bounty.
@@ -620,6 +658,40 @@ impl Cli {
     }
 }
 
+fn code4rena_contest_source_repo(url: &str) -> Option<String> {
+    let clean = url
+        .trim()
+        .split('#')
+        .next()
+        .unwrap_or(url)
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
+    if let Some(after_host) = clean
+        .split("github.com/")
+        .nth(1)
+        .or_else(|| clean.split("www.github.com/").nth(1))
+    {
+        let parts = after_host.split('/').collect::<Vec<_>>();
+        if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            return Some(format!("https://github.com/{}/{}.git", parts[0], parts[1]));
+        }
+    }
+
+    let lower = clean.to_ascii_lowercase();
+    if !lower.contains("code4rena.com/audits/") {
+        return None;
+    }
+    let slug = clean.split("/audits/").nth(1)?.split('/').next()?;
+    if slug.is_empty() {
+        None
+    } else {
+        Some(format!("https://github.com/code-423n4/{slug}.git"))
+    }
+}
+
 impl fmt::Display for BuilderType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // keep the same kebab‑case you exposed on the CLI
@@ -661,6 +733,34 @@ mod tests {
         assert_eq!(
             serde_yaml::from_str::<V12Source>("https://v12.sh/runs/1/public").unwrap(),
             V12Source::Url("https://v12.sh/runs/1/public".to_string())
+        );
+    }
+
+    #[test]
+    fn code4rena_contest_source_repo_normalizes_supported_urls() {
+        assert_eq!(
+            code4rena_contest_source_repo("https://github.com/code-423n4/2025-11-megapot").unwrap(),
+            "https://github.com/code-423n4/2025-11-megapot.git"
+        );
+        assert_eq!(
+            code4rena_contest_source_repo("https://code4rena.com/audits/2025-11-megapot/").unwrap(),
+            "https://github.com/code-423n4/2025-11-megapot.git"
+        );
+    }
+
+    #[test]
+    fn validation_supervision_accepts_lowercase_yaml_values() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+validation_supervision: "gui"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            cli.validation_supervision,
+            Some(ValidationSupervisionMode::Gui)
         );
     }
 

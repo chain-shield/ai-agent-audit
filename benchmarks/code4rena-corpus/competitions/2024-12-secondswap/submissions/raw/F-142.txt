@@ -1,0 +1,92 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-142
+Low
+Primary
+S-608
+Giving the `manager` access to `createVesting()` and `createVestings()` can lead to unintended consequences if the `VestingManger` contract is updated
+BenRai
+74
+Sufficient
+383d ago
+Impact
+
+The vestingManager currently has access to the functions createVesting() and createVestings() even though in the current implementation the vestingManger never calls those functions. But since the vestingManager contract is upgradable, there might be an upgrade which allows normal users to make arbitrary calls from the vestingManager. If this is the case, a normal user would be able to create his own vestings since the tokens for vestings are always taken from the tokenIssuer.
+
+Proof of Concept
+
+See Impact
+
+Recommended Mitigation Steps
+
+Remove the access of the vestingManager to the functions createVesting() and createVestings().
+
+Links to affected code
+SecondSwap_StepVesting.sol#L246
+Opens in a new window
+SecondSwap_StepVesting.sol#L261
+Opens in a new window
+Submissions touching same files
+SecondSwap_StepVesting.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-608.
+Not a douplicate of S-881 and should be its own medium
+Edited: Feb 22
+BenRai
+OP
+
+Hi Koolex, thank you for juding!
+
+S-881 talks about the consequences of changing the marketplace (listings are broken), this issue is about what can happen if the vestingManager implementation is changed (users can create own vestings).
+Therefore I would say this issue is not a doublicate of S-881 and should be its own medium issue.
+
+Koolex
+01/29/2025
+
+correct, not a dup of S-881. However, I believe severity is low since we have a future speculation with the factor of centralization risk
+
+there might be an upgrade which allows normal users to make arbitrary calls from the vestingManager
+
+Timeline
+Submitted
+Created: 523d ago
+Medium
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

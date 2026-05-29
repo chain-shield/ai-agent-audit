@@ -1,0 +1,121 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-287
+Low
+Primary
+S-565
+Lack of MEV bot incentives for rebalancing creates risk of protocol instability
+bumbleb33
+00
+Sufficient
+383d ago
+
+Description:
+The protocol relies on external actors (particularly MEV bots) to call the rebalance() function to maintain price stability, but provides no direct incentives for doing so. While MEV bots are typically efficient at capturing arbitrage opportunities, the current implementation requires them to actively call rebalance() instead of performing direct swaps, which adds complexity and gas costs without additional rewards.
+
+function rebalance(uint256 directionMask, uint256 amountIn, uint256 amountOut) external nonReentrant {
+    uint256 balanceBefore = IERC20(weth).balanceOf(address(this));
+    bytes memory data = abi.encode(directionMask, amountIn, amountOut);
+    IMorpho(morphoVault).flashLoan(weth, amountIn, data);
+    uint256 balanceAfter = IERC20(weth).balanceOf(address(this));
+    uint256 profit = balanceAfter - balanceBefore;
+    require(profit > 0, "No profit made");
+    // @audit No incentive for caller, all profit goes to protocol
+}
+
+Impact:
+
+Could lead to delayed or missed rebalancing opportunities
+Protocol stability mechanism becomes less reliable
+Price divergences may persist longer than necessary
+Medium severity as it affects core functionality but doesn't directly risk funds
+
+Recommended Mitigation:
+
+Implement caller rewards in the rebalance function:
+contract LamboRebalanceOnUniwap {
+    uint256 public callerRewardBps = 500; // 5% reward
+    
+    function rebalance(uint256 directionMask, uint256 amountIn, uint256 amountOut) external nonReentrant {
+        uint256 balanceBefore = IERC20(weth).balanceOf(address(this));
+        bytes memory data = abi.encode(directionMask, amountIn, amountOut);
+        IMorpho(morphoVault).flashLoan(weth, amountIn, data);
+        uint256 balanceAfter = IERC20(weth).balanceOf(address(this));
+        uint256 profit = balanceAfter - balanceBefore;
+        require(profit > 0, "No profit made");
+        
+        // Calculate and transfer caller reward
+        uint256 callerReward = (profit * callerRewardBps) / 10000;
+        IERC20(weth).transfer(msg.sender, callerReward);
+        
+        emit RebalanceExecuted(msg.sender, profit, callerReward);
+    }
+    
+    function setCallerRewardBps(uint256 _callerRewardBps) external onlyOwner {
+        require(_callerRewardBps <= 2000, "Max 20%"); // Safety check
+        callerRewardBps = _callerRewardBps;
+        emit CallerRewardUpdated(_callerRewardBps);
+    }
+}
+Consider dynamic rewards based on:
+Time since last rebalance
+Size of price deviation
+Gas costs
+Competition among MEV bots
+
+This creates proper incentives for MEV bots to maintain protocol stability while still allowing the protocol to capture most of the arbitrage value.
+
+References:
+
+MEV-Boost Relay
+Chainlink Keepers
+Similar Implementation in Balancer
+Links to affected code
+LamboRebalanceOnUniwap.sol#L62-L69
+Opens in a new window
+Submissions touching same files
+LamboRebalanceOnUniwap.sol
+Timeline
+Submitted
+Created: 532d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

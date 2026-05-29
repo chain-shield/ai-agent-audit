@@ -1,0 +1,124 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-25
+Low
+Primary
+S-134
+Silently ignored config errors in root command initialization which could corrupt configurations
+Rhaydden
+30
+Sufficient
+383d ago
+Finding Description and Impact
+
+In the NewRootCmd function, configuration errors are silently ignored during the AutoCLI setup. The happens when calling config.ReadFromClientConfig without proper error handling:
+
+>>> initClientCtx, _ = config.ReadFromClientConfig(initClientCtx) 
+    autoCliOpts.ClientCtx = initClientCtx
+
+Now, this bug occurs in three layers:
+a) Configuration Layer: ReadFromClientConfig is responsible for loading client configuration settings from the config contract. Settings include params like chainID, node RPC endpoints, output format, keyring backend configuration, tther client-specific settings
+b) Error Handling Layer: The first usage properly handles errors by returning them to the caller(see below for code snippet). The second usage (buggy one) ignores errors with _. This means if there are any configuration file reading errors, they will be silently ignored
+c) AutoCLI Layer: The potentially errored context is immediately used to configure AutoCLI. This could lead to AutoCLI having incorrect or incomplete configuration.
+
+By ignoring the error with the blank identifier (_), any configuration issues that might occur during this second read would be silently ignored, which could lead to problems or incorrect client configuration.
+
+Impact heightens because this occurs in the root command initialization, affecting all subsequent CLI operations.
+
+Proof of Concept
+
+The issue comes to light in two contrasting implementations within the same file:
+
+Here (properly handled):
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/cmd/mantrachaind/cmd/root.go#L61
+
+initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
+if err != nil {
+    return err
+}
+
+and here(buggy):
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/cmd/mantrachaind/cmd/root.go#L102
+
+initClientCtx, _ = config.ReadFromClientConfig(initClientCtx)
+autoCliOpts.ClientCtx = initClientCtx
+
+Ignoring the errors could corrupt the entire configurarion.
+
+Fix
+
+Implement proper error handling
+
+var err error
+initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
+if err != nil {
+    panic(err)
+}
+autoCliOpts.ClientCtx = initClientCtx
+Links to affected code
+root.go#L102
+Opens in a new window
+Submissions touching same files
+root.go
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-134.
+L
+Edited: Feb 22
+mantra_lance
+
+L at most. Even if configuration is wrong, user usually specifies the config in the cli command with flags
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+CLI misconfiguration is user error, looks L at most
+
+Timeline
+Submitted
+Created: 513d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,120 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-66
+Low
+Primary
+S-303
+Missing CoinAdded event negates transparency and tracking of supported tokens
+Mushow
+00
+Sufficient
+383d ago
+Finding description and impact
+Description
+
+The addCoin function in the SS_Marketplace contract does not emit the CoinAdded event when a new token is added as a supported payment currency. While the CoinAdded event was previously included in the code as a comment, it was forgotten to be uncommented and properly implemented in the final version. As a result, there is no explicit on-chain record of newly supported tokens.
+
+Without the CoinAdded event, users and developers cannot track or verify which tokens have been added as supported currencies. This significantly reduces transparency and usability, forcing users to manually query the isTokenSupport mapping or analyze all past transactions to identify supported tokens.
+
+Impact
+Negates Transparency: Users have no clear mechanism to determine which tokens are supported without manually inspecting every transaction calling addCoin.
+Operational Challenges: Off-chain systems and dApps relying on events for tracking token additions will fail to function correctly.
+Overlooked Usability: Forgetting to uncomment the event emission adds unnecessary complexity, making the contract harder to use and less intuitive.
+Proof of Concept
+Issue
+
+The current implementation of addCoin:
+
+function addCoin(address _token) external {
+    require(msg.sender == IMarketplaceSetting(marketplaceSetting).s2Admin(), "SS_Marketplace: Unauthorized user");
+    require(!isTokenSupport[_token], "SS_Marketplace: Token is currently supported");
+
+    isTokenSupport[_token] = true;
+    // Event emission was previously included in the commented-out code
+    // emit CoinAdded(_token);
+}
+
+The commented-out portion of the code indicates that the CoinAdded event was intended and important to be included but was not uncommented during development.
+
+Example Scenario
+Admin calls addCoin to add a token:
+_token = 0x1234567890123456789012345678901234567890
+The token is successfully added to the isTokenSupport mapping, but no CoinAdded event is emitted.
+Users and developers cannot determine that the token has been added without querying the mapping or analyzing all previous transactions.
+Result
+
+The absence of the event requires users to:
+
+Manually query the isTokenSupport mapping to verify token support.
+Analyze the transaction history of the contract to identify calls to addCoin.
+This reduces usability, increases the risk of user error, and makes the system less transparent.
+Recommended mitigation steps
+
+Restore the CoinAdded Event:
+Uncomment the previously implemented CoinAdded event emission and include it in the addCoin function. For example:
+
+function addCoin(address _token) external {
+    require(msg.sender == IMarketplaceSetting(marketplaceSetting).s2Admin(), "SS_Marketplace: Unauthorized user");
+    require(!isTokenSupport[_token], "SS_Marketplace: Token is currently supported");
+
+    isTokenSupport[_token] = true;
+    emit CoinAdded(_token); // Restore the event emission here
+}
+
+Additional, but non-critical emission of events:
+
+SecondSwap_VestingManager::listVesting()
+SecondSwap_VestingManager::unlistVesting()
+SecondSwap_VestingManager::setMarketplace() - onlyOwner
+SecondSwap_VestingManager::setAdmin() - onlyOwner
+
+The use of onlyOwner functions such as addCoin, setMarketplace and setAdmin, should always emit an event for traceability and clarity for users usage.
+
+Links to affected code
+SecondSwap_Marketplace.sol#L205-L218
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+Timeline
+Submitted
+Created: 526d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete
