@@ -1,3 +1,4 @@
+use crate::benchmark::telemetry;
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
 use crate::llm_review::agent::codex_app_server::CodexToolProfile;
 use crate::llm_review::pattern_phases::generate_patterns::generate_content_plus_context_block;
@@ -32,6 +33,7 @@ use log::info;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -103,7 +105,9 @@ pub async fn execute_rounds(
 ) -> Result<Findings> {
     info!("🔍 Phase 4: Deduplicating and verifying findings...");
 
-    let deduped_findings = findings.dedup().await?;
+    let deduped_findings = findings
+        .dedup_with_telemetry(repo, "per_contract_pre_verify")
+        .await?;
     let code_and_context = if let Some(context) = get_metadata_context(repo).await {
         generate_content_plus_context_block(code, &context)
     } else {
@@ -127,6 +131,7 @@ pub async fn execute_rounds(
 
     let all_round_findings =
         run_all_round(deduped_findings, &code_and_context, &audit_scope, agent).await?;
+    record_verification_stage(repo, "universal_verification", &all_round_findings);
     info!(
         "{} finding tagged as low or invalid",
         tagged_findings(&all_round_findings)
@@ -154,6 +159,35 @@ pub async fn execute_rounds(
 
     let verified_findings =
         run_round_validation(labeled_findings, &code_and_context, &audit_scope, repo).await?;
+    record_verification_stage(repo, "downgrade_validation", &verified_findings);
+
+    let retention_decisions = verified_findings
+        .findings
+        .iter()
+        .map(|finding| {
+            json!({
+                "id": finding.id.clone(),
+                "title": finding.title.clone(),
+                "severity": finding.severity.to_string(),
+                "contract": finding.contract.clone(),
+                "function": finding.function.clone(),
+                "status": finding.status.clone(),
+                "status_justification": finding.status_justification.clone(),
+                "retained": should_retain_verified_finding(finding, &repo.audit_type)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    telemetry::append_jsonl(
+        repo,
+        "verification_decisions.jsonl",
+        "retention_decisions",
+        &json!({
+            "stage": "retention_decisions",
+            "finding_count": verified_findings.findings.len(),
+            "decisions": retention_decisions
+        }),
+    );
 
     let verify_findings_vec: Vec<Finding> = verified_findings
         .findings
@@ -175,6 +209,31 @@ pub async fn execute_rounds(
     Ok(Findings {
         findings: verify_findings_vec,
     })
+}
+
+fn record_verification_stage(repo: &RepoPaths, stage: &str, findings: &Findings) {
+    telemetry::append_jsonl(
+        repo,
+        "verification_decisions.jsonl",
+        stage,
+        &json!({
+            "stage": stage,
+            "finding_count": findings.findings.len(),
+            "findings": findings.findings.iter().map(|finding| {
+                json!({
+                    "id": finding.id.clone(),
+                    "title": finding.title.clone(),
+                    "severity": finding.severity.to_string(),
+                    "contract": finding.contract.clone(),
+                    "function": finding.function.clone(),
+                    "exploit_type": finding.exploit_type.to_string(),
+                    "derived_from": finding.derived_from.clone(),
+                    "status": finding.status.clone(),
+                    "status_justification": finding.status_justification.clone()
+                })
+            }).collect::<Vec<_>>()
+        }),
+    );
 }
 
 pub fn tagged_findings(findings: &Findings) -> usize {

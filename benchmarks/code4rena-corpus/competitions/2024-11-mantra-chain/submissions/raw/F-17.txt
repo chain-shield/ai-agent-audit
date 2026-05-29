@@ -1,0 +1,159 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-17
+Low
+Primary
+S-129
+Genesis could be initialized with invalid values because `InitGenesis` sets params without checking if they're valid
+Rhaydden
+30
+Sufficient
+383d ago
+Proof of concept
+
+The tax module's InitGenesis function doesnt validate genesis parameters before setting them in state. This allows initialization of the chain with invalid parameters that could break core tax functionality.
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/tax/module/genesis.go#L10-L12
+
+func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) error {
+    return k.Params.Set(ctx, genState.Params)
+}
+
+As noticed, the genesis initialization doesn't validate the parameters before setting them. While there is parameter validation in the Params.Validate() method, it's not being called during genesis initialization. This allows invalid parameters to be set during chain initialization.
+
+This is a problem because the tax module has strict validation requirements:
+
+MCA tax cannot be negative
+MCA tax cannot exceed 100%
+MCA tax cannot exceed MaxMcaTax (40%)
+MCA address must be a valid Mantra address
+MCA address cannot be empty
+Impact
+
+Without validation at genesis, it would be possible to initialize the chain with invalid parameters that could break the tax collection logic or set unauthorized addresses as the MCA address. Chain could also be initialized with invalid tax rates (negative or >40%).
+
+Add this test to x/tax/module/genesis_test.go:
+
+func TestInitGenesisValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		genState  types.GenesisState
+		shouldErr bool
+	}{
+		{
+			name: "should fail: invalid tax rate",
+			genState: types.GenesisState{
+				Params: types.NewParams("0.5", types.DefaultMcaAddress), // Tax > MaxMcaTax (0.4)
+			},
+			shouldErr: true,
+		},
+		{
+			name: "should fail: invalid address",
+			genState: types.GenesisState{
+				Params: types.NewParams(types.DefaultMcaTax, "cosmos1invalid"),
+			},
+			shouldErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ctx, _ := keepertest.TaxKeeper(t)
+			err := tax.InitGenesis(ctx, k, tc.genState)
+
+			if tc.shouldErr {
+				require.Error(t, err, "InitGenesis should fail with invalid parameters")
+			} else {
+				require.NoError(t, err)
+			}
+
+			// Verify the params were not set if validation failed
+			if tc.shouldErr {
+				params, err := k.Params.Get(ctx)
+				require.NoError(t, err)
+				require.NotEqual(t, tc.genState.Params, params,
+					"Invalid params should not be set in state")
+			}
+		})
+	}
+}
+
+Test fails but after applying the fix below and running the test again, it passes.
+
+Fix
+
+Consider validating the genesis state before setting the parameters
+
+ 
+ // InitGenesis initializes the module's state from a provided genesis state.
+ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) error {
++    if err := genState.Validate(); err != nil {
++        return err
++    }
+     return k.Params.Set(ctx, genState.Params)
+ }
+Links to affected code
+genesis.go#L10-L12
+Opens in a new window
+Submissions touching same files
+genesis.go
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-129.
+L
+Edited: Feb 22
+mantra_lance
+
+agree with 3docSec
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+L at best, genesis is set by admins
+
+Timeline
+Submitted
+Created: 515d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

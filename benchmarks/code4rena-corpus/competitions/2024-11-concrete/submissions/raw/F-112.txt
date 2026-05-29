@@ -1,0 +1,203 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-112
+Low
+Primary
+S-115
+Multiple Rounding Operations in Price Calculations Cause Growing Token Value Loss
+victortheoracle
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The OraclePlug contract performs token price conversions using multiple sequential Floor rounding operations, leading to cumulative precision loss. This affects both token-to-stable and stable-to-token conversions, potentially causing value loss for users and the protocol.
+
+Root cause: The conversion functions perform multiple independent rounding operations:
+
+https://github.com/code-423n4/2024-11-concrete/blob/d512e0128de4ce9ab8fd9db01afb77a578111911/src/swapper/OraclePlug.sol#L48-L53
+
+return price.mulDiv(tokenAmount_, 10 ** quoteDecimals, Math.Rounding.Floor)
+    .mulDiv(10 ** CONCRETE_USD_DECIMALS, 10 ** tokenDecimals, Math.Rounding.Floor);
+
+https://github.com/code-423n4/2024-11-concrete/blob/d512e0128de4ce9ab8fd9db01afb77a578111911/src/swapper/OraclePlug.sol#L78-L83
+
+return stableAmount_.mulDiv(10 ** tokenDecimals, 10 ** CONCRETE_USD_DECIMALS, Math.Rounding.Floor)
+    .mulDiv(10 ** quoteDecimals, price, Math.Rounding.Floor);
+
+Impact:
+
+Each conversion loses small amounts of precision due to Floor rounding
+Loss compounds with multiple conversions
+Impact increases with larger transaction amounts
+Systematic value loss affects protocol fees and user amounts
+Could lead to accounting discrepancies in the protocol
+Proof of Concept
+Scenario Setup:
+
+Let's consider a real-world example with ETH/USD conversion:
+
+Initial values:
+
+ETH price: $4,000
+ETH decimals: 18
+Oracle decimals: 8
+CONCRETE_USD_DECIMALS: 6
+Step-by-step Calculation:
+
+User deposits 1 ETH (1e18 wei)
+
+First conversion (ETH → USD):
+
+price = 4000 * 10^8 (oracle price)
+tokenAmount = 1 * 10^18 (1 ETH)
+
+First mulDiv:
+4000 * 10^8 * 1 * 10^18 / 10^8 = 4000 * 10^18
+Floor rounding occurs here ➡️ Loss #1
+
+Second mulDiv:
+4000 * 10^18 * 10^6 / 10^18 = 4000 * 10^6
+Floor rounding occurs here ➡️ Loss #2
+
+Convert back (USD → ETH):
+Same process in reverse with two more Floor operations
+➡️ Loss #3 and Loss #4
+
+Manual Testing:
+
+Using a calculator or spreadsheet:
+
+Start with 1.000000000000000000 ETH
+After ETH → USD → ETH conversion:
+End with 0.999999999999999999 ETH
+Loss: 0.000000000000000001 ETH
+
+This can be verified in Remix:
+
+Deploy MockERC20 for ETH (18 decimals)
+Deploy MockOracle with $4000 price
+Deploy OraclePlug
+Perform round-trip conversion
+Compare input and output values
+
+The loss compounds with each conversion:
+
+First round: 0.000000000000000001 ETH lost
+Second round: Additional 0.000000000000000001 ETH lost
+After 5 rounds: ~0.000000000000000005 ETH lost
+Real-world Impact Example:
+
+For a large transaction of 1000 ETH:
+
+Initial value: 1000.000000000000000000 ETH
+After one round-trip: 999.999999999999999000 ETH
+Loss: 0.000000000000001000 ETH
+At 
+4000
+/
+𝐸
+𝑇
+𝐻
+≈
+4000/ETH≈0.000004 lost per round-trip
+For high-frequency trading or multiple conversions, these losses accumulate
+
+The POC shows that the precision loss compounds with each conversion, leading to a significant loss after multiple conversions.
+
+Recommended mitigation steps
+Minimize rounding operations by combining calculations:
+function _convertFromTokenToStable(address token_, uint256 tokenAmount_) internal view returns (uint256) {
+    OracleInformation memory oracle = _tokenRegistry.getOracle(token_);
+    (uint256 price, uint8 quoteDecimals) = _getPriceFromOracle(oracle);
+    uint8 tokenDecimals = IERC20Metadata(token_).decimals();
+    
+    // Perform multiplication before division to maintain precision
+    uint256 intermediate = price * tokenAmount_;
+    
+    // Single rounding operation at the end
+    return intermediate.mulDiv(
+        10 ** CONCRETE_USD_DECIMALS,
+        10 ** (quoteDecimals + tokenDecimals),
+        Math.Rounding.Floor
+    );
+}
+Add precision loss tracking:
+// Track cumulative precision loss
+mapping(address => uint256) public cumulativePrecisionLoss;
+
+function _trackPrecisionLoss(address token, uint256 originalAmount, uint256 finalAmount) internal {
+    if (originalAmount > finalAmount) {
+        cumulativePrecisionLoss[token] += (originalAmount - finalAmount);
+    }
+}
+Links to affected code
+OraclePlug.sol#L48-L53
+Opens in a new window
+OraclePlug.sol#L78-L83
+Opens in a new window
+Submissions touching same files
+OraclePlug.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-115.
+0xnev-validator-comment-S-115
+Edited: Feb 22
+0xnev
+
+Since wei amounts are involved, QA would be more appropriate
+
+Duplicates
+2
+S-471
+Compounding Precision Loss in Token-Stable Conversions Due to Multiple Floor Rounding
+Agontuk
+41
+S-1198
+The Rounding Direction Should Always Be In Favor Of The Protocol
+0x2517
+00
+Timeline
+Submitted
+Created: 550d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

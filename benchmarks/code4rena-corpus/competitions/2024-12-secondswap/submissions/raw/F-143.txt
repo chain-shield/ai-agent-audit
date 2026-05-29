@@ -1,0 +1,171 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-143
+Low
+Primary
+S-1002
+Token issuer referral reward manipulation through combined direct and market Transfers
+Sabit
+20
+Sufficient
+383d ago
+Finding description and impact
+
+The tokenIssuer can be used as a referrer in marketplace purchases, even after directly transferring tokens to the same buyer. This creates an unintended profit opportunity through referral rewards that undermines the marketplace's referral incentive system.
+
+The vulnerability stems from insufficient referral validation in the spotPurchase function:
+
+function spotPurchase(address _vestingPlan, uint256 _listingId, uint256 _amount, address _referral) external isFreeze {
+    // Current validation only checks if buyer is not referrer
+    _validatePurchase(listing, _amount, _referral);
+}
+
+function _validatePurchase(Listing storage listing, uint256 _amount, address _referral) private view {
+    require(msg.sender != _referral, "SS_Marketplace: Invalid referral");
+}
+
+
+https://github.com/code-423n4/2024-12-secondswap/blob/214849c3517eb26b31fe194bceae65cb0f52d2c0/contracts/SecondSwap_Marketplace.sol#L513C6-L513C56
+
+https://github.com/code-423n4/2024-12-secondswap/blob/214849c3517eb26b31fe194bceae65cb0f52d2c0/contracts/SecondSwap_Marketplace.sol#L389
+
+This bug can occur where the tokenIssuer calls the transferVesting function to directly transfer some tokens to a beneficiary, and the beneficiary in turn buys some tokens through the spotPurchase and then include the tokenIssuer as the referral. It like a situation of "I scratch your back, you scratch my back".
+
+https://github.com/code-423n4/2024-12-secondswap/blob/214849c3517eb26b31fe194bceae65cb0f52d2c0/contracts/SecondSwap_StepVesting.sol#L218
+
+Proof of Concept
+
+Here's a practical scenario:
+
+TokenIssuer transfers 1000 tokens to Alice through direct vesting:
+tokenIssuer.transferVesting(alice, 1000 tokens)
+
+Alice spots a marketplace listing for 500 tokens
+
+Alice purchases using tokenIssuer as referrer:
+spotPurchase(vestingPlan, listingId, 500, tokenIssuer)
+
+Result:
+
+Alice receives 500 tokens
+TokenIssuer receives referral reward
+System allows this despite tokenIssuer's privileged role
+
+The vulnerability creates a circular benefit where the tokenIssuer can:
+
+Transfer tokens directly to users
+Receive referral rewards when these users make marketplace purchases
+Effectively double-dip on token distribution benefits
+Recommended mitigation steps
+function _validatePurchase(Listing storage listing, uint256 _amount, address _referral) private view {
+    require(msg.sender != _referral, "SS_Marketplace: Invalid referral");
+    require(_referral != tokenIssuer, "SS_Marketplace: TokenIssuer cannot be referrer");
+}
+
+
+This enhancement maintains clear separation between protocol administration and marketplace participation while preserving the intended purpose of the referral system.
+
+Links to affected code
+SecondSwap_Marketplace.sol#L505-L551
+Opens in a new window
+SecondSwap_StepVesting.sol#L218
+Opens in a new window
+SecondSwap_Marketplace.sol#L389
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+SecondSwap_StepVesting.sol
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-1002.
+Low level
+Edited: Feb 22
+calvinx
+
+Thanks this is a low level issue, not in token issuer economic interest to do so
+
+Sabit
+OP
+Edited: 01/30/2025
+
+Thanks for the reply. However, the reason given doesn't address the issue identified in the code.
+
+The protocol is designed to have token issuers earn fees for every successful transactions. However, there's a another backdoor token issuers can also earn rewards - by referrer. This is not envisaged by the protocol.
+
+Please also note that referral fee is a portion of the buyer's fees, based on the contract.
+
+What this means is that a token issuer can earn fees for every successful transactions and and at the same time earn rewards as a referrer.
+
+I believe this is a high because token issuers can exploit this.
+
+Koolex
+01/30/2025
+
+since there is no economic incentive and token issuer is a trusted role. will set it as low valid.
+
+Sabit
+OP
+Edited: 01/31/2025
+
+But Judge, there is a break in code functionality here. A token Issuer may be a trusted role but it isn't meant to gain rewards as a referrer - whether the token issuer transfers a token to a spot buyer or not.
+
+The sponsor would have stated this clearly that a token issuer can also be a referrer - then this report is no issue. But this isn't the case
+
+With respect, this shouldn't be a low.
+
+Koolex
+02/01/2025
+
+I understand your point, but not everything must be stated explicitly. According to C4 rules, this is low.
+
+This issue is wrongly marked as duplicate and therefore invalidated
+Edited: Feb 22
+Sabit
+OP
+
+The issue identified here is not a duplicate of this finding - https://code4rena.com/evaluate/2024-12-secondswap/submissions/S-504
+
+The main vulnerability pointed out here is that tokenIssuer can also be the "referrer" and therefore claim referrer rewards. This is different from issue S-504.
+
+Timeline
+Submitted
+Created: 522d ago
+High
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

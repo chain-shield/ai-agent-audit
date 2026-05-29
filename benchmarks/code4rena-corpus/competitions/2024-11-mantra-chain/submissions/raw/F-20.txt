@@ -1,0 +1,121 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-20
+Low
+Primary
+S-185
+BankSendGasConsumption is incorrectly calculated for the case when the denom is the default fee denom
+ABAIKUNANBAEV
+26
+Sufficient
+383d ago
+Finding description and impact
+
+In the current implementation of the fee.go, the BankSendGasConsumption value is the gas consumption of the bank sends that occur during feemarket handler execution. It has the value of 12490 plus additional 37325 in the case when fees are burnt and not transferred. The problem is that it's not always the case and the fees are burnt only when it's the default fee denom. As the fee market supports different denoms, some of the fees will be just locked.
+
+Proof of Concept
+
+Per README:
+
+https://github.com/code-423n4/2024-11-mantra/blob/main/x/xfeemarket/README.md
+
+The custom PostHandler refunds tips to fee payer and burns/locks the required minimum fees. The minimum fees is burned if it is the default fee denom and locked otherwise.
+
+
+As you can see here, some of the fees will be locked and not burnt. But the BankSendGasConsumption only accounts for the case when the tokens are burnt. When there is no burn, the standard 12490 has to be used (or the other value if there is some additional transfer from the feeCollector):
+
+https://github.com/code-423n4/2024-11-mantra/blob/main/x/xfeemarket/post/fee.go#L13-15
+
+// BankSendGasConsumption is the gas consumption of the bank sends that occur during feemarket handler execution.
+// 37325 is the additional gas consumed for burning the fees instead of just transferring them.
+const BankSendGasConsumption = 12490 + 37325
+
+
+
+https://github.com/code-423n4/2024-11-mantra/blob/main/x/xfeemarket/post/fee.go#L139-142
+
+if simulate {
+		// consume the gas that would be consumed during normal execution
+		ctx.GasMeter().ConsumeGas(BankSendGasConsumption, "simulation send gas consumption")
+	}
+
+
+
+This will lead to incorrect future gas consumption.
+
+Recommended mitigation steps
+
+Change the value of gas consumed in accordance with the intended operation that will be performed (lock/burn).
+
+Links to affected code
+fee.go#L15
+Opens in a new window
+Submissions touching same files
+fee.go
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-185.
+Judging
+Edited: Feb 22
+3docSec
+
+Marking as L as it affects simulation only; it's common practice to fund transactions with margin over gas output from simulation
+
+L
+Edited: Feb 22
+mantra_lance
+
+Seems valid. However we only support the base fee for now and code will be adjusted when we support multi fee denoms.
+Also these numbers are just for simulation to help users gauge how much fees to pay when they simulate transactions. For actual transaction they are not used and actual gas consumed is used instead.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Could be intended behavior; impact elaboration is too vague to support a M
+
+Timeline
+Submitted
+Created: 504d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

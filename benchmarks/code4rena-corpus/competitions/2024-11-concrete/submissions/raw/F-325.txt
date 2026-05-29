@@ -1,0 +1,106 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-325
+Low
+Primary
+S-1327
+Users can be forced into going into the withdrawal queue
+samuraii77
+63
+Sufficient
+383d ago
+Finding description and impact
+
+Users can be forced into going into the withdrawal queue
+
+Proof of Concept
+
+Upon a user withdrawing, we have the following code:
+
+uint256 availableAssetsForWithdrawal = getAvailableAssetsForWithdrawal();
+        if (availableAssetsForWithdrawal >= assets_) {
+            _withdrawStrategyFunds(assets_, receiver_);
+        } else {
+            if (address(withdrawalQueue) == address(0)) {
+                revert InsufficientVaultFunds(address(this), assets_, availableAssetsForWithdrawal);
+            }
+            withdrawalQueue.requestWithdrawal(receiver_, assets_);
+        }
+
+If there are not enough assets to withdraw, the user's withdrawal goes into a queue. Imagine the following scenario:
+
+There are 100 tokens available to withdraw
+Bob withdraws 50 tokens
+Alice frontruns, borrows the asset from one of the pools used in a strategy leaving 49 tokens available to withdraw
+Bob's withdrawal goes into the withdrawal queue
+Bob can no longer withdraw his tokens, he has to wait for the queue to clear up and reach his withdrawal, he is temporarily DoSed
+Alice repays her tokens
+
+Bob should not be forced to go in the withdrawal queue if there are not enough assets as such a scenario might occur. If the transaction just failed, he could have withdrew 49 tokens instead which would have been more than enough for him. The function should have a slippage type check whether the user is fine with going into the withdrawal queue.
+
+Recommended mitigation steps
+
+Implement a slippage type check for users to decide whether they are fine with going into the withdrawal queue. If not, revert.
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L419
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1327.
+Wrong duplication
+Edited: Feb 22
+samuraii77
+OP
+
+The issue has nothing to do with some of the other issues here such as another one of mine, S-1336
+
+Picodes
+01/24/2025
+
+@samuraii77 thanks for flagging. The same issue happens for the underlying protocols and is of low severity to me as the DoS isn't free (you have to pay the interests) and isn't interesting gas wise
+
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

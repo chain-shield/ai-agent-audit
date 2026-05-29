@@ -1,0 +1,189 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-5
+High
+Primary
+S-109
+LamboFactory can be permanently DoS-ed due to createPair call reversal
+zxriptor
+81
+Sufficient
+383d ago
+Finding description and impact
+
+LamboFactory.createLaunchPad deploys new token contract and immediately sets up a new Uniswap V2 pool by calling createPair. This can be frontrun by the attacker by setting up a pool for the next token to be deployed.
+
+Contracts addresses are deterministic and can be calculated in advance. That opens a possibility for the attacker to pre-calculate address of the next LamboToken to be deployed. As can be seen below, LamboFactory uses clone() method from OpenZeppelin Clones library, which uses CREATE EMV opCode under the hood.
+
+    function _deployLamboToken(string memory name, string memory tickname) internal returns (address quoteToken) {
+        // Create a deterministic clone of the LamboToken implementation
+>>>     quoteToken = Clones.clone(lamboTokenImplementation);
+
+        // Initialize the cloned LamboToken
+        LamboToken(quoteToken).initialize(name, tickname);
+
+        emit TokenDeployed(quoteToken);
+    }
+
+CREATE opcode calculates new contract address based on factory contract address and nonce (number of deployed contracts the factory has previously deployed):
+
+The destination address is calculated as the rightmost 20 bytes (160 bits) of the Keccak-256 hash of the rlp encoding of the sender address followed by its nonce. That is:
+address = keccak256(rlp([sender_address,sender_nonce]))[12:]
+
+https://www.evm.codes/#f0
+
+Hence an attacker can calculate the address of the next token to be deployed and directly call UniswapV2Factory.createPair which will result in a new liquidity pool being created BEFORE the token has been deployed.
+
+Such state will lead all subsequent calls to LamboFactory.createLaunchPad to revert, because of the pair existance check in Uniswap code, without the possibility to fix that:
+
+https://github.com/Uniswap/v2-core/blob/master/contracts/UniswapV2Factory.sol#L27
+
+    function createPair(address tokenA, address tokenB) external returns (address pair) {
+        require(tokenA != tokenB, 'UniswapV2: IDENTICAL_ADDRESSES');
+        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        require(token0 != address(0), 'UniswapV2: ZERO_ADDRESS');
+>>>     require(getPair[token0][token1] == address(0), 'UniswapV2: PAIR_EXISTS'); // single check is sufficient
+        // ... the rest of the code is ommitted ...
+    }
+Recommended mitigation steps
+
+Check pool existance using IUniswapV2Factory.getPair().
+
+Links to affected code
+LamboFactory.sol#L72
+Opens in a new window
+Submissions touching same files
+LamboFactory.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-109.
+Comfirm. (C4-fixed-C002)
+Edited: Feb 22
+Shaneson
+
+we would use cloneDeterministic instead of clone, and the backend will pass the random salt from off-chain.
+
+And
+
+This is the fixed PR. (https://github.com/Lambo-Win/Lambo-Virtual-Liquidity-Code4rena/pull/2).
+
+Koolex
+12/16/2024
+
+I believe with this fix, front-run can still be done. It is better to check if the pair exists, then simply don't create it. This way, there is zero DoS
+
+Duplicates
+17
+S-322
+DoSe vulnerability in Lambo pair creation via factory
+SpicyMeatball
+73
+S-676
+`createLaunchPad` can be DoS'd by front-running the UniswapV2 pair deployment
+Infect3d
+72
+S-27
+An attacker can perform a front-run to DOS the `createLaunchPad` function.
+shaflow2
+71
+S-696
+Anyone can create a user's own launch pad with different from intended parameters
+inh3l
+66
+S-678
+Attacker can DOS launch by directly creating pair on uniswap
+inh3l
+66
+S-259
+Attacker can prevent creation of new launchpads by creating the pool on UniswapV2 Factory
+rouhsamad
+64
+S-53
+User can DoS creation of new Lambo tokens, forcing the team to deploy either a new factory or a new Virtual Token
+web3km
+56
+S-46
+createLaunchPad() function can be DoSsed by frontrunning createPair()
+Giorgio
+54
+S-540
+Factory's createLaunchPad function vulnerable to denial-of-service front-running attack
+ast3ros
+52
+S-690
+LamboFactory Vulnerable to Pair Creation DoS
+Evo
+52
+S-401
+Front-Running Vulnerability Leading to Denial-of-Service (DoS) Attack in createLaunchPad Function
+TheFabled
+44
+S-481
+Launchpad creation can be DOS by front-running with creation of Uniswap V2 pool
+m4k2
+33
+S-51
+Front-Running Vulnerability in `_deployLamboToken` Function can DOS `createLaunchPad`
+mrudenko
+14
+S-575
+Front-running attack the creation of a token and create a pool lead to a DoS
+Le_Rems
+00
+S-220
+Predictable Clone addresses makes `LamboFactory::createLaunchPad` susceptible to DOS.
+FalseGenius
+00
+S-213
+`LamboFactory.createLaunchPad` can be DOS-d by frontrunning `createPair`
+threadmodeling
+00
+S-145
+LamboFactory Contract DOS attack on new token creation
+paco
+00
+Timeline
+Submitted
+Created: 537d ago
+High
+Triage
+High
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

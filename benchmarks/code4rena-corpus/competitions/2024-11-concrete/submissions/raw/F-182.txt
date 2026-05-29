@@ -1,0 +1,202 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-182
+High
+Primary
+S-690
+Reward token swapping economics are flawed, enabling attacks or causing losses to LPs depending on market conditions
+muellerberndt
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The Swapper smart contract allows users to swap ctAssets (i.e. vault tokens) for reward tokens. The total amount of reward tokens being returned for a given ctAssetAmount is calculated as:
+
+ctAssetAmountInStables(ctAssetAmount) + ctAssetAmountInStables(ctAssetAmount) * (rewardRate / BASISPOINTS)
+
+
+The reward rate is calculated as:
+
+baseRewardrate + bonusRewardrateUser + bonusRewardrateCtToken + bonusRewardrateSwapToken + progressionFactor
+
+
+Where progressionFactor is calculated based on the value of the input ctAssets (larger amounts receive a higher reward rate). The calculated stablecoin amount is then converted into reward tokens and sent to the user.
+
+Overall, the reward system disinsentivizes larger/longer deposits because:
+
+Only small amounts of ctAssets can be swapped profitably at a time
+Vault deposit fees must be kept high to prevent rewards from being drained instantly
+
+Analysis:
+
+Normally, the reward token will be much less liquid than a stablecoin such as USDC. Therefore, paying the entire amount in reward tokens will cause real losses to large LPs who claim rewards due to slippage when trading the reward tokens back for the underlying asset. Concrete can try to counteract this by reducing vault deposit fees, increasing reward rates, and providing liquidity for the reward token on the market.
+
+However, if vault deposit fees are too low and liquidity of the reward token is high, anyone can instantly drain all reward tokens from the treasury (see proof-of-concept). This will be profitable if there is a vault with a deposit fee rate lower than the percentage gain from baseRewardrate + bonusRewardrateCtToken + bonusRewardrateSwapToken + progressionFactor.
+
+Perhaps the most undesirable property of this system is that it enforces high vault deposit fees, which will disincentivize LPs from depositing in the first place.
+
+Proof of Concept
+
+Let's look at the attack described in point 2 step-by-step with simplified assumptions:
+
+Vault ctAsset deposit fee: 0%
+Flash loan fee: 0%
+Treasury: 1,000,000 REWARD
+REWARD/USDC: 1:1
+Total reward rate: 2%
+
+Attack flow:
+
+Take a 980,392 USDC (1,000,000 / 1.02) flash loan from anywhere (e.g. Aave)
+Deploy 980,392 USDC into any vault to receive ctAssets
+Use the Swapper to trade the ctAssets for 999,999 USDC in REWARD
+Swap the REWARD for 999,999 USDC on the open market
+Pay back the 980,392 USDC flash loan
+
+After this transaction, we get the following state:
+
+The attacker has gained 19,707 USDC
+The treasury holds ctAssets backed by 980,392 USDC in the vault
+All REWARD have been sold to buyers on the open market
+Recommended mitigation steps
+
+Design a new reward system that fulfills the following requirements:
+
+Allow LPs to claim rewards in reward tokens but get their assets returned as-is
+Ideally, calculate rewards based on the time the assets were deployed into the vault (incentivizing LPs to lock their assets for longer).
+Links to affected code
+Swapper.sol#L71-L98
+Opens in a new window
+Submissions touching same files
+Swapper.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-690.
+F-40 and all its submissions should be a duplicate of F-182
+Edited: Feb 22
+0xStalin
+
+Hello Judge. This may have been overlooked during the judging phase, but, it seems that F-40 and all of its submissions are duplicates of F-182.
+
+F-40 is about draining the treasury because of the rate arbitrage, whether using a flashloan or executing multiple swaps, which is the same attack vector as F-182.
+a_kalout
+Edited: 01/08/2025
+
+To support Stalin's comment, you can see that S-858's PoC (which is a duplicate of this) is exactly the same as F-182, it's just a coded version of it, i.e. resulting in the same impact, draining the rewards token, through 2 different scenarios.
+
+0xrex
+01/08/2025
+
+hi judge, my mind tends the same as Stalin and Kalout, please see my comment in https://code4rena.com/evaluate/2024-11-concrete/submissions/S-1092
+
+Picodes
+01/26/2025
+
+Indeed, thanks for bringing this to my attention
+
+Duplicates
+14
+S-1212
+`swapTokensForReward` in `swapper.sol` could end up quoting the wrong rate
+rscodes
+92
+S-813
+Reward Rate Can Go Over 100%
+EPSec
+88
+S-858
+Lack of Time-Based Lockup in `swapTokensForReward` Allows Arbitrage Between Vault Shares and Reward Tokens
+waydou
+75
+S-1092
+rewardRate logic in the Swapper contract is flawed and will lead to asset draining during swaps
+0xrex
+69
+S-585
+Uncapped Reward Rate Allows Draining of Protocol Treasury
+Agontuk
+41
+S-28
+Swapper.sol :: _quoteSwapFromCtAssetToReward() rewardRate is not calculated correctly, leading to users potentially claiming more rewards than intended.
+Fitro
+40
+S-1094
+Arbitrage opportunity in swapper contract allows attacker to drain treasury
+Maroutis
+37
+S-1107
+Uncapped Reward Rate Calculation Allows Total Rate to Exceed 100% Maximum
+NexusAudits
+31
+S-578
+`RewardManager` allows total reward rate to exceed 100% and an uncapped reward rate > 100%
+Rhaydden
+30
+S-440
+Reward Rate Manipulation Through Bonus Stacking and Progression Factor
+emerald7017
+01
+S-75
+Unbounded Reward Rate Calculation Leads to Economic Exploitation
+0xbrett8571
+00
+S-403
+Treasury Drain Through Multiple Swaps in Swapper Contract
+a2security
+00
+S-271
+Unbounded Reward Rate Leading to Excessive Payouts
+Ishenxx
+00
+S-260
+Treasury Reward Tokens Drain via Reward Rate Arbitrage
+Prosperity
+00
+Timeline
+Submitted
+Created: 543d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+High
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

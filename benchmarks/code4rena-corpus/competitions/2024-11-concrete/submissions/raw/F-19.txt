@@ -1,0 +1,297 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-19
+Medium
+Primary
+S-797
+Locked user funds due to invalid logic in _withdrawStrategyFunds functions
+zzebra83
+54
+Sufficient
+383d ago
+Finding description and impact
+
+When a user deposits into the vault , their funds are left within the vault when idle, or transferred to the strategies.
+
+And when a user attempts to withdraw funds from a vault, the vault does some processing inside the _withdrawStrategyFunds internal function.
+
+_withdrawStrategyFunds checks if the amount can be withdrawn directly from the vault, if so it is transferred appropriately with no issues, if not it attempts to withdraw the amount from the strategies as seen below:
+
+                uint256 withdrawable = strategy.strategy.previewRedeem(strategy.strategy.balanceOf(address(this)));
+                if (diff.mulDiv(strategy.allocation.amount, MAX_BASIS_POINTS, Math.Rounding.Ceil) > withdrawable) {
+                    revert InsufficientFunds(strategy.strategy, diff * strategy.allocation.amount, withdrawable);
+                }
+                // @aaudit uses the entire amount instead of the diff
+                uint256 amountToWithdraw = amount_.mulDiv(
+                    strategy.allocation.amount,
+                    MAX_BASIS_POINTS,
+                    Math.Rounding.Ceil
+                );
+                //We control both the length of the array and the external call
+                //slither-disable-next-line unused-return,calls-loop
+                // attempts to pull the entire amount allocation from the strategy, not the diff. 
+                strategy.strategy.withdraw(amountToWithdraw, receiver_, address(this));
+
+
+Notice how the diff variable is calculated, its basically the difference between the amount requested and the vault's balance ie the shortfall that needs to be covered. there is then validation to ensure this diff as an allocation percentage is available with a strategy before withdrawing it. However the actual amount calculated via amountToWithdraw the uses the whole amount via amount_ variable to calculate the percentage allocation, so its totally feasible that amount to withdraw will be larger than what the strategy has in its balance, causing the transfer to fail, and making the whole diff check useless.
+
+Ideally, only the diff allocation should be pulled away from the strategies, with the remainder being funded by the vault. But this is not the case atm. instead the entire amount is attempted to be pulled out from the strategies, disregarding funds left idle in the vault.
+
+This can lead to a number of problems:
+
+Strategies will get underfunded unnecessarily by pulling more funds from them than should be, causing loss in yield since the whole point of adding funds to them is to generate yield.
+Withdrawals can fail even though available assets across vault and strategies are sufficient, causing user funds to get locked. this is due to attempting to pull the entire deposit amount from strategies instead of ensuring only the shortfall is pulled and remainder funded by funds deposited directly to vault.
+Proof of Concept
+function test_withdrawal_wrong_amount_from_strategies() public {
+   // 1. Setup vault and withdrawal queue
+   (ConcreteMultiStrategyVault newVault, Strategy[] memory strats) = _createNewVault(false, false, true);
+   WithdrawalQueue queue = new WithdrawalQueue(address(newVault));
+   vm.prank(admin);
+   newVault.setWithdrawalQueue(address(queue));
+
+        for (uint256 i = 0; i < strats.length; ) {
+            IMockStrategy(address(strats[i].strategy)).setAvailableAssetsZero(true);
+            unchecked {
+                i++;
+            }
+        }
+
+   
+    // 2. Set vault to idle mode so initial deposits remain in the vault
+    vm.prank(admin);
+    newVault.toggleVaultIdle();
+
+   // 2. Hazel deposits 10 ETH to idle vault
+   uint256 depositAmount = 10 ether;
+   asset.mint(hazel, depositAmount);
+   vm.startPrank(hazel);
+   asset.approve(address(newVault), depositAmount);
+   newVault.deposit(depositAmount, hazel);
+   vm.stopPrank();
+
+
+   assertEq(asset.balanceOf(address(newVault)), 10 ether);
+   
+    // 2. Set vault to not idle mode so rest of deposits go to strategies
+    vm.prank(admin);
+    newVault.toggleVaultIdle();
+
+   // 2. Hazel deposits another 10 ETH to vault, that goes to strategies
+   depositAmount = 10 ether;
+   asset.mint(hazel, depositAmount);
+   vm.startPrank(hazel);
+   asset.approve(address(newVault), depositAmount);
+   newVault.deposit(depositAmount, hazel);
+   vm.stopPrank();
+
+
+     
+   // vault balance is now original 10 eth plus some dust, with remainder in strategies 
+   assertEq(asset.balanceOf(address(newVault)), 10 ether + 1000000000000000 wei);
+
+
+
+   // 3. Request withdrawal of funds amount above idle funds in vault
+   vm.prank(hazel);
+   newVault.withdraw(11 ether, hazel, hazel);
+   
+   // Check initial state
+   
+    for (uint256 i = 0; i < strats.length; ) {
+            IMockStrategy(address(strats[i].strategy)).setAvailableAssetsZero(false);
+            unchecked {
+                i++;
+            }
+        }
+
+   // 4. Try to process via batchClaimWithdrawal
+   vm.prank(admin);
+   newVault.batchClaimWithdrawal(99); // Process all requests
+
+   
+   // 5. Check that hazel gets her funds, but this never happens, because code attempts
+   // to pull more amount than is available in strategies
+   assertEq(asset.balanceOf(hazel), 11 ether, "Hazel should have received her funds back");
+   // vault balance should be 0  with remainder payed by strategies, but this never happens
+   assertEq(asset.balanceOf(address(newVault)), 10 ether + 1000000000000000 wei);
+  
+}
+
+
+POC above demonstrates the problem:
+
+hazel deposits 10 ETH when vault is idle, leaving funds in vault.
+hazel deposits 10 ETH when vault is not idle moving funds to strategies.
+hazel wants to withdraw 11 ETH, this is is feasible since total available assets is 20 ETH. Ccode should withdraw 10 ETH idle from vault and remaining 1 ETH diff from strategies as 33.33 percent each(totaling 1 ETH).
+Instead poc fails with "ERC4626ExceededMaxWithdraw" due to attempting to pull 3.6663(33.33% of entire amount) ETH instead of diff of 0.33 ETH, while balance of strategy is actually 3.333(33.333%) via 10 ETH deposit when non idle.
+
+Mitigation
+
+The mitigation will involve ensuring the amount to withdraw uses the diff amount instead of full amount, plus it will need to consider other factors as well to ensure logic is robust, including how the remainder is funded by the vault itself.
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L460-L471
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-797.
+Severity Adjustment
+Edited: Feb 22
+Picodes
+
+Downgrading to Medium as the impact is a DoS as admin can solve the issue.
+
+Related to https://code4rena.com/evaluate/2024-11-concrete/findings/F-59
+
+Dispute Logic
+Edited: Feb 22
+rdturner
+
+The presence of manual rebalancing functions means that even if there were temporary imbalances, the vault owner could adjust strategy allocations to ensure withdrawals can be processed efficiently. This provides an additional safety mechanism beyond the already correct withdrawal logic.
+
+Duplicates
+42
+S-1375
+Wrong Calculation in `_withdrawStrategyFunds`
+rscodes
+92
+S-876
+Wrong Logic In `_withdrawStrategyFunds`
+EPSec
+88
+S-702
+Wrong calculation of withdrawal amount from strategies in `_withdrawStrategyFunds()`
+stuart_the_minion
+83
+S-894
+Mismatch Between withdrawable Comparison and Actual `amountToWithdraw` Risks Withdraw Reverts
+waydou
+75
+S-1213
+`ConcreteMultiStrategyVault._withdrawStrategyFunds` function incorrectly calculates vault's needed asset token amount to be withdrawn from a strategy, which can cause vault's asset token amount held by such strategy to be locked
+rbserver
+71
+S-733
+amountToWithdraw formula uses amount_ instead of diff
+0x007
+70
+S-199
+ConcreteMultiStrategyVault - `_withdrawStrategyFunds` may wrongly revert if strategy allocations has been changed
+Egis_Security
+67
+S-781
+During withdraw(), the majority amount taken from the strategies rather than the vault first, causing potential reward loss
+blutorque
+65
+S-981
+Computing amountToWithdraw based on the full amount to withdraw instead of the withdrawable assets from the vault's strategies (diff) causes withdraws to revert
+0xStalin
+64
+S-1329
+Users can be DoSed from going into the withdrawal queue due to not getting floating funds from a strategy
+samuraii77
+63
+S-758
+User withdraw attempts will often unnecessarily revert due to faulty logic
+deadrxsezzz
+61
+S-1045
+Incorrect if statement in _withdrawStrategyFunds and potential loss of fees
+gesha17
+57
+S-96
+Withdraw Function Validation Mismatch Leading to Transaction Reverts
+13u9
+57
+S-400
+Withdrawing assets from the ConcreteMultiStrategyVault will revert in most cases
+trachev
+56
+S-1002
+`_withdrawStrategyFunds` may revert even though there are enough assets to cover the withdraw
+Giorgio
+54
+S-799
+_withdrawStrategyFunds uses wrong amounts to check for available liquidity versus calculating the amountToWithdraw
+iamandreiski
+51
+S-193
+`withdraw()` reverts while attempting to pull funds from strategies due to use of `amount_` instead of `diff` inside `_withdrawStrategyFunds()`
+t0x1c
+46
+S-66
+ConcreteMultiStrategyVault.sol :: _withdrawStrategyFunds() might revert due to insufficient funds because it uses the full amount_ instead of diff.
+Fitro
+40
+S-1153
+Incorrect withdrawal amount calculation will cause excessive withdrawals and reverts
+Maroutis
+37
+S-1144
+DOS of withdrawal even when there's enough funds to be withdrawn
+lanrebayode77
+30
+S-1018
+Wrong calculation in amount to be withdrawn from the strategies will DOS Users when strategy's liquidity is low but we have funds in the concretevault to cover for this shortage
+Bigsam
+29
+S-1206
+Valid withdrawals would revert even if the strategies have enough funds to cover the shortfall
+Bauchibred
+27
+S-1427
+Possible edge case in the [`ConcreteMultiStrategyVault::withdrawStrategyFunds`] which can pose risk of unintended revert
+willycode20
+23
+S-58
+_withdrawStrategyFunds(uint256 amount_, address receiver_) may revert even if there are enough assets in strategies
+zhanmingjing
+21
+Timeline
+Submitted
+Created: 543d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

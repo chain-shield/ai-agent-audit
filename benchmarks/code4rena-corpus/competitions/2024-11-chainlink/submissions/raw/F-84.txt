@@ -1,0 +1,320 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-84
+Low
+Primary
+S-514
+Double Message Execution via Sequence Number Race Condition During Chain Reorgs
+NexusAudits
+31
+Sufficient
+383d ago
+Summary
+
+The CCIP cross-chain messaging system is vulnerable to blockchain reorganizations in its message sequencing and execution logic. The core issue exists in the OnRamp's message sequencing and OffRamp's execution where blockchain reorgs could cause message duplications and inconsistent states across chains.
+
+When the OnRamp processes a message, it increments a sequence number and emits a CCIPMessageSent event:
+
+function forwardFromRouter(...) external returns (bytes32) {
+    // Sequence number is incremented without reorg protection
+    newMessage.header.sequenceNumber = ++destChainConfig.sequenceNumber;
+    
+    // This locks tokens and emits an event with the sequence
+    emit CCIPMessageSent(destChainSelector, newMessage.header.sequenceNumber, newMessage);
+}
+
+If a reorg occurs after this transaction but before finality, the transaction could be re-included in a new block. This would result in:
+
+The sequence number being incremented again for the same logical message
+Another CCIPMessageSent event being emitted with a duplicate sequence number
+Token locks potentially being duplicated
+
+This becomes particularly dangerous in the OffRamp where message execution depends on sequence ordering:
+
+function _executeSingleReport(...) internal {
+    Internal.MessageExecutionState originalState = getExecutionState(
+        sourceChainSelector, 
+        message.header.sequenceNumber
+    );
+    
+    if (originalState == Internal.MessageExecutionState.UNTOUCHED) {
+        // Message could execute twice if reorg occurs
+        _setExecutionState(sourceChainSelector, sequenceNumber, Internal.MessageExecutionState.IN_PROGRESS);
+        // Token transfers and message execution happen here
+    }
+}
+
+A chain reorg could cause the same sequence number to refer to different messages, breaking the fundamental assumption of unique message sequencing that the protocol relies on for ordered execution.
+
+Proof of Concept
+
+Consider this attack sequence:
+
+Initial chain state:
+Block N: 
+- sequenceNumber = 5
+- Message M gets sent
+- CCIPMessageSent emitted with seq=6
+- sequenceNumber = 6
+Chain reorganizes:
+Block N': 
+- sequenceNumber = 5 (reverted state)
+- Message M gets re-included
+- CCIPMessageSent emitted again with seq=6
+- Different Message M' also gets sent with seq=7
+- sequenceNumber = 7
+OffRamp impact:
+// First execution of Message M succeeded
+executionStates[sourceChainSelector][6] = MessageExecutionState.SUCCESS;
+
+// After reorg, same sequence number could point to different message
+// or same message could execute twice
+Recommended mitigation steps
+
+Implement block finality tracking in both ramps to prevent reorg-based message duplication:
+
+contract ReorgProtectedRamp {
+    uint256 private immutable FINALITY_BLOCKS;
+    
+    struct BlockFinality {
+        // Last block considered final
+        uint256 finalizedBlock;
+        // Hash of finalized block for reorg detection
+        bytes32 finalizedBlockHash;
+        // Track processed messages by their hash
+        mapping(bytes32 => bool) processedMessages;
+    }
+    
+    mapping(uint64 => BlockFinality) private s_chainFinality;
+    
+    event FinalityViolation(
+        uint64 indexed chainSelector,
+        uint256 finalizedBlock,
+        bytes32 expectedHash,
+        bytes32 actualHash
+    );
+
+    constructor(uint256 finalityBlocks) {
+        FINALITY_BLOCKS = finalityBlocks;
+    }
+
+    function _requireFinality(uint64 chainSelector) internal {
+        BlockFinality storage finality = s_chainFinality[chainSelector];
+        
+        // Verify we haven't reorged past our last finality point
+        if (finality.finalizedBlock > 0) {
+            bytes32 actualHash = blockhash(finality.finalizedBlock);
+            if (actualHash != finality.finalizedBlockHash) {
+                emit FinalityViolation(
+                    chainSelector,
+                    finality.finalizedBlock,
+                    finality.finalizedBlockHash,
+                    actualHash
+                );
+                revert("Chain reorganization detected");
+            }
+        }
+
+        // Update finality if enough blocks have passed
+        if (block.number >= finality.finalizedBlock + FINALITY_BLOCKS) {
+            uint256 newFinalBlock = block.number - FINALITY_BLOCKS;
+            finality.finalizedBlock = newFinalBlock;
+            finality.finalizedBlockHash = blockhash(newFinalBlock);
+        }
+    }
+
+    function _markMessageProcessed(
+        uint64 chainSelector,
+        bytes32 messageHash
+    ) internal {
+        s_chainFinality[chainSelector].processedMessages[messageHash] = true;
+    }
+
+    function _isMessageProcessed(
+        uint64 chainSelector,
+        bytes32 messageHash
+    ) internal view returns (bool) {
+        return s_chainFinality[chainSelector].processedMessages[messageHash];
+    }
+}
+
+Update OnRamp to use finality protection:
+
+contract OnRamp is ReorgProtectedRamp {
+    function forwardFromRouter(...) external returns (bytes32) {
+        _requireFinality(destChainSelector);
+        
+        bytes32 messageHash = keccak256(abi.encode(
+            msg.sender,
+            destChainSelector,
+            message,
+            feeTokenAmount,
+            originalSender,
+            block.number
+        ));
+        
+        require(
+            !_isMessageProcessed(destChainSelector, messageHash),
+            "Message already processed"
+        );
+        
+        // Increment sequence and process message
+        newMessage.header.sequenceNumber = ++destChainConfig.sequenceNumber;
+        
+        _markMessageProcessed(destChainSelector, messageHash);
+        
+        emit CCIPMessageSent(destChainSelector, newMessage.header.sequenceNumber, newMessage);
+        return messageHash;
+    }
+}
+
+This solution provides:
+
+Detection of chain reorganizations
+Prevention of message duplication
+Protection of sequence number integrity
+Clear tracking of processed messages
+Configurable finality periods per chain
+
+The contract owner should configure FINALITY_BLOCKS based on the security requirements of each blockchain network (e.g., 1 block for optimistic rollups, 64 blocks for Ethereum mainnet, etc.).
+
+Links to affected code
+OnRamp.sol#L158
+Opens in a new window
+OffRamp.sol#L359
+Opens in a new window
+Submissions touching same files
+OnRamp.sol
+OffRamp.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-514.
+Valid low duplicate..but should be medium..here's why
+Edited: Feb 22
+cheatc0d3
+OP
+
+See following reports:
+https://code4rena.com/evaluate/2024-11-chainlink/findings/F-49
+https://code4rena.com/evaluate/2024-11-chainlink/findings/F-13
+
+While chain reorgs are indeed rare, especially on major networks like Ethereum mainnet, their impact when they do occur can be severe enough to warrant protection. Let me explain why:
+
+Impact Severity
+Double token transfers could drain pools
+Duplicate messages could execute critical cross-chain operations twice
+Sequence number mismatches could cause message ordering issues
+Financial losses could be catastrophic for users and the protocol
+Historical Examples
+In 2020, Ethereum Classic experienced a 3,693-block reorg
+Polygon/Matic has had reorgs of >100 blocks
+BSC has experienced reorgs of significant depth
+Even Ethereum had a minor reorg during the merge
+Risk vs Cost Analysis
+Looking at the implementation costs:
+Gas overhead: Minimal (just blockhash checks and a mapping)
+Development complexity: Moderate
+Maintenance burden: Low
+Security benefit: High protection against severe risks
+Consider Different Chain Properties
+While reorgs are rare on Ethereum mainnet:
+Layer 2s can have more frequent reorgs
+Newer chains may have less stable consensus
+Some chains have faster block times but weaker finality
+
+The key principle here is that the cost of implementing protection is relatively low compared to the potential damage of even a single successful exploit. It's similar to how we still wear seatbelts even though car crashes are rare.
+
+That said, if the concern is about overengineering, you could:
+
+Make the finality checks configurable per chain
+Start with minimal block confirmation requirements
+Focus protection on high-value transactions only
+Implement monitoring first, protection later
+
+Furthermore this issue if applicable in a protocal audit has usually been treatad as a medium severity because of the very reasons stated above.
+
+see:
+https://github.com/code-423n4/2024-08-axelar-network-validation/issues/232
+https://github.com/code-423n4/2024-08-wildcat-validation/issues/254
+
+0xA5DF
+12/15/2024
+
+Your submission is a bit unclear.
+
+Block N': 
+- sequenceNumber = 5 (reverted state)
+- Message M gets re-included
+- CCIPMessageSent emitted again with seq=6
+- Different Message M' also gets sent with seq=7
+- sequenceNumber = 7
+
+
+What did change here? Message M still has sequence number 6, I don't see any issue here.
+
+0xA5DF
+12/15/2024
+
+Ok, this might be a dupe of F-49 (marked as low), would notify the judge about this
+
+LSDan
+12/16/2024
+
+I'll reinstate this as a valid low, although there is no practical effect to doing so.
+
+cheatc0d3
+OP
+12/17/2024
+
+Thank you for reconsidering. Though I still believe this is medium. See my explanation and my fellow wardens as well that found the same issue. It's pretty serious if it happens and falls under medium severity not mere qa... actually not if but when it happens.
+
+cheatc0d3
+OP
+12/17/2024
+
+I'll reinstate this as a valid low, although there is no practical effect to doing so.
+
+Helps with accuracy signal. Thanks again.
+
+Timeline
+Submitted
+Created: 546d ago
+Medium
+Triage
+Insufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

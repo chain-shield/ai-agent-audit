@@ -1,0 +1,264 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-15
+Low
+Primary
+S-123
+Invariant of not allowing transfers from modules is broken for the tax module
+Bauchibred
+27
+Sufficient
+383d ago
+Proof of Concept
+
+The Mantra protocol implements a core security feature that prevents direct transfers to and from module accounts just as with the forked cosomos-sdk, this is implemented in the down level when querying the sendCoinsFromAccountToModule & sendCoinsFromModuleToAccount, for e.g:
+
+// SendCoinsFromModuleToAccount transfers coins from a ModuleAccount to an AccAddress.
+// It will panic if the module account does not exist. An error is returned if
+// the recipient address is black-listed or if sending the tokens fails.
+func (k BaseKeeper) SendCoinsFromModuleToAccount(
+	ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins,
+) error {
+	senderAddr := k.ak.GetModuleAddress(senderModule)
+	if senderAddr == nil {
+		panic(errorsmod.Wrapf(sdkerrors.ErrUnknownAddress, "module account %s does not exist", senderModule))
+	}
+
+	if k.BlockedAddr(recipientAddr) {
+|>		return errorsmod.Wrapf(sdkerrors.ErrUnauthorized, "%s is not allowed to receive funds", recipientAddr)
+	}
+
+	return k.SendCoins(ctx, senderAddr, recipientAddr, amt)
+}
+
+Now the implementation of the blockedAddr is meant to protect this logic from being assesed for module accounts, the documentation around this can be seem down in the cosmos-sdk:
+
+The withdraw address cannot be any of the module accounts. These accounts are blocked from being withdraw addresses by being added to the distribution keeper's blockedAddrs array at initialization.
+
+This is enforced also in the app.go via:
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/app/app.go#L1233-L1257
+
+// GetMaccPerms returns a copy of the module account permissions
+func GetMaccPerms() map[string][]string {
+	dupMaccPerms := make(map[string][]string)
+	for k, v := range maccPerms {
+		dupMaccPerms[k] = v
+	}
+
+	return dupMaccPerms
+}
+
+// BlockedAddresses returns all the app's blocked account addresses.
+func BlockedAddresses() map[string]bool {
+	modAccAddrs := make(map[string]bool)
+	for acc := range GetMaccPerms() {
+		modAccAddrs[authtypes.NewModuleAddress(acc).String()] = true
+	}
+
+	// allow the following addresses to receive funds
+	delete(modAccAddrs, authtypes.NewModuleAddress(govtypes.ModuleName).String())
+
+	return modAccAddrs
+}
+
+
+Issue however is that this logic is broken for MAntra, cause with Mantra asides the already forked modules from the base cosmos-sdk, there are new modules introduced by Mantra, to mention one is the tax module, which is where the problem is, cosindering it is not registered in the maccPerms map defined in app.go:
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/app/app.go#L174-L194
+
+var maccPerms = map[string][]string{
+    authtypes.FeeCollectorName:     nil,
+    distrtypes.ModuleName:          nil,
+    minttypes.ModuleName:           {authtypes.Minter},
+    stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staking},
+    stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staking},
+    govtypes.ModuleName:            {authtypes.Burner},
+    nft.ModuleName:                 nil,
+    // non sdk modules
+    ibctransfertypes.ModuleName:  {authtypes.Minter, authtypes.Burner},
+    ibcfeetypes.ModuleName:       nil,
+    ratelimittypes.ModuleName:    nil,
+    wasmtypes.ModuleName:         {authtypes.Burner},
+    tokenfactorytypes.ModuleName: {authtypes.Minter, authtypes.Burner},
+    // @audit missing: tax module accounts
+}
+
+This omission means that the bank keeper's security checks to prevent transfers to/from module accounts are bypassed for these modules. The check that verifies whether an address belongs to a module account relies on the maccPerms map, and since these modules are not registered, their accounts are not recognized as module accounts,
+
+Impact
+
+High. This vulnerability allows for the breakage of a fundamental security invariant of chains/apps utilizing cosmos-sdk, note that in the documentation that's inherited we have a logic and multiple invariants that need to be strictly hekd for modules otherwise chains could be halted if any of the invariant is broken, one of which includes the funds tracking of modules:
+
+The x/bank module accepts a map of addresses that are considered blocklisted from directly and explicitly receiving funds.
+Typically, these addresses are module accounts. If these addresses receive funds outside the expected rules of the state machine, invariants are likely to be broken and could result in a halted network.
+
+To go into more native details as to Mantra
+
+Direct transfers to/from module accounts that should be blocked are now possible for the tax module
+The protocol's fee collection and burning mechanisms is broken, considering for the former we easily have an issue with the accounting of tokens, and for the latter burning of tokens whereas should nto be possible for a module would actually succeed.
+
+TLDR: The invariant of not transferring tokens from/to module accounts is broken for these two modules since Mantra forgot to register them under the maccPerms map.
+
+To hint another issue would be the fact that the tax module is now erroneously allowed the logic to sign txs, cause during the tip refund when we send coins it wouldn't revert if the module is the recipient, which should not be a state that's allowed on the chain at all:
+
+Excess fees are refunded as tips back to the fee payer:
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/xfeemarket/post/fee.go#L38-L146
+
+func (dfd FeeMarketDeductDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, success bool, next sdk.PostHandler) (sdk.Context, error) {
+    // ...
+    if !simulate {
+        payCoin, tip, err = ante.CheckTxFee(ctx, minGasPrice, payCoin, feeGas, false)
+        if err != nil {
+            return ctx, err
+        }
+    }
+
+    feePayer := feeTx.FeePayer()
+    if err := dfd.BurnFeeAndRefund(ctx, payCoin, tip, feePayer, params.FeeDenom); err != nil {
+        return ctx, err
+    }
+    // ...
+}
+
+The BurnFeeAndRefund function attempts to refund any excess fees (tips) back to the fee payer:
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/xfeemarket/post/fee.go#L147-L181
+
+func (dfd FeeMarketDeductDecorator) BurnFeeAndRefund(ctx sdk.Context, fee, tip sdk.Coin, feePayer sdk.AccAddress, defaultFeeDenom string) error {
+    // ...
+    if !tip.IsNil() && !tip.IsZero() {
+        err := RefundTip(dfd.bankKeeper, ctx, feePayer, sdk.NewCoins(tip))
+        if err != nil {
+            return err
+        }
+    }
+    // ...
+}
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/xfeemarket/post/fee.go#L191-L199
+
+func RefundTip(bankKeeper BankKeeper, ctx sdk.Context, feePayer sdk.AccAddress, coins sdk.Coins) error {
+    err := bankKeeper.SendCoinsFromModuleToAccount(ctx, feemarkettypes.FeeCollectorName, feePayer, coins)//@audit should revert for the tax module, but that's not the case
+    if err != nil {
+        return err
+    }
+    return nil
+}
+Recommended Mitigation Steps
+
+Add the tax module account to the maccPerms map with appropriate permissions:
+
+var maccPerms = map[string][]string{
+    // ... existing permissions ...
++   taxtypes.ModuleName:           nil,  // or appropriate permissions based on module needs
+    tokenfactorytypes.ModuleName: {authtypes.Minter, authtypes.Burner},
+}
+Links to affected code
+app.go#L1233-L1257
+Opens in a new window
+fee.go#L147-L181
+Opens in a new window
+Submissions touching same files
+app.go
+fee.go
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-123.
+Reconsider severity
+Edited: Feb 22
+Bauchibred
+OP
+
+Hi 3doc, escalating here to argue on the severity of the report being higher as H/M rather than low, since the invariant of not accepting transfers to modules is quite crucial to cosmos projects in general and is used as a line of defense against any black swan event, whether knowingly or unknowingly. This is even why this submission was disputed by the sponsors too since the modules should not allow for transfers between them (comment ref: Submission S-149), quoting the sponsor:
+
+To halt the chain, user need to first get the tokens to the feecollector module account. However, the chain blocks users from minting or sending tokens to the module accounts.
+
+Which is also supported/expected, per the Cosmos SDK documentation, which hints the x/bank module accepting a map of addresses that are considered blocklisted from directly and explicitly receiving funds through means such as MsgSend and MsgMultiSend and direct API calls like SendCoinsFromModuleToAccount where we can have these addresses as module accounts, this is done, cause if these addresses receive funds outside the expected rules of the state machine, invariants are likely to be broken and could result in a halted network.
+
+To finalize, I'd like to hint that we shouldn't only considered the window for the tax module, cause this issue is rampant across the newly implemented modules in Mantra as hinted in my report.
+
+3docSec
+Edited: 02/15/2025
+
+Hi Bauchibred, you demonstrated that the code doesn't do what it should, and this is how we agree the issue is valid.
+
+You however did not provide any proof or even elaboration of impact. You just quoted docs saying it should be otherwise.
+
+For example, you had knowledge of this:
+
+If these addresses receive funds outside the expected rules of the state machine, invariants are likely to be broken and could result in a halted network.
+
+so you knew this finding could have a network halt impact. If you proved it, this could've been a valid H.
+
+mantra_lance
+Edited: 02/16/2025
+
+I think there can be more of a issue if these module accounts are used (receive or send tokens) for the chain accounting. The maccPerms list is for all generated accounts that receive and send tokens, that is why you see accounts like stakingtypes.NotBondedPoolName and stakingtypes.BondedPoolName as both are used by the chain. It is also why the list of maccPerms is much shorter than the number of cosmos-sdk base modules wired into app.go. Only module accounts that send receive tokens are added to this list.
+
+It is not strictly for all modules that are part of the chain if their generated account will not be used.
+
+The generated tax module account is not used so I see little to no impact for this, granted it is clearer to explicitly add all modules into the module account list.
+
+Not Valid
+Edited: Feb 22
+mantra_lance
+
+The tax account is almost impossible to sign transaction as that would mean you need to find a private key that has the same address.
+
+Adding the tax module to the list of module acc is still something that we omitted but it should have 0 impact. This is because the tax module acc is not used. Even in the beginblocker of the tax module, it transfers token from the feecollector module account to the tax receiver specified in the params. Thus the module address is just like any other EOA address, letting it receive tokens would not affect anything just that the tokens will be effectively locked.
+
+However, it is still good practice to add all the modules to that list which we will do so in the future.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Unlikely, but looks valid
+
+Timeline
+Submitted
+Created: 522d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

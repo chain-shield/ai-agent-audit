@@ -1,0 +1,196 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-6
+Medium
+Primary
+S-315
+Penalty fees can be shared among future farms or expired farms, risks of exploits
+oakcobalt
+68
+Sufficient
+383d ago
+Finding description and impact
+
+The penalty fee is a percentage of the value of existing positions that are emergency withdrawn(withdraw_position). It is shared equally among farm owners whose farms have the same lp_denom as the position.
+
+The vulnerability is that the penalty fee is divided amongst all farms regardless of whether the farms are current, in the future, or already expired, which allows malicious farm owners to exploit.
+
+Proof of Concept
+
+We see in withdraw_position, all farms with the same lp_denom are fetched to get farm owners to share penalty fees. And get_farms_by_lp_denom fetches all farms indexed by lp_denom regardless whether the farm is current, in the future or already expired.
+
+//contracts/farm-manager/src/farm/commands.rs
+
+pub(crate) fn withdraw_position(
+...
+) -> Result<Response, ContractError> {
+...
+        //@audit This gets all farms including future farms or expired farms
+|>      let farms = get_farms_by_lp_denom(
+            deps.storage,
+            &position.lp_asset.denom,
+            None,
+            Some(MAX_ITEMS_LIMIT),
+        )?;
+            // get unique farm owners for this lp denom    
+                let unique_farm_owners: Vec<Addr> = farms
+            .iter()
+            .map(|farm| farm.owner.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        ...
+                //@audit penatly fees can be divided among future farms or expired farms.
+                    let penalty_fee_share_per_farm_owner = Decimal::from_ratio(
+                owner_penalty_fee_comission,
+|>              unique_farm_owners.len() as u128,
+            )
+            .to_uint_floor();
+
+(https://github.com/code-423n4/2024-11-mantra-dex/blob/26714ea59dab7ecfafca9db1138d60adcf513588/contracts/farm-manager/src/position/commands.rs#L366-L368)
+
+//contracts/farm-manager/src/state.rs
+ pub fn get_farms_by_lp_denom(
+    storage: &dyn Storage,
+    lp_denom: &str,
+    start_after: Option<String>,
+    limit: Option<u32>,
+) -> StdResult<Vec<Farm>> {
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_ITEMS_LIMIT) as usize;
+    let start = cw_utils::calc_range_start_string(start_after).map(Bound::ExclusiveRaw);
+    FARMS
+        .idx
+        .lp_denom
+        .prefix(lp_denom.to_owned())
+        .range(storage, start, None, Order::Ascending)
+        .take(limit)
+        .map(|item| {
+            let (_, farm) = item?;
+
+            Ok(farm)
+        })
+        .collect()
+}
+
+(https://github.com/code-423n4/2024-11-mantra-dex/blob/26714ea59dab7ecfafca9db1138d60adcf513588/contracts/farm-manager/src/state.rs#L124)
+
+Suppose: A malicious farm creator creates a future farm with valid assets and a popular lp_denom with one existing farm active. The new farm is valid in the eyes of admin due to the farm has sufficient assets and correct epoch settings.
+
+Any penalty fees shares incurred from withdraw_position's emergency feature before the farm start time will be sent to the malicious farm creator.
+In addition, the malicious farm creator can also target existing farms with more frequent emergency withdraws either due to bugs or market conditions.
+Before the new farm epoch starts, the malicious farm creator made a profit (1/2 * total owner penalty fees - a flat pool creation fee >0). The malicious farm creator close_farm. All deposited farm assets are transferred back to the malicious creator.
+
+Impacts: Active farm owners get less penalty fee shares due to fee shared among expired farms and future farms. A malicious farm creator could also take penatly fee shares without having to contribute to rewarding.
+
+Recommended mitigation steps
+
+In withdraw_position, before dividing the owner_penalty_fee_comission, filter out farms that starts in a future epoch or have expired.
+
+Links to affected code
+commands.rs#L366-L368
+Opens in a new window
+Submissions touching same files
+commands.rs
+View full submission
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-315.
+Judging
+Edited: Feb 22
+3docSec
+
+Shares in penalty fees can in my understanding still compensate for farm creation fees, even though with low likelihood; so M seems appropriate
+
+Unlikely
+Edited: Feb 22
+jvr0x
+
+The farm creation fee is going to be set high enough to prevent unserious players to create farms. Additionally, the contract owner can at any point close farms deemed as spam, malicious or dishonest.
+
+However, the recommendation is valid, will likely adopt it.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid
+
+Duplicates
+8
+S-80
+Expired farm owners can still receive an emergency fee penalty
+0xAlix2
+82
+S-305
+Users can front-run another user who exit with penalty and create a new farm to gain part of the penalty
+Egis_Security
+67
+S-348
+malicious user can create dummy farms to steal penalty fee
+jasonxiale
+42
+S-193
+Malicious user can bypass half of the penalty and steal funds from the fee collector when performing an emergency withdrawal
+Bauchibred
+27
+S-114
+Penalty fee distribution includes owners of farms that have not yet started
+Tigerfrake
+19
+S-334
+A user can reclaim part of his penalty fee by maliciously creating a Farm before an emergency withdraw
+0xlookman
+00
+S-310
+steal the emergency withdrawal fee.
+gegul
+00
+S-206
+Emergency Withdrawal Penalty Distribution Can Be Manipulated Via Farm Spam
+Lambda
+00
+Timeline
+Submitted
+Created: 498d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

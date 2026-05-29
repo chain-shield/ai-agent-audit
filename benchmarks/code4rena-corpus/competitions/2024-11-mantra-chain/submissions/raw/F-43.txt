@@ -1,0 +1,90 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-43
+Low
+Primary
+S-155
+Module Version Map Initialization Discrepancy
+defsec
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The current implementation in app.go does not properly initialize the version map for all modules during the upgrade keeper initialization. Unlike the reference implementation which explicitly sets the module version map after dependency injection, the code miss modules that aren't wired through dependency injection.
+
+Proof of Concept
+
+Current Behavior
+
+// Current implementation lacks explicit version map update
+app.UpgradeKeeper = upgradekeeper.NewKeeper(
+    skipUpgradeHeights,
+    runtime.NewKVStoreService(keys[upgradetypes.StoreKey]),
+    appCodec,
+    homePath,
+    app.BaseApp,
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+)
+Expected Behavior
+// Should add this after upgrade keeper initialization
+app.UpgradeKeeper.SetInitVersionMap(app.ModuleManager.GetVersionMap())
+Legacy modules not using dependency injection will be excluded from the version map
+Will lead to incomplete upgrade state tracking
+Lead issue during chain upgrades
+Recommended mitigation steps
+
+Add the explicit version map initialization after the upgrade keeper setup to ensure all modules are properly tracked:
+
+app.UpgradeKeeper = upgradekeeper.NewKeeper(...)
+app.UpgradeKeeper.SetInitVersionMap(app.ModuleManager.GetVersionMap())
+Links to affected code
+app.go#L1
+Opens in a new window
+Submissions touching same files
+app.go
+Timeline
+Submitted
+Created: 508d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

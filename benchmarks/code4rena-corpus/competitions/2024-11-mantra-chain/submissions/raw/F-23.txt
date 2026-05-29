@@ -1,0 +1,104 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-23
+Low
+Primary
+S-169
+Post handler refund operation might run out of gas, resulting in failed transactions
+berndartmueller
+00
+Sufficient
+383d ago
+Finding description and impact
+
+Mantra's xfeemarket post handler runs after a transaction is executed and burns/locks the consumed gas fee, and refunds the unspent gas fee (tip).
+
+The issue is that this post handler itself might run out of gas if the user provided a tight gas limit. This is because it uses the same gas meter capped at the gas limit that the user provided. As a result, the transaction might be executed successfully, but the post handler runs out of gas, which causes the whole transaction to fail.
+
+This is not desirable as the user's transaction should always succeed if the gas is sufficient but insufficient to run the post handler. In this case, there is no need to refund gas anyway.
+
+A similar observation was made by Celestia, where it was mitigated by first checking if the remaining gas is sufficient for the refund operation (using a constant that approximates the gas that is needed). If not, the refund operation is skipped.
+
+Note that Mantra consumes BankSendGasConsumption gas during simulations, to account for the gas consumed by the bank transfers which do not occur during simulations as the coin amounts are zero. This attempts to check that the gas limit provided by the user is sufficient for the tx as well as the refund operation. However, it is just an approximation and might not be accurate. Thus, the risk of running out of gas still exists.
+
+Proof of Concept
+
+FeeMarketDeductDecorator.PostHandle() uses the same gas meter as the transaction. If the gas limit is set tight so that during simulations, the gas meter is sufficient to also cover BankSendGasConsumption but not sufficient during the actual transaction, the post handler will run out of gas, and the whole transaction will fail. Paid gas is not refunded (the state is committed after running the ante handler that deducts the fee), resulting in a loss for the user.
+
+Recommended mitigation steps
+
+Consider checking early in the post handler if the remaining gas is sufficient for the refund operation (comparing against a constant that overestimates the gas needed for the refund). If not, skip the refund operation to ensure that the transaction always succeeds if the gas is sufficient for the transaction itself.
+
+Links to affected code
+fee.go#L38-L145
+Opens in a new window
+Submissions touching same files
+fee.go
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-169.
+Judging
+Edited: Feb 22
+3docSec
+
+Marking as L, it's common to give transactions some margin over the gas used by simulation
+
+L
+Edited: Feb 22
+mantra_lance
+
+This is indeed possible during our testing, but we realised it is difficult to approximate the gas correctly and if the gas supplied is really tight user will not get the refund. However, this problem exists even in skip-mev feemarket implementation where instead of refunding the user, the tip is sent to proposer and can fail too if gas is tight. However, the impact is small as it has no potential for exploits.
+
+We will fix it in future when we have capacity.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks L: it misses proof that the approximation can actually ever be incorrect
+
+Timeline
+Submitted
+Created: 505d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

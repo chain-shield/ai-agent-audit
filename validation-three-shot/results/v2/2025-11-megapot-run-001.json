@@ -1,0 +1,51 @@
+{
+  "benchmark": "2025-11-megapot",
+  "run_id": "run-001",
+  "status": "completed",
+  "completed_at": "2026-05-27T04:49:01Z",
+  "audit_report": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/2025-11-megapot/report/audit-report.md",
+  "source_root": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot",
+  "rounds": {
+    "r1": "completed",
+    "r2": "completed",
+    "r3": "completed",
+    "r4": "completed",
+    "r4a": "completed",
+    "r5": "completed",
+    "r6": "completed",
+    "r7": "completed",
+    "r8": "completed",
+    "r9": "completed"
+  },
+  "counts": {
+    "submission_candidates": 13,
+    "pocs_created": 13,
+    "pocs_verified": 13,
+    "reports_created": 13,
+    "reports_reviewed": 13,
+    "judge_simulations": 13,
+    "judge_accepted": 13,
+    "judge_high": 1,
+    "judge_medium": 12
+  },
+  "artifact_dirs": {
+    "final_reports": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/2025-11-megapot-run-001",
+    "r8_reviews": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/2025-11-megapot-run-001",
+    "r9_judge_simulations": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/judge-simulations/v2/2025-11-megapot-run-001"
+  },
+  "judge_decisions": [
+    {"finding_id": "H-1", "decision": "Accepted", "severity": "Medium", "confidence": "Medium"},
+    {"finding_id": "H-12", "decision": "Accepted", "severity": "High", "confidence": "High"},
+    {"finding_id": "H-60", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-2", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-5", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-10", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-14", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-18", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-20", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-27", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-83", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-91", "decision": "Accepted", "severity": "Medium", "confidence": "High"},
+    {"finding_id": "M-101", "decision": "Accepted", "severity": "Medium", "confidence": "High"}
+  ]
+}

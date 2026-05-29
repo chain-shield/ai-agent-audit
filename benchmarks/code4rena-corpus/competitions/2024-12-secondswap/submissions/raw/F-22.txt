@@ -1,0 +1,144 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-22
+Medium
+Primary
+S-533
+Outdated penalty fee gets charged if the penalty fee has changed since listing
+0xrex
+69
+Sufficient
+383d ago
+Finding description and impact
+
+Minimum listing duration is currently set at 2 mins at which point a listing cancellation will no longer incur the fee when unlisted less than 2 minutes since it got listed. However, users can be charged an outdated fee which is more or less the initial fee they expected to pay.
+
+Proof of Concept
+ function unlistVesting(address _vestingPlan, uint256 _listingId) external isFreeze {
+        Listing storage listing = listings[_vestingPlan][_listingId];
+        require(listing.status == Status.LIST, "SS_Marketplace: Listing not active");
+        require(
+            listing.seller == msg.sender || msg.sender == IMarketplaceSetting(marketplaceSetting).s2Admin(),
+            "SS_Marketplace: Not the seller"
+        );
+        uint256 _penaltyFee = 0;
+        if (msg.sender != IMarketplaceSetting(marketplaceSetting).s2Admin()) {
+            //  3.4. The s2Admin is unable to unlist vesting
+            if ((listing.listTime + IMarketplaceSetting(marketplaceSetting).minListingDuration()) > block.timestamp) {
+                require(
+                    (IMarketplaceSetting(marketplaceSetting).usdt()).balanceOf(msg.sender) >=
+                        IMarketplaceSetting(marketplaceSetting).penaltyFee(),
+                    "SS_Marketplace: Penalty fee required for early unlisting"
+                ); // 3.7. Value difference caused by the same penalty fee
+                (IMarketplaceSetting(marketplaceSetting).usdt()).safeTransferFrom(
+                    msg.sender,
+                    IMarketplaceSetting(marketplaceSetting).feeCollector(), // 3.7. Value difference caused by the same penalty fee
+                    IMarketplaceSetting(marketplaceSetting).penaltyFee()
+                ); //  3.6. DOS caused by the use of transfer and transferFrom functions
+@>                _penaltyFee = IMarketplaceSetting(marketplaceSetting).penaltyFee();
+            }
+        }
+        IVestingManager(IMarketplaceSetting(marketplaceSetting).vestingManager()).unlistVesting(
+            listing.seller,
+            _vestingPlan,
+            listing.balance
+        ); //  3.4. The s2Admin is unable to unlist vesting
+
+        listing.status = Status.DELIST; // 3.3. Buyer can choose listing price
+        listing.balance = 0; // 3.3. Buyer can choose listing price
+
+        emit Delisted(_vestingPlan, _listingId, _penaltyFee, msg.sender);
+    }
+
+
+Suppose the user were to pay 2 USDC for unlisting, then the fee changes to 5, they would end up paying twice the initial amount.
+
+Recommended mitigation steps
+
+Having a cache of the fee stored in the listing struct of the listing ID would be sufficient to figure out which fee to charge them.
+
+Links to affected code
+SecondSwap_Marketplace.sol#L360
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-533.
+S-533 seeking re-evaluation
+Edited: Feb 22
+0xrex
+OP
+
+hi again, Koolex.
+
+i strongly believe we have 2 legitimate issues with regards to fees and charges not being locked when a listing is created. one of such issues is this submission (S-533) and the other issue is F15 (and it's duplicates).
+
+i also believe it is unfair to downgrade this issue to a LOW severity whereas F-15 is left as a medium risk issue. i'll explain in point 3 below why.
+
+both of these 2 issues require the ADMIN to change setups. for example in F-15, the seller & buyer fee is at the mercy of the ADMIN changing buyer and seller fee at a short period before a supposed listing purchase happens. in the case of submission S-533, the penalty fee is also at the mercy of the ADMIN to set it. both of these issues lead to a loss of funds to the users involved.
+
+i kindly ask that this issue be upgraded to a medium risk severity level if we are being consistent across 2 legitimate valid issues or a downgrade of F-15 to a LOW risk severity issue as we can also assume the ADMIN is trusted for both of these 2 issue classes. in the case of submission S-533, i think it is only fair it maintains the same severity level as F-15.
+
+thanks again for taking the time.
+
+Koolex
+01/29/2025
+
+Thanks for bringing this up. This should be Medium since the user should be protected from such cases. The user should be able to make an informed decision with a protection mechanism in place, other than that, the responsibility on the user.
+
+Duplicates
+2
+S-1032
+The seller can lose tokens
+0xAkira
+60
+S-871
+Unvalidated Penalty Fee in `SecondSwap_VestingManager.sol::setPenaltyFee()` function Risks Financial Harm to Users who want to unlist Vesting.
+aua_oo7
+09
+Timeline
+Submitted
+Created: 524d ago
+Medium
+Triage
+Low
+Valid
+Primary
+Sufficient
+Review
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

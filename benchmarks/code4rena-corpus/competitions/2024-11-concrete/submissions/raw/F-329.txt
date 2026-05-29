@@ -1,0 +1,220 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-329
+Low
+Primary
+S-1241
+Withdrawal request cannot be claimed or finished and withdrawal queue cannot be changed for tokens with balance changes outside of transfers, such as deflationary tokens
+rbserver
+71
+Sufficient
+383d ago
+Finding description and impact
+
+According to https://github.com/code-423n4/2024-11-concrete?tab=readme-ov-file#erc20-token-behaviors-in-scope, this protocol intends to support tokens with balance changes outside of transfers, such as deflationary tokens. Yet, due to the changes of the vault's token balance held by itself and the vault's token amounts held by the strategies caused by the rebasing events, the withdrawal request, which has a stored and fixed token amount, can fail to be claimed or finished, which also causes the withdrawal queue to be unable to be changed.
+
+Proof of Concept
+
+When the ConcreteMultiStrategyVault._withdraw function is called, if the available assets for withdrawal is not enough to cover the assets_ input, then the withdrawalQueue.requestWithdrawal function is called to create a withdrawal request with such assets_ token amount.
+
+https://github.com/code-423n4/2024-11-concrete/blob/91cee384d5eb5e98cfad07efd8d1c1a2ad7b8162/src/vault/ConcreteMultiStrategyVault.sol#L419-L435
+
+    function _withdraw(uint256 assets_, address receiver_, address owner_, uint256 shares, uint256 feeShares) private {
+        if (msg.sender != owner_) {
+            _approve(owner_, msg.sender, allowance(owner_, msg.sender) - shares);
+        }
+        _burn(owner_, shares);
+        if (feeShares > 0) _mint(feeRecipient, feeShares);
+        uint256 availableAssetsForWithdrawal = getAvailableAssetsForWithdrawal();
+        if (availableAssetsForWithdrawal >= assets_) {
+            _withdrawStrategyFunds(assets_, receiver_);
+        } else {
+            if (address(withdrawalQueue) == address(0)) {
+                revert InsufficientVaultFunds(address(this), assets_, availableAssetsForWithdrawal);
+            }
+@>          withdrawalQueue.requestWithdrawal(receiver_, assets_);
+        }
+        emit Withdraw(msg.sender, receiver_, owner_, assets_, shares);
+    }
+
+Later, the ConcreteMultiStrategyVault.batchClaimWithdrawal function would be called to further call the ConcreteMultiStrategyVault.claimWithdrawal function, which eventually calls the ConcreteMultiStrategyVault._withdrawStrategyFunds function, for claiming the stored and fixed assets_ token amount from the previously requested withdrawal.
+
+https://github.com/code-423n4/2024-11-concrete/blob/91cee384d5eb5e98cfad07efd8d1c1a2ad7b8162/src/vault/ConcreteMultiStrategyVault.sol#L1059-L1084
+
+    function batchClaimWithdrawal(uint256 maxRequests) external onlyOwner nonReentrant {
+        if (address(withdrawalQueue) == address(0)) revert QueueNotSet();
+        uint256 availableAssets = getAvailableAssetsForWithdrawal();
+
+        uint256 lastFinalizedId = withdrawalQueue.getLastFinalizedRequestId();
+        uint256 lastCreatedId = withdrawalQueue.getLastRequestId();
+        uint256 newLastFinalized = lastFinalizedId;
+
+        uint256 max = lastCreatedId < lastFinalizedId + maxRequests ? lastCreatedId : lastFinalizedId + maxRequests;
+
+        for (uint256 i = lastFinalizedId + 1; i <= max; ) {
+@>          uint256 newAvailiableAssets = claimWithdrawal(i, availableAssets);
+            // slither-disable-next-line incorrect-equality
+            if (newAvailiableAssets == availableAssets) break;
+
+            availableAssets = newAvailiableAssets;
+            newLastFinalized = i;
+            unchecked {
+                i++;
+            }
+        }
+
+        if (newLastFinalized != lastFinalizedId) {
+            withdrawalQueue._finalize(newLastFinalized);
+        }
+    }
+
+https://github.com/code-423n4/2024-11-concrete/blob/91cee384d5eb5e98cfad07efd8d1c1a2ad7b8162/src/vault/ConcreteMultiStrategyVault.sol#L495-L505
+
+    function claimWithdrawal(uint256 _requestId, uint256 avaliableAssets) private returns (uint256) {
+        (address recipient, uint256 amount, uint256 newAvaliableAssets) = withdrawalQueue.prepareWithdrawal(
+            _requestId,
+            avaliableAssets
+        );
+
+        if (avaliableAssets != newAvaliableAssets) {
+@>          _withdrawStrategyFunds(amount, recipient);
+        }
+        return newAvaliableAssets;
+    }
+
+When calling the ConcreteMultiStrategyVault._withdrawStrategyFunds function, the amount_ input is the previously stored and fixed assets_ token amount. However, when the token is a deflationary token, the vault's current balance of such token held by itself can be deflated to be smaller than the fixed assets_ token amount so asset_.safeTransfer(receiver_, amount_) would not be executed. Similarly, the vault's total withdrawable amount of such token held by the strategies can be deflated to be smaller than the difference between the fixed assets_ token amount and the vault's current balance of such token held by itself so diff.mulDiv(strategy.allocation.amount, MAX_BASIS_POINTS, Math.Rounding.Ceil) > withdrawable would be true for at least one strategy. This reverts the ConcreteMultiStrategyVault._withdrawStrategyFunds function call. Thus, the previously requested withdrawal with the fixed assets_ token amount cannot be claimed.
+
+https://github.com/code-423n4/2024-11-concrete/blob/91cee384d5eb5e98cfad07efd8d1c1a2ad7b8162/src/vault/ConcreteMultiStrategyVault.sol#L444-L482
+
+    function _withdrawStrategyFunds(uint256 amount_, address receiver_) private {
+        IERC20 asset_ = IERC20(asset());
+        //Not in a loop
+        //slither-disable-next-line calls-loop
+        uint256 float = asset_.balanceOf(address(this));
+        // If there is enough in the vault, send the full amount
+@>      if (amount_ <= float) {
+@>          asset_.safeTransfer(receiver_, amount_);
+@>      } else {
+@>          uint256 diff = amount_ - float;
+            uint256 totalWithdrawn = 0;
+            uint256 len = strategies.length;
+            for (uint256 i; i < len; ) {
+                Strategy memory strategy = strategies[i];
+                //We control both the length of the array and the external call
+                //slither-disable-next-line calls-loop
+@>              uint256 withdrawable = strategy.strategy.previewRedeem(strategy.strategy.balanceOf(address(this)));
+@>              if (diff.mulDiv(strategy.allocation.amount, MAX_BASIS_POINTS, Math.Rounding.Ceil) > withdrawable) {
+                    revert InsufficientFunds(strategy.strategy, diff * strategy.allocation.amount, withdrawable);
+                }
+                uint256 amountToWithdraw = amount_.mulDiv(
+                    strategy.allocation.amount,
+                    MAX_BASIS_POINTS,
+                    Math.Rounding.Ceil
+                );
+                //We control both the length of the array and the external call
+                //slither-disable-next-line unused-return,calls-loop
+                strategy.strategy.withdraw(amountToWithdraw, receiver_, address(this));
+                totalWithdrawn += amountToWithdraw;
+                unchecked {
+                    i++;
+                }
+            }
+            // If enough wasn't drawn out, use the float (this is due to dust)
+            if (totalWithdrawn < amount_ && amount_ - totalWithdrawn <= float) {
+                asset_.safeTransfer(receiver_, amount_ - totalWithdrawn);
+            }
+        }
+    }
+
+Moreover, since the previously requested withdrawal with the stored and fixed assets_ token amount cannot be claimed and finished, withdrawalQueue.unfinalizedAmount() != 0 would remain true in the ConcreteMultiStrategyVault.setWithdrawalQueue function. This would cause such function call to revert with the UnfinalizedWithdrawl error so the withdrawal queue cannot be changed as well.
+
+https://github.com/code-423n4/2024-11-concrete/blob/91cee384d5eb5e98cfad07efd8d1c1a2ad7b8162/src/vault/ConcreteMultiStrategyVault.sol#L769-L779
+
+    function setWithdrawalQueue(address withdrawalQueue_) external onlyOwner {
+        // Validate the new recipient address
+        if (withdrawalQueue_ == address(0)) revert InvalidWithdrawlQueue();
+        if (address(withdrawalQueue) != address(0)) {
+@>          if (withdrawalQueue.unfinalizedAmount() != 0) revert UnfinalizedWithdrawl(address(withdrawalQueue));
+        }
+        // Emit an event for the fee recipient update
+        emit WithdrawalQueueUpdated(address(withdrawalQueue), withdrawalQueue_);
+
+        withdrawalQueue = IWithdrawalQueue(withdrawalQueue_); // Update the fee recipient
+    }
+Recommended mitigation steps
+
+Like many other protocols, this protocol can consider not supporting tokens with balance changes outside of transfers.
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L419-L435
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L1059-L1084
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L495-L505
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L444-L482
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L769-L779
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1241.
+Appeal
+Edited: Feb 22
+serial-coder
+
+This issue is not a duplicate of S-1267. S-1267 refers to a blockage attack on the withdrawal queue by a blocked recipient. Meanwhile, this issue refers to a transaction revert due to negative rebasing, which is unlikely.
+
+Further, this issue should have LOW risk at best based on the judgment of S-1293:
+
+None of the lenders used in the strategies accept rebase tokens. Deploying a vault that accepts rebase tokens will require a new implementation.
+
+Picodes
+01/28/2025
+
+Thanks for flagging
+
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,195 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-105
+Low
+Primary
+S-354
+loss of assets for Recipient due to rounding issues when redeeming
+Sancybars
+20
+Insufficient
+383d ago
+Vulnerability Discussion
+    function redeem(
+        uint256 shares_,
+        address receiver_,
+        address owner_
+    ) public override nonReentrant whenNotPaused returns (uint256 assets) {
+        if (receiver_ == address(0)) revert InvalidRecipient();
+        if (shares_ == 0) revert ZeroAmount();
+        if (shares_ > maxRedeem(owner_)) revert MaxError();
+
+        uint256 feeShares = shares_.mulDiv(uint256(fees.withdrawalFee), MAX_BASIS_POINTS, Math.Rounding.Ceil);
+
+        assets = _convertToAssets(shares_ - feeShares, Math.Rounding.Floor);//@audit-issue should round up
+
+        _withdraw(assets, receiver_, owner_, shares_, feeShares);
+    }
+
+The amount of assets to send to the recipient is rounded downassets = _convertToAssets(shares_ - feeShares, Math.Rounding.Floor); due to this users/recipients will lose assets if the asset amount is rounded down to zero.
+
+POC
+
+This test will be in two phases, first redeeming with rounding down to show the loss of assets using the feeRecipient as the redeemer.
+
+    function test_Asset_rounding_issue() public {
+        address vaultAddress = Clones.clone(implementation);
+        ConcreteMultiStrategyVault v = ConcreteMultiStrategyVault(vaultAddress);
+        v.initialize(
+            IERC20(address(asset)),
+            "Mock Vault",
+            "MV",
+            strategies,
+            feeRecipient,
+            VaultFees({depositFee: 500, withdrawalFee: 100, protocolFee: 300, performanceFee: graduatedFees}),
+            type(uint256).max,
+            admin
+        );
+
+        vm.prank(admin);
+        v.setDepositLimit(200 ether);
+
+        asset.mint(jimmy, 110 ether);
+        asset.mint(hazel, 110 ether);
+
+        vm.prank(hazel);
+        asset.approve(address(v), 110 ether);
+
+        vm.startPrank(jimmy);
+        asset.approve(address(v), 110 ether);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 hours);
+
+        vm.prank(hazel);
+        v.deposit(100 ether, hazel);
+
+        vm.prank(jimmy);
+        v.deposit(100 ether, jimmy);
+
+       uint FeeRbalance1 = asset.balanceOf(address(feeRecipient));
+       console.log(FeeRbalance1, "FRB1");
+
+        vm.prank(admin);
+        v.pushFundsToStrategies();
+
+      uint AssetBalanceV = asset.balanceOf(address(v));
+       console.log(AssetBalanceV, "VBAL");
+
+       vm.warp(block.timestamp + 2 days);
+
+
+        vm.prank(jimmy);
+        v.withdraw(94 ether, jimmy, jimmy);
+       
+        vm.prank(hazel);
+        v.withdraw(94 ether, hazel, hazel);
+       
+       uint FeeRbalance2 = asset.balanceOf(address(feeRecipient));
+       console.log(FeeRbalance2, "FRB2");
+
+
+       vm.prank(feeRecipient);
+       v.redeem(300, feeRecipient, feeRecipient);
+
+       uint FeeRbalance = asset.balanceOf(address(feeRecipient));
+       console.log(FeeRbalance, "FRB");
+
+    }
+
+output:
+FRB1 = initial balance of recipient,
+FRB2 = balance of recipient after users withdraw,
+RFEE = withdrawal/recipient fee ,
+FRB = final balance of recipient.
+
+[PASS] test_Asset_rounding_issue() (gas: 1646074)
+Logs:
+  0 FRB1
+  0 FRB2
+  3 RFEE
+  0 FRB
+
+
+withdrawal fees are charged but not asset was sent to the recipient.
+
+in the second POC we changed the rounding to ceil to prove this issue exist.
+same poc code only rounding changed.
+
+output:
+
+[PASS] test_Asset_rounding_issue() (gas: 1666096)
+Logs:
+  0 FRB1
+  0 FRB2
+  3 RFEE
+  1 FRB
+
+
+in this case we rounded up and the recipient got the asset.
+
+In scenarios where the feeRecipients share results in fractional assets (e.g., 0.99 assets), these are rounded down to 0. This causes the feeRecipient to lose their accumulated assets entirely, which is an unintended and unfair behavior.
+
+Recommendation
+
+round up instead of down when calculating the assets amount.
+assets = _convertToAssets(shares_ - feeShares, Math.Rounding.Ceil);
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L362
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Duplicates
+2
+S-775
+Inconsistent Fee Rounding in previewRedeem Function Causes Underestimated Returns
+Xcrypt
+00
+S-728
+Incorrect Fee Rounding in previewRedeem Function Leads to Underestimated Returns
+LonelyWolfDemon
+00
+Timeline
+Submitted
+Created: 545d ago
+Medium
+Triage
+Low
+Valid
+Insufficient
+Primary
+Review
+Judging
+Valid
+Insufficient
+Post-judging QA
+Complete
+Reporting
+Complete

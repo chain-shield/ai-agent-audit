@@ -1,0 +1,114 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-11
+Medium
+Primary
+S-1343
+`previewMint()` returns a wrong value
+samuraii77
+63
+Sufficient
+383d ago
+Finding description and impact
+
+previewMint() returns a wrong value due to not considering the sender might be a fee recipient
+
+Proof of Concept
+
+This is what previewDeposit returns:
+
+    function previewDeposit(uint256 assets_) public view override returns (uint256) {
+        uint256 netAssets = assets_ -
+            (
+                msg.sender != feeRecipient
+                    ? assets_.mulDiv(uint256(fees.depositFee), MAX_BASIS_POINTS, Math.Rounding.Floor)
+                    : 0
+            );
+        return _convertToShares(netAssets, Math.Rounding.Floor);
+    }
+
+As seen, we consider the msg.sender and return the according value as fee recipients are not charged a fee. If we take a look at previewMint(), we will see that this is not the case there:
+
+    function previewMint(uint256 shares_) public view override returns (uint256) {
+        uint256 grossShares = shares_.mulDiv(MAX_BASIS_POINTS, MAX_BASIS_POINTS - fees.depositFee, Math.Rounding.Floor);
+        return _convertToAssets(grossShares, Math.Rounding.Floor);
+    }
+
+This results in a wrong return value of previewMint().
+
+Recommended mitigation steps
+
+Consider the msg.sender the way you do in previewDeposit(). Alternatively, change previewDeposit() to always account for a fee regardless of the msg.sender as usually such preview functions are not supposed to account for the sender.
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L616-L619
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Duplicates
+5
+S-1275
+`previewRedeem` and `redeem` do not correctly follow ERC-4626 specification
+Maroutis
+37
+S-1004
+deposit function should return the same or more shares as previewDeposit if called in the same transaction
+pwnforce
+00
+S-755
+Inconsistent Fee Exemption Logic in previewMint
+Aristos
+00
+S-49
+Missing `msg.sender == feeRecipient` check in `previewMint` function
+newspacexyz
+00
+S-48
+Fee exemption for `feeRecipient` missing in `redeem`, `deposit`, and `mint` functions
+newspacexyz
+00
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

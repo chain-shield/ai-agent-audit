@@ -1,0 +1,196 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-445
+Low
+Primary
+S-739
+If underlying token is not NATIVE_TOKEN, the createLaunchPadAndInitialBuy() function is broken
+hubble
+00
+Sufficient
+383d ago
+Finding description
+
+If the underlying token in VirtualToken.sol is not LaunchPadUtils.NATIVE_TOKEN, and other ERC20 token for example USDC is used,
+then the createLaunchPadAndInitialBuy() and buyQuote() functions in LamboVEthRouter.sol is broken, and will revert due to missing code.
+
+If the underlying token is any ERC20 token, then code for transfering the token from msg.sender into the LamboVEthRouter and its approval to VirtualToken is missing.
+Due to this both the above functions will fail, and the project cannot launch its meme token via virtual liquidity.
+
+Also there is missing code for processing the fees in the ERC20 token.
+
+Impact
+
+The primary function of launching meme token via virtual liquidity is broken if any ERC20 token apart from LaunchPadUtils.NATIVE_TOKEN is used.
+There is no mention in the documentation that the underlying token will be only ETH. Since there is code for handling ERC20 tokens as underlying in the VirtualToken.sol
+and there is missing code in LamboVEthRouter.sol, filing this issue as High due the very impact mentioned.
+
+Proof of Concept
+
+As POC, add the below test case VirtualTokenERC20Bug.t.sol and run forge test --match-path test/VirtualTokenERC20Bug.t.sol
+Note: The LamboVEthRouter.sol processes fees in ETH, so in the below POC, additionally ETH is also provided in msg.value to curcumvent this additional failure.
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {VirtualToken} from "../src/VirtualToken.sol";
+import {LamboFactory} from "../src/LamboFactory.sol";
+import {LamboToken} from "../src/LamboToken.sol";
+import {AggregationRouterV6, IWETH} from "../src/libraries/1inchV6.sol";
+import {LamboVEthRouter} from "../src/LamboVEthRouter.sol";
+import {LaunchPadUtils} from "../src/Utils/LaunchPadUtils.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "forge-std/console2.sol";
+
+contract VirtualTokenERC20Bug is Test {
+    VirtualToken public vUSDC;
+    LamboFactory public factory;
+    LamboVEthRouter public lamboRouter;
+    LamboToken public lamboTokenV2;
+    address public USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+
+    address public multiSigAdmin = makeAddr("multiSigAdmin");
+
+    function setUp() public virtual {
+        // ankr eth mainnet
+        vm.createSelectFork("https://rpc.ankr.com/eth");
+
+        lamboTokenV2 = new LamboToken();
+
+        uint256 usdc_balance = 100e6;
+        deal(USDC, address(this), usdc_balance);
+
+        vm.startPrank(multiSigAdmin);
+        vUSDC = new VirtualToken("vUSDC", "vUSDC", USDC);
+
+        factory = new LamboFactory(address(lamboTokenV2));
+        vm.stopPrank();
+
+        lamboRouter = new LamboVEthRouter(address(vUSDC), multiSigAdmin);
+
+        vm.startPrank(multiSigAdmin);
+        vUSDC.updateFactory(address(factory), true);
+        vUSDC.addToWhiteList(address(lamboRouter));
+
+        factory.addVTokenWhiteList(address(vUSDC));
+        vm.stopPrank();
+    }
+
+    function test_createLaunchPad_using_USDC() public {
+        console2.log("USDC Balance", IERC20(USDC).balanceOf(address(this)));
+        (address quoteToken, address pool) = factory.createLaunchPad("LamboToken", "LAMBO", 300 ether, address(vUSDC));
+        uint256 amountQuoteOut = lamboRouter.getBuyQuote(quoteToken, 100e6);
+        IERC20(USDC).approve(address(lamboRouter), 100e6);
+        uint256 amountOut0 = lamboRouter.buyQuote{value: 100e6}(quoteToken, 100e6, 0);
+        console2.log("USDC Balance of vUSDC", IERC20(USDC).balanceOf(address(vUSDC)));
+        require(amountOut0 == amountQuoteOut, "getBuyQuote error");
+    }
+
+}
+
+
+Recommended mitigation steps
+
+The missing code is added here in the function _buyQuote(...) function.
+After adding these below missing code, the above test case passes.
+
+    function _buyQuote(address quoteToken, uint256 amountXIn, uint256 minReturn) internal returns (uint256 amountYOut) {
+        require(msg.value >= amountXIn, "Insufficient msg.value");
+
+    ...
+    ...
+
+        // Transfer vETH to the pair
+
+        address veth_underlyingToken = VirtualToken(vETH).underlyingToken();
+        if (veth_underlyingToken != LaunchPadUtils.NATIVE_TOKEN) {
+           IERC20(veth_underlyingToken).safeTransferFrom(msg.sender, address(this), amountXIn);
+           require(IERC20(veth_underlyingToken).approve(address(vETH), amountXIn), "Approve failed");
+        }
+
+        VirtualToken(vETH).cashIn{value: amountXIn}(amountXIn);
+        IERC20(vETH).safeTransfer(pair, amountXIn);
+
+    ...
+    ...
+
+
+Links to affected code
+LamboVEthRouter.sol#L171
+Opens in a new window
+Submissions touching same files
+LamboVEthRouter.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-739.
+Reconsider severity of this issue
+Edited: Feb 22
+ksk2345
+OP
+
+Hi @Koolex, Thanks for judging this contest and your arduous efforts of going thru the huge number of findings/submissions.
+
+I assume that this bug is judged as low due to backend mistake, because it was duped until recently to another bug filed which was judged as low.
+
+Kindly reconsider the severity of this issue as high due to the below facts.
+
+The protocol supports non native tokens like USDC/USDT, etc. as underlying token, due to the fact that it has code to handle in VirtualToken.sol
+Its assumed that the users will use the LamboVEthRouter.sol for depositing these non native underlying token, because there is no mention in any documentation or code comments, that a different Router contract will be used for this.
+Given these above two points, the user will be unable to deposit non NATIVE_TOKEN because some code is missing.
+The test case given in the POC section clearly proves the fact.
+
+The code changes recommended as part of this submission is highly relevant to the another issue listed below, which is currently judged as high, and its code base will not be hit until the code changes mentioned in this issue is fixed.
+https://code4rena.com/evaluate/2024-12-lambowin/findings/F-1
+
+The users will not be able to deposit non native tokens, hence there is no assets lost or stolen, but given the fact that code is itself missing is more critical for the protocol functionality.
+
+Thanks.
+
+Koolex
+01/19/2025
+
+For ERC-20 tokens, only VirtualToken.sol is in scope.
+
+Timeline
+Submitted
+Created: 532d ago
+High
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,224 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-259
+Low
+Primary
+S-187
+Call to `withdraw()` reverts due to attempt to burn more shares than issued
+t0x1c
+46
+Sufficient
+383d ago
+Summary
+
+Upon calling withdraw(), the protocol attempts to burn shares + feeShares of the user when they would really have only shares issued to them. The protocol incorrectly increases quantity of shares to burn instead of decreasing the amount of assets to return. This causes a revert.
+
+Description
+
+The withdrawal fee ought to be deducted from the existing shares and the assets corresponding to the remaining shares need to be returned to the withdrawer when withdraw() is called. That's how it's implemented inside redeem() too.<br>
+However, the protocol adds the fee shares on top of the shares corresponding to the asset amount requested. This results in a situation where the user would not have enough shares thus reverting the transaction.
+<br>
+
+  File: src/vault/ConcreteMultiStrategyVault.sol
+
+   388:              function withdraw(
+   389:                  uint256 assets_,
+   390:                  address receiver_,
+   391:                  address owner_
+   392:              ) public override nonReentrant whenNotPaused returns (uint256 shares) {
+   393:                  if (receiver_ == address(0)) revert InvalidRecipient();
+   394:                  if (assets_ > maxWithdraw(owner_)) revert MaxError();
+   395:                  shares = _convertToShares(assets_, Math.Rounding.Ceil);
+   396:                  if (shares <= DUST) revert ZeroAmount();
+   397:
+   398:                  // If msg.sender is the withdrawal queue, go straght to the actual withdrawal
+   399:                  uint256 withdrawalFee = uint256(fees.withdrawalFee);
+   400:                  uint256 feeShares = msg.sender != feeRecipient
+   401:                      ? shares.mulDiv(MAX_BASIS_POINTS, MAX_BASIS_POINTS - withdrawalFee, Math.Rounding.Floor) - shares
+   402:                      : 0;
+   403:@--->             shares += feeShares; // @audit : this surpasses the number of shares issued to the user
+   404:
+   405:                  _withdraw(assets_, receiver_, owner_, shares, feeShares);
+   406:              }
+
+Example:<br>
+
+Step1: Hazel calls deposit(1e18). No deposit fee levied by the protocol. She is issued 1e27 shares.
+𝑠
+ℎ
+𝑎
+𝑟
+𝑒
+𝑠
+=
+1
+𝑒
+18
+∗
+(
+0
++
+1
+𝑒
+9
+)
+0
++
+1
+=
+1
+𝑒
+27
+shares=
+0+1
+1e18∗(0+1e9)
+	​
+
+=1e27
+Step2: Hazel calls withdraw(1e18). 1% withdrawal fee (100 bips) levied by the protocol. Now, shares is incremented on L403 followed by _withdraw(..., shares, ..) on the next line.
+shares += feeShares;
+_withdraw(assets_, receiver_, owner_, shares, feeShares);
+_withdraw() tries to burn shares on L423. Since the user has only 1e27 shares, this reverts with error ERC20InsufficientBalance.
+Proof of Concept
+
+Add the following test inside test/ConcreteMultiStrategyVault.t.sol to see it revert when run with forge test --mt test_t0x1c_withdraw_with_fees -vv:
+
+    function test_t0x1c_withdraw_with_fees() public {
+        (ConcreteMultiStrategyVault newVault, ) = _createNewVault(false, false, false);
+        asset.mint(hazel, 100 ether);
+        vm.label(address(newVault), "newVault");
+
+        vm.startPrank(admin);
+        newVault.setVaultFees(VaultFees({depositFee: 0, withdrawalFee: 100, protocolFee: 0, performanceFee: zeroFees}));
+        newVault.toggleVaultIdle();
+        vm.stopPrank();
+
+        vm.startPrank(hazel);
+        asset.approve(address(newVault), type(uint256).max);
+
+        // deposit
+        uint256 hazelShares = newVault.deposit(1 ether);
+        console.log("\nhazelShares =", hazelShares);
+
+        // withdraw 
+        console.log("\nAttempting to withdraw all assets.."); 
+        // @audit-issue : throws error --> ERC20InsufficientBalance(address(hazel), 1e27, 1.01e27)
+        newVault.withdraw(1 ether); 
+    }
+<br>
+
+Output:
+
+Failing tests:
+Encountered 1 failing test in test/ConcreteMultiStrategyVault.t.sol:ConcreteMultiStrategyVaultTest
+[FAIL. Reason: ERC20InsufficientBalance(0x0000000000000000000000000000000000003333, 1000000000000000000000000000 [1e27], 1010101010101010101010101010 [1.01e27])] test_t0x1c_withdraw_with_fees() (gas: 5262722)
+Mitigation
+
+With the following changes, user would be able to call withdraw(1 ether) (i.e. withdraw ALL assets) and witness the exact same behaviour as redeem(1e27) (i.e. redeem ALL shares):
+
+  File: src/vault/ConcreteMultiStrategyVault.sol
+
+   388:              function withdraw(
+   389:                  uint256 assets_,
+   390:                  address receiver_,
+   391:                  address owner_
+   392:              ) public override nonReentrant whenNotPaused returns (uint256 shares) {
+   393:                  if (receiver_ == address(0)) revert InvalidRecipient();
+   394:                  if (assets_ > maxWithdraw(owner_)) revert MaxError();
+   395:                  shares = _convertToShares(assets_, Math.Rounding.Ceil);
+   396:                  if (shares <= DUST) revert ZeroAmount();
+   397:
+   398:                  // If msg.sender is the withdrawal queue, go straght to the actual withdrawal
+   399:                  uint256 withdrawalFee = uint256(fees.withdrawalFee);
+   400:                  uint256 feeShares = msg.sender != feeRecipient
+-  401:                      ? shares.mulDiv(MAX_BASIS_POINTS, MAX_BASIS_POINTS - withdrawalFee, Math.Rounding.Floor) - shares
++  401:                      ? shares - shares.mulDiv(MAX_BASIS_POINTS, MAX_BASIS_POINTS + withdrawalFee, Math.Rounding.Floor)
+   402:                      : 0;
+-  403:                  shares += feeShares;
+   404:
+-  405:                  _withdraw(assets_, receiver_, owner_, shares, feeShares);
++  405:                  _withdraw(_convertToAssets(shares - feeShares, Math.Rounding.Floor), receiver_, owner_, shares, feeShares);
+   406:              }
+Severity
+
+I am torn between Low and Med because the user can do the calculation themself off-chain and in order to correctly withdraw without a revert, they can call withdraw(0.99 ether) and it would work exactly like redeem(1e27). I believe however that the general expectation by end user would be to see it work as suggested in the Mitigation section above ( withdraw(ALL) should behave like redeem(ALL) ) and hence raising it as a Med.
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L403
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-187.
+LOW impact is more appropriate
+Edited: Feb 22
+Maroutis
+
+I believe the impact is low, as the functionality is not DOS. The user can always input a lower amount or the correct amount of asset that he can withdraw and it will work. However, I do agree with OP that the function can be approved.
+
+Picodes
+01/20/2025
+
+I agree with your comment. It's up to any front end to take this into account.
+
+Duplicates
+3
+S-1301
+Function withdraw() calls revert due to an attempt to burn more owner shares
+MrPotatoMagic
+59
+S-779
+DOS of withdrawal of user max asset
+lanrebayode77
+30
+S-1082
+User will be unable to withdraw all the assets deposited.
+Anirruth
+27
+Timeline
+Submitted
+Created: 547d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

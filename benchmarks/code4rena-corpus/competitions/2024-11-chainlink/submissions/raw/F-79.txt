@@ -1,0 +1,159 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-79
+Low
+Primary
+S-523
+Gas Manipulation in `CallWithExactGas` leads to Transaction Reverts
+DaidalosInitiative
+00
+Sufficient
+383d ago
+Summary
+
+The CallWithExactGas contract forwards the entire gasLimit to target contracts during execution, allowing malicious receivers to precisely consume gas and force transaction reverts by triggering EIP-150's 1/64th rule.
+
+Details
+
+The CallWithExactGas contract performs upfront validation to ensure sufficient gas is available for execution including the EIP-150 1/64th reserve. However, during the actual low-level call, it forwards the entire gasLimit to the target contract:
+
+success := call(gasLimit, target, 0, add(payload, 0x20), mload(payload), 0x0, 0x0)
+
+This gives target contracts complete control over gas consumption during their execution window. A malicious contract can:
+
+Calculate the forwarded gas amount via gasleft()
+Perform expensive operations to consume gas
+Leave just under 1/64th gas remaining
+Force the transaction to revert after execution but before state changes
+
+Impact
+
+Malicious receivers can force transaction reverts
+Wastes gas through failed transactions
+Potential DoS vector for CCIP message processing
+Affects reliability of cross-chain message delivery
+
+Code Snippet
+
+// Vulnerable implementation
+
+function _callWithExactGas(
+    bytes memory payload,
+    address target, 
+    uint256 gasLimit,
+    uint16 gasForCallExactCheck
+) internal returns (bool success) {
+    assembly {
+        // Gas checks...
+        success := call(gasLimit, target, 0, add(payload, 0x20), mload(payload), 0x0, 0x0)
+    }
+}
+
+Illustration
+
+Malicious Receiver Contract:
+
+function ccipReceive(Client.Any2EVMMessage calldata message) external {
+    uint256 gasProvided = gasleft();
+    uint256 targetGas = gasProvided - (gasProvided / 64) - 1;
+    
+    while(gasleft() > targetGas) {
+        assembly {
+            mstore(0x0, 0) // Gas consuming operation
+        }
+    }
+}
+Mitigation
+
+Modify CallWithExactGas to reserve the 1/64th gas before forwarding:
+
+function _callWithExactGas(
+    bytes memory payload,
+    address target, 
+    uint256 gasLimit,
+    uint16 gasForCallExactCheck
+) internal returns (bool success) {
+    assembly {
+        // Existing gas checks...
+        
+        // Reserve 1/64th gas
+        let gasToForward := sub(gasLimit, div(gasLimit, 64))
+        
+        success := call(gasToForward, target, 0, add(payload, 0x20), mload(payload), 0x0, 0x0)
+    }
+}
+
+This ensures the critical 1/64th gas reserve remains under CallWithExactGas control rather than being available for manipulation by target contracts.
+
+Links to affected code
+OffRamp.sol#L651-L670
+Opens in a new window
+Submissions touching same files
+OffRamp.sol
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-523.
+Transmitters can be malicious and also other realtaed issues to this have been marked satisfactory
+Edited: Feb 22
+Bigsam
+OP
+
+Thanks for judging @LSDan,
+
+This issue is related to the issues already marked valid. (Finding 44) the sender can be a malicious transmitter and sending in less gas as been validated has it indeed has an impact
+
+LSDan
+12/12/2024
+
+Good catch Bigsam. I've downgraded it to low and reinstated it's validity to match the treatment of F-44
+
+Invalid
+Edited: Feb 22
+0xA5DF
+
+Force the transaction to revert after execution but before state changes
+
+It's the caller's responsibility to provide enough gas, they might as well not execute the tx in the first place that would achieve the same results as reverting.
+
+Timeline
+Submitted
+Created: 546d ago
+Medium
+Triage
+Insufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

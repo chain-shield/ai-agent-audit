@@ -1,0 +1,249 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-66
+Medium
+Primary
+S-776
+Batch withdrawals from withdrawal queue can fail to mark the last withdrawal request as claimed due to off by one error
+zzebra83
+54
+Sufficient
+383d ago
+Finding description and impact
+
+The purpose of the batchClaimWithdrawal is to process all withdrawal requests in the queue. its a critical function that plays an important role in ensuring all withdrawal requests in the queue are finalized and claimed.
+
+It interacts with the withdrawal queue function by calling prepareWithdrawal. lets take a look at the code block below:
+
+        if (_avaliableAssets > amount) {
+            assert(_requestsByOwner[recipient].remove(_requestId));
+            avaliableAssets = _avaliableAssets - amount;
+            request.claimed = true;
+            //This is commented to fit the requirements of the vault
+            //instead of this we will call _withdrawStrategyFunds
+            //IERC20(TOKEN).safeTransfer(recipient, realAmount);
+
+            emit WithdrawalClaimed(_requestId, recipient, amount);
+        }
+
+
+if the the available funds left is exactly equal to the amount being processed, the function fails to ensure the request has succesfully been claimed, and to clear the user's _requestsByOwner list. this is due to an off by one error via using > instead of >=.
+
+At the time of writing I believe this is either of medium or QA severity, depending on whether ensuring all withdrawals have been succesfully marked as claimed due to accounting reasons is vital and/or will be considered something of a concern for the protocol.
+
+Proof of Concept
+function test_withdrawal_queue_exact_amount() public {
+   // 1. Setup vault and withdrawal queue
+   (ConcreteMultiStrategyVault newVault, Strategy[] memory strats) = _createNewVault(false, false, true);
+   WithdrawalQueue queue = new WithdrawalQueue(address(newVault));
+   vm.prank(admin);
+   newVault.setWithdrawalQueue(address(queue));
+
+        for (uint256 i = 0; i < strats.length; ) {
+            IMockStrategy(address(strats[i].strategy)).setAvailableAssetsZero(true);
+            unchecked {
+                i++;
+            }
+        }
+
+
+
+   // 2. Hazel deposits 10 ETH
+   uint256 depositAmount = 10 ether;
+   asset.mint(hazel, depositAmount);
+   vm.startPrank(hazel);
+   asset.approve(address(newVault), depositAmount);
+   newVault.deposit(depositAmount, hazel);
+   vm.stopPrank();
+   
+
+   // 2. ellie deposits 10 ETH
+   asset.mint(ellie, depositAmount);
+   vm.startPrank(ellie);
+   asset.approve(address(newVault), depositAmount);
+   newVault.deposit(depositAmount, ellie);
+   vm.stopPrank();
+
+   // 3. Request full withdrawal
+   vm.prank(ellie);
+   newVault.withdraw(depositAmount, ellie, ellie);
+
+   // 3. Request full withdrawal
+   vm.prank(hazel);
+   newVault.withdraw(depositAmount, hazel, hazel);
+   
+   // Check initial state
+   assertEq(queue.getLastRequestId(), 2, "Should have two requests");
+   //assertEq(newVault.getAvailableAssetsForWithdrawal(), depositAmount, "Should have full amount available");
+   
+    for (uint256 i = 0; i < strats.length; ) {
+            IMockStrategy(address(strats[i].strategy)).setAvailableAssetsZero(false);
+            unchecked {
+                i++;
+            }
+        }
+
+   // 4. Try to process via batchClaimWithdrawal
+   vm.prank(admin);
+   newVault.batchClaimWithdrawal(99); // Process all requests
+
+   
+   // 5. Check final state
+   uint256[] memory requestIds = new uint256[](2);
+   requestIds[0] = 1;
+   requestIds[1] = 2;
+   WithdrawalQueue.WithdrawalRequestStatus[] memory request = queue.getWithdrawalStatus(requestIds);
+   assertEq(request[0].isClaimed, true, "First equest should be claimed");
+   assertEq(request[1].isClaimed, false, "Last Request was not claimed");
+   assertEq(asset.balanceOf(ellie), 10 ether, "Ellie should have received back her funds");
+   assertEq(asset.balanceOf(hazel), 10 ether, "Hazel should have received her funds back");
+   assertEq(queue.getLastFinalizedRequestId(), 2, "All requests should be finalized");
+  
+}
+
+Recommended mitigation steps
+
+use >= instead >:
+
+if (_avaliableAssets > amount) {
+
+Links to affected code
+WithdrawalQueue.sol#L170-L180
+Opens in a new window
+Submissions touching same files
+WithdrawalQueue.sol
+View full submission
+Duplicates
+22
+S-1465
+When the admin trys to withdraw more elements in the array than possible using `batchClaimWithdrawal`, instead of breaking as intended, the whole transaction will revert
+rscodes
+92
+S-821
+Improper Check
+EPSec
+88
+S-742
+Withdrawal Queue will fail to withdraw when the amount of available asset is same with the withdrawal amount
+stuart_the_minion
+83
+S-700
+`batchClaimWithdrawal()` will always revert if the available assets of `ConcreteMultiStrategyVault` is less than total sum of unfinalized withdrawal requests
+stuart_the_minion
+83
+S-656
+The last user cannot withdraw a full amount via withdrawal queue
+zxriptor
+81
+S-1378
+batchClaimWithdrawal does not work as expected & can lead to loss of user funds
+0xleadwizard
+80
+S-1388
+Improper Handling of Insufficient availableAssets in prepareWithdrawal Leads to Withdrawal State Inconsistencies
+waydou
+75
+S-211
+Status of Withdrawal Request Not Update Even User Has Claimed
+dd0x7e8
+66
+S-350
+An attacker can force the withdrawal request to be fulfilled without any funds actually being transferred to the user
+blutorque
+65
+S-1063
+Last withdrawal in a batch will fail if availableAssets is exactly equal to withdrawal amount
+gesha17
+57
+S-468
+Valid withdrawals may fail to execute
+trachev
+56
+S-566
+Claim status not updated if `_availableAssets` exactly equals requested `amount`
+t0x1c
+46
+S-6
+WithdrawalQueue.sol :: prepareWithdrawal() fails to prepare the request when _availableAssets == amount.
+Fitro
+40
+S-323
+Withdrawal queue prevents exact-amount withdrawals due to wrong comparison operator
+Rhaydden
+30
+S-1353
+The `WithdrawalQueue.prepareWithdrawal` will not process the `queued withdrawal request` even if there is sufficient `_avaliableAssets` to cover for the `requested withdraw amount`
+Udsen
+27
+S-121
+prepareWithdrawal() will not be succeed if _avaliableAssets = amount
+zhanmingjing
+21
+S-963
+wrong implement of prepareWithdrawal
+bareli
+03
+S-1036
+`WithdrawalQueue.prepareWithdrawal()` does not process withdrawal if the available assets are equal to the requested amount
+berndartmueller
+00
+S-709
+Lack of error isolation in `batchClaimWithdrawal` causes total revert on single request failure
+newspacexyz
+00
+S-557
+Incorrect asset availability check in WithdrawalQueue prevents valid withdrawals
+zubyoz
+00
+S-426
+Improper Withdrawal Claim Condition Prevents Exact Amount Withdrawal (Logic Error + Potential Fund Lockup)
+codertjay
+00
+S-209
+The condition in the prepareWithdrawal function does not consider the equality of the two sides of the condition.
+mahdifa
+00
+Timeline
+Submitted
+Created: 543d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

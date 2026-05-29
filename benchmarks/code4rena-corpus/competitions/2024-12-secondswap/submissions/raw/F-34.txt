@@ -1,0 +1,149 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-34
+Low
+Primary
+S-759
+Sellers can not sell all his vesting tokens which are bought from marketplace
+0xc0ffEE
+75
+Sufficient
+383d ago
+Finding description and impact
+
+Users who are allocated will have the sell limit according to the allocated amount. Besides, users who are not allocated, can be able to sell all the tokens bought from marketplace. However, in case an user's allocation is decreased, the users will be unable to sell the bought vesting tokens.
+
+Here, the root cause is the discrepancy between total allocation and sold/bought amount tracked by vesting manager, such that when reallocation happens, only the user's total allocation changed but the sold/bought amount stays unchanged. This can cause user's next sells apply the wrong sell limit.
+
+    function listVesting(address seller, address plan, uint256 amount) external onlyMarketplace {
+        require(vestingSettings[plan].sellable, "vesting not sellable");
+        require(SecondSwap_Vesting(plan).available(seller) >= amount, "SS_VestingManager: insufficient availablility");
+
+        Allocation storage userAllocation = allocations[seller][plan];
+
+@>        uint256 sellLimit = userAllocation.bought;
+        uint256 currentAlloc = SecondSwap_Vesting(plan).total(seller);
+
+@>        if (currentAlloc + userAllocation.sold > userAllocation.bought) {
+@>            sellLimit +=
+                ((currentAlloc + userAllocation.sold - userAllocation.bought) * vestingSettings[plan].maxSellPercent) /
+                BASE;
+        }
+
+@>        userAllocation.sold += amount;
+
+@>        require(userAllocation.sold <= sellLimit, "SS_VestingManager: cannot list more than max sell percent");
+        SecondSwap_Vesting(plan).transferVesting(seller, address(this), amount);
+    }
+
+For example:
+1/ Alice is allocated 100
+2/ Assume that max sell percent is 20%, then Alice can sell 20
+3/ Alice now has allocation = 80 and the token issuer decides to reallocate 100% from Alice, resulting Alice has 0 allocation
+4/ Alice buys 100 from marketplace
+5/ Alice can not sell 100 above because the sell limit exceeded because 20 sold amount is taken into account for the sell limit
+
+Impacts:
+
+Sellers can not sell all his vesting tokens which are bought from marketplace
+Proof of Concept
+
+Add this test to the test file test/VestingManager.test.ts, under the describe("List, Purchase and Transfer"
+
+    describe("List, Purchase and Transfer", async function () {
+    ...
+
+    it.only("decrease allocation affects sell limit", async function () {
+      // initial, alice has 1000
+      const {vesting, alice, bob, manager, tokenOwner,owner, token, marketPlaceholder} = await loadFixture(deployStepVestingFixture);
+
+      await token.write.approve([vesting.address, parseEther("9000")], { account: owner.account });
+      await vesting.write.createVesting([bob.account.address, parseEther("9000")], { account: owner.account });
+
+      // alice has 100 
+      await vesting.write.transferVesting([alice.account.address, bob.account.address, parseEther("900")], { account: owner.account });
+      
+      await manager.write.listVesting([bob.account.address, vesting.address, parseEther("1000")], { account: marketPlaceholder.account });
+      
+      // sell 20, reached sell limit
+      await manager.write.listVesting([alice.account.address, vesting.address, parseEther("20")], { account: marketPlaceholder.account });
+
+      // alice allocation is decreased by 80, resulting 0
+      await vesting.write.transferVesting([alice.account.address, bob.account.address, parseEther("80")], { account: owner.account });
+
+      // here, alice's sold = 20, bought = 0, total allocation = 0
+      
+      // alice buys 100 from bob
+      await manager.write.completePurchase([alice.account.address, vesting.address,parseEther("100")], { account: marketPlaceholder.account });
+
+      // alice can not sell 100
+      await expect(manager.write.listVesting([alice.account.address, vesting.address, parseEther("100")], { account: marketPlaceholder.account }))
+      .to.be.revertedWith('SS_VestingManager: cannot list more than max sell percent');
+  })
+Recommended mitigation steps
+
+Consider update the mechanism to compute sell limit that handles the case described above, such that:
+apply sell limit for allocation and sell limit for direct buy/sell with marketplace separately
+
+Links to affected code
+SecondSwap_VestingManager.sol#L121-L140
+Opens in a new window
+Submissions touching same files
+SecondSwap_VestingManager.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-759.
+Business rule mitigation
+Edited: Feb 22
+calvinx
+
+We will be relying on manual process to mitigate this problem, our solution is:
+1> Upon token issuer "confiscating" tokens from seller, SC freezes the sales from the seller
+2> We speak to token issuer as to reason why tokens were "confiscated" or removed from seller
+3> We delete all listings from that seller if necessary
+
+Timeline
+Submitted
+Created: 522d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

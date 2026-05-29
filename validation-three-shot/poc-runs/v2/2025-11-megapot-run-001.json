@@ -1,0 +1,123 @@
+{
+  "benchmark": "2025-11-megapot",
+  "results": [
+    {
+      "finding_id": "H-1",
+      "notes": "PoC uses actual JackpotBridgeManager and Jackpot flow. Signed claim bridges current winnings by direct USDC transfer while leaving attacker allowance, then a later buyTickets overcharge surplus is drained via transferFrom.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/H-1-StaleBridgeAllowancePoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test ./test/poc/H-1-StaleBridgeAllowancePoC.spec.ts",
+      "test_result": "passed",
+      "title": "Arbitrary bridge call leaves reusable USDC allowance that can drain later bridge-manager funds"
+    },
+    {
+      "finding_id": "M-2",
+      "notes": "ERC1271 owner signature validates on the smart wallet but bridge recovers the EOA and reverts NotTicketOwner, leaving the ticket custodied.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-2-BridgeSmartWalletClaimLockPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test ./test/poc/M-2-BridgeSmartWalletClaimLockPoC.spec.ts",
+      "test_result": "passed",
+      "title": "ECDSA-only bridge claims permanently lock tickets owned by ERC-1271 smart wallets"
+    },
+    {
+      "finding_id": "M-5",
+      "notes": "Uses actual ScaledEntropyProvider. Old callback reverts after owner rotation and drawing remains locked beyond the documented future-only rotation behavior.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-5-EntropyProviderRotationBlocksSettlementPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test ./test/poc/M-5-EntropyProviderRotationBlocksSettlementPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Changing entropy provider while a drawing is pending permanently blocks settlement"
+    },
+    {
+      "finding_id": "M-10",
+      "notes": "Permissionless claim of a drawing 1 unreferred winning ticket increases drawing 2 lpEarnings while drawing 1 lpEarnings stays unchanged.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-10-NoReferralWinnerShareWrongDrawingPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test ./test/poc/M-10-NoReferralWinnerShareWrongDrawingPoC.spec.ts",
+      "test_result": "passed",
+      "title": "No-referral winner share is credited to the current drawing instead of the settled drawing"
+    },
+    {
+      "finding_id": "H-12",
+      "notes": "Claim lists only attacker ticket, but bridge calldata transfers victim winning NFT and attacker claims its payout.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/H-12-BridgeArbitraryTicketTransferPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test test/poc/H-12-BridgeArbitraryTicketTransferPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Arbitrary bridge call lets a winning ticket holder steal other users' custodied ticket NFTs"
+    },
+    {
+      "finding_id": "M-14",
+      "notes": "Same-config replacement calculator has no drawing 1 snapshot, so a tier 11 winner claims 0 USDC and the ticket burns.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-14-PayoutCalculatorRotationZeroesActiveDrawingPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test test/poc/M-14-PayoutCalculatorRotationZeroesActiveDrawingPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Mid-drawing payout calculator update causes active drawing to settle with zero stored payouts"
+    },
+    {
+      "finding_id": "M-18",
+      "notes": "Real Jackpot request at sequence 1 is overwritten after provider rotation and colliding new-provider request; old-provider fulfillment reaches attacker callback and Jackpot stays locked.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-18-EntropyProviderSequenceCollisionPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test test/poc/M-18-EntropyProviderSequenceCollisionPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Changing entropy providers can overwrite pending randomness requests with colliding sequence IDs"
+    },
+    {
+      "finding_id": "M-20",
+      "notes": "Direct buys still pay the drawing snapshot after a mid-drawing global price increase, but bridge buys pay the raised global price and leave the extra USDC in the manager.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-20-BridgeTicketPriceDriftPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "cd \"/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot\" && yarn build && npx hardhat test ./test/poc/M-20-BridgeTicketPriceDriftPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Bridge ticket purchases use live global ticketPrice instead of the active drawing price, causing overcharges or purchase DoS"
+    },
+    {
+      "finding_id": "M-27",
+      "notes": "Valid tier-zero payout configured before drawing snapshot. Settlement rolls LP forward without reserving tier-zero user winnings, then an ordinary ticket owner claims the nonzero payout.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-27-TierZeroSettlementUndercountPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test test/poc/M-27-TierZeroSettlementUndercountPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Tier zero winners are excluded from settlement obligations but can still claim stored tier-zero payouts"
+    },
+    {
+      "finding_id": "H-60",
+      "notes": "One Hardhat test passed. Uses the real ScaledEntropyProvider with the repo entropy mock and shows jackpot-shaped matching ranges force the bonusball to equal the first normal draw because sets share seed and nonce. No privileged action is required.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/H-60-ScaledEntropySetCorrelationPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test ./test/poc/H-60-ScaledEntropySetCorrelationPoC.spec.ts",
+      "test_result": "passed",
+      "title": "ScaledEntropyProvider reuses one entropy seed for all random sets, correlating normal balls and bonusball"
+    },
+    {
+      "finding_id": "M-83",
+      "notes": "Allowed bonusballMin 226 makes the next drawing accept a valid entropy bonusball that overflows packing and leaves drawing 2 locked, blocking claims, buys, and LP withdrawal initiation.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-83-BonusballPackingBoundaryLocksDrawingPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn test ./test/poc/M-83-BonusballPackingBoundaryLocksDrawingPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Bonusball ranges above the bit-packing boundary can make entropy settlement revert and lock the drawing"
+    },
+    {
+      "finding_id": "M-91",
+      "notes": "Settled tier-11 payout is positive on old calculator, then owner rotation makes claim read zero from the new calculator and burns the ticket.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-91-PayoutCalculatorRotationHistoricalClaimPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "yarn hardhat test ./test/poc/M-91-PayoutCalculatorRotationHistoricalClaimPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Payout calculator rotation reprices already initialized or settled ticket claims"
+    },
+    {
+      "finding_id": "M-101",
+      "notes": "Run from source root. Equivalent post-settlement calculator replacement makes a settled tier 11 claim pay zero and burns the ticket.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-11-megapot-538649/2025-11-megapot/test/poc/M-101-PayoutCalculatorPostSettlementClaimDriftPoC.spec.ts",
+      "status": "PoC Created",
+      "test_command": "npx hardhat test test/poc/M-101-PayoutCalculatorPostSettlementClaimDriftPoC.spec.ts",
+      "test_result": "passed",
+      "title": "Updating the payout calculator breaks already-settled ticket claims by reading payouts from the new calculator"
+    }
+  ],
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/submission-candidates/v2/2025-11-megapot-run-001.md"
+}

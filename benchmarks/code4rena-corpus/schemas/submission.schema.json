@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-agent-audit.local/schemas/code4rena-submission.schema.json",
+  "title": "Code4renaSubmission",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "competition_slug",
+    "submission_id",
+    "title",
+    "status",
+    "rejection_reason_category",
+    "source"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "competition_slug": { "type": "string" },
+    "competition_uid": { "type": ["string", "null"] },
+    "submission_uid": { "type": ["string", "null"] },
+    "submission_id": { "type": ["string", "null"] },
+    "submission_number": { "type": ["integer", "null"] },
+    "title": { "type": ["string", "null"] },
+    "claimed_severity": { "type": ["string", "null"] },
+    "final_severity": { "type": ["string", "null"] },
+    "status": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "rejected",
+        "duplicate",
+        "downgraded",
+        "invalid",
+        "out_of_scope",
+        "low_or_qa",
+        "spam",
+        "unknown"
+      ]
+    },
+    "is_primary": { "type": ["boolean", "null"] },
+    "accepted_group_id": { "type": ["string", "null"] },
+    "duplicate_of": { "type": ["string", "null"] },
+    "submitter": { "type": ["string", "null"] },
+    "affected_contracts": { "type": "array", "items": { "type": "string" } },
+    "affected_functions": { "type": "array", "items": { "type": "string" } },
+    "judge_comment": { "type": ["string", "null"] },
+    "sponsor_comment": { "type": ["string", "null"] },
+    "warden_comment": { "type": ["string", "null"] },
+    "rejection_reason_raw": { "type": ["string", "null"] },
+    "rejection_reason_category": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "duplicate",
+        "out_of_scope",
+        "known_issue",
+        "sponsor_disputed",
+        "insufficient_poc",
+        "no_valid_impact",
+        "low_or_qa_severity",
+        "user_error",
+        "admin_or_trusted_role",
+        "unsupported_token_or_external_dependency",
+        "speculative_or_future_issue",
+        "by_design",
+        "safeguard_exists",
+        "incorrect_code_path",
+        "not_exploitable",
+        "environment_or_deployment_assumption",
+        "non_primary_or_excluded",
+        "spam",
+        "other",
+        "unknown"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["exact", "high", "medium", "low", "unknown"]
+    },
+    "raw_row": { "type": "object" },
+    "source": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string" },
+        "url": { "type": ["string", "null"] },
+        "captured_at": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,135 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-252
+Low
+Primary
+S-57
+Lack of allocation validation during ConcreteMultiStrategyVault initialization can render vault non-functional
+muellerberndt
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The function ValidateVaultParameters in MultiStrategyVaultHelper.sol, which is called during vault initialization, is supposed to check that the sum of basis points of all allocations doesn't exceed 10,000. It says so in the function description (line 112):
+
+     * @custom:reverts AllotmentTotalTooHigh if the total strategy allocations exceed 100%.
+
+
+However, this check isn't actually performed. As a result, the vault can be initialized incorrectly, breaking the functionality of the vault unless the allocations are later repaired by an admin:
+
+If the sum of allocations is less than 100%, distributeAssetsToStrategies() will leave unallocated assets in the vault;
+If the sum of allocations is higher than 100%, multiple functions that push or pull assets from or to the vault will fail because due to insufficient token balances.
+Proof of Concept
+
+This flaw can be easily demonstrated by increasing the allocation of the mock strategy in line 2088 of ConcreteMultiStrategyVault.t.sol from 3333 to 5000:
+
+    // ============= UTILITIES =========================
+
+    function _createMockStrategy(IERC20 asset_, bool decreased_) internal returns (Strategy memory) {
+        return
+            Strategy({
+                strategy: IStrategy(address(new MockERC4626(asset_, "Mock Shares", "MS"))),
+                allocation: Allocation({index: 0, amount: decreased_ ? 1000 : 5000})
+            });
+    }
+
+
+Multiple tests will now revert with ERC20InsufficientBalance errors when the vault attempts to deposit assets into its strategies:
+
+ % forge test test/ConcreteMultiStrategyVault.t.sol -vvv
+(...)
+Failing tests:
+Encountered 14 failing tests in test/ConcreteMultiStrategyVault.t.sol:ConcreteMultiStrategyVaultTest
+[FAIL: ERC20InsufficientBalance(0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF, 0, 500000000000000000000000000000000000 [5e35])] test_addReplaceStrategyAllotmentTooHigh() (gas: 5061558)
+[FAIL: ERC20InsufficientBalance(0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF, 0, 499180601000000000000000000 [4.991e26]); counterexample: calldata=0xb4e3ace5000000000000000000000000000000000000000000000000000000003b81c872 args=[998361202 [9.983e8]]] test_changeAllocationsAndRelocateFunds(uint256) (runs: 0, μ: 0, ~: 0)
+[FAIL: ERC20InsufficientBalance(0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF, 0, 9798500000000 [9.798e12]); counterexample: calldata=0xc21a1ac50000000000000000000000000000000000000000000000000000000000004c8d args=[19597 [1.959e4]]] test_deposit_redeem_no_fees(uint256) (runs: 0, μ: 0, ~: 0)
+[FAIL: ERC20InsufficientBalance(0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF, 0, 500000000 [5e8])] test_mintRedeem() (gas: 5073610)
+[FAIL: ERC20InsufficientBalance(0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF, 0, 9798500000000000000000 [9.798e21]); counterexample: calldata=0xef9b1b760000000000000000000000000000000000000000000000000000000000004c8d args=[19597 [1.959e4]]] test_multiple_deposits(uint256) (runs: 0, μ: 0, ~: 0)
+[FAIL: ERC20InsufficientBalance(0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF, 0, 500000000000000000 [5e17])] test_operateOnBehalfOf() (gas: 5112074)
+[FAIL: ERC20InsufficientBalance(0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF, 0, 3500000000000000000 [3.5e18])] test_previewDepositAccountsForFees() (gas: 5346413)
+[FAIL: ERC20InsufficientBalance(0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF, 0, 9798500000000000000000 [9.798e21]); counterexample: calldata=0xc4e50a9e0000000000000000000000000000000000000000000000000000000000004c8d args=[19597 [1.959e4]]] test_pullFundsFromAllStrategies(uint256) (runs: 0, μ: 0, ~: 0)
+(...)
+
+Recommended mitigation steps
+
+Check the allotment totals during initialization.
+
+Links to affected code
+MultiStrategyVaultHelper.sol#L97-L133
+Opens in a new window
+Submissions touching same files
+MultiStrategyVaultHelper.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-57.
+Safety checks are Low
+Edited: Feb 22
+Picodes
+
+Downgrading to Low as this is an admin action and therefore adding safety checks is a low finding
+
+Duplicates
+4
+S-1264
+There is no check during initialization, to ensure `total allocation.amount` of the new strategies registered in the `ConcreteMultiStrategyVault` contract is less than or equal to `10000`
+Udsen
+27
+S-469
+The Validate Vault function does not correctly validate all vault parameters
+boraichodrunkenmaster
+26
+S-891
+Function validateVaultParameters does not check strategy allocations
+pwnforce
+00
+S-589
+Total strategy allocations exceeding 100% is not checked at time of initialization.
+LonelyWolfDemon
+00
+Timeline
+Submitted
+Created: 552d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

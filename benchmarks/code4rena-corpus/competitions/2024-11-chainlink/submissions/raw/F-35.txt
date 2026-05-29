@@ -1,0 +1,135 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-35
+Medium
+Primary
+S-206
+FeeQuoter will never receive price update from key stone oracle via onReport hook.
+ladboy233
+37
+Sufficient
+383d ago
+Description
+
+FeeQuoter should receive price update from key stone oracle.
+
+contract FeeQuoter is AuthorizedCallers, IFeeQuoter, ITypeAndVersion, IReceiver, KeystoneFeedsPermissionHandler {
+
+The fee quote is in charge of computing message fee and process message to set fee related field.
+
+The price updated is done via the onReport hook.
+
+However, the fee quoter contract does not implement IReceover.support interface,
+
+then the feeQuoter will never receive the on report price update.
+
+Because when the key stone oracle push price update to the fee quoter, the first thing the code check is if the fee quoter contract implement the receiver interface,
+
+if not, the message is not delivered.
+
+  // This call can consume up to 90k gas.
+    if (!ERC165Checker.supportsInterface(receiver, type(IReceiver).interfaceId)) {
+      s_transmissions[transmissionId].invalidReceiver = true;
+      return false;
+    }
+
+    bool success;
+    bytes memory payload = abi.encodeCall(IReceiver.onReport, (metadata, validatedReport));
+
+    uint256 remainingGas = gasleft() - INTERNAL_GAS_REQUIREMENTS_AFTER_REPORT;
+    assembly {
+      // call and return whether we succeeded. ignore return data
+      // call(gas,addr,value,argsOffset,argsLength,retOffset,retLength)
+      success := call(remainingGas, receiver, 0, add(payload, 0x20), mload(payload), 0x0, 0x0)
+    }
+
+note the check:
+
+!ERC165Checker.supportsInterface(receiver, type(IReceiver).interfaceId)
+
+because the receiver, which is the fee quoter contract does not implement type(IReceiver).interfaceId, the message is not delivered.
+
+the impact is that the token price data cannot be updated on time and the user may either over-pay the cross-chain fee, or under-pay the cross-chain fee consistently.
+
+the under-pay case is more concerning.
+
+Recommendation
+
+implement type(IReceiver).interfaceId in the fee quoter contract.
+
+   function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
+        return interfaceId == _INTERFACE_ID_IReceiver || interfaceId == _INTERFACE_ID_ERC165;
+    }
+Links to affected code
+FeeQuoter.sol#L25
+Opens in a new window
+FeeQuoter.sol#L501
+Opens in a new window
+Submissions touching same files
+FeeQuoter.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-206.
+Implemented Patch
+Edited: Feb 22
+0xTraub
+
+We have implemented the following patch
+
+https://github.com/smartcontractkit/chainlink/pull/15448/files#diff-1859122b5ff5261692222f5ba921ee9108438593b0664e5aba8d573d866f27aaR498
+
+Duplicates
+2
+S-437
+Keystone report transmission to FeeQuoter is broken
+0xRobocop
+67
+S-323
+Since FeeQuoter does not implement the ERC165 interface, it is not possible to update prices using onReport
+Drynooo
+42
+Timeline
+Submitted
+Created: 558d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

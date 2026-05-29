@@ -1,0 +1,129 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-62
+Low
+Primary
+S-490
+CCIPHome doesn’t implement the getCapabilityConfiguration(), which results in the capability registry not being able to fetch configs
+EastHats
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The Capability Registry’s is used to manage Nodes (including their links to Node Operators), Capabilities, and DONs (Decentralized Oracle Networks) which are sets of nodes that support those Capabilities.
+
+When a capability’s data is being set the logic also sets a configuration contract as well which is the CCIPHome contract. Its purpose is to store the configuration for the CCIP capability.
+There are two classes of configuration: chain configuration and DON (in the CapabilitiesRegistry sense) configuration. Each chain has a single configuration which includes information like the router address.
+
+The problem is that there are multiple requirements for a “configuration contract”, including:
+
+Supports the ICapabilityConfiguration interface;
+Implementi both getCapabilityConfiguration and beforeCapabilityConfigSet functions.
+
+The problem is that the getCapabilityConfiguration isn’t implemented to its full extent as it returns empty bytes instead of the actual configuration:
+
+  /// @dev The CCIP capability will fetch the configuration needed directly from this contract.
+  /// The offchain syncer will call this function, so its important that it doesn't revert.
+  function getCapabilityConfiguration(
+    uint32 /* donId */
+  ) external pure override returns (bytes memory configuration) {
+    return bytes("");
+  }
+
+As mentioned in the above natspec, the CCIP Capability will fetch the configuration through this function, it’s important that it doesn’t revert (as well as to provide the needed configuration) while here it provides “empty bytes”.
+
+In the Capabilities Registry it can also be seen that the registry relies upon this function to fetch all capability configs, which again will result in the retrieval of empty bytes.
+
+ /// @notice Returns the DON specific configuration for a capability
+  /// @param donId The DON's ID
+  /// @param capabilityId The Capability ID
+  /// @return bytes The DON specific configuration for the capability stored on the capability registry
+  /// @return bytes The DON specific configuration stored on the capability's configuration contract
+  function getCapabilityConfigs(uint32 donId, bytes32 capabilityId) external view returns (bytes memory, bytes memory) {
+    uint32 configCount = s_dons[donId].configCount;
+
+    bytes memory donCapabilityConfig = s_dons[donId].config[configCount].capabilityConfigs[capabilityId];
+    bytes memory globalCapabilityConfig;
+
+    if (s_capabilities[capabilityId].configurationContract != address(0)) {
+      globalCapabilityConfig = ICapabilityConfiguration(s_capabilities[capabilityId].configurationContract)
+        .getCapabilityConfiguration(donId);
+    }
+
+    return (donCapabilityConfig, globalCapabilityConfig);
+  }
+Proof of Concept
+Offchain syncer calls getCapabilityConfiguration in order to fetch the capability configuration, but empty bytes are returned due to the un-implemented function.
+getCapabilityConfigs from the Capability registry can’t fetch the config from this particular configuration CCIP Home contract due to the un-implemented function.
+Recommended mitigation steps
+
+Implement the function to fetch the actual config rather than return empty bytes.
+
+Links to affected code
+CCIPHome.sol#L243-L250
+Opens in a new window
+Submissions touching same files
+CCIPHome.sol
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-490.
+Implemented Fix
+Edited: Feb 22
+0xTraub
+
+We have implemented a fix at the following
+
+https://github.com/smartcontractkit/chainlink/commit/3e74cb9e0c72b7a423a9b4eac7c66a8a7ee1e016#diff-54d637d7014d79b636033241971ff455088dd74d8e3b4ff60fef147a2ee7aaddR243
+
+CCIP doesn't use this function
+Edited: Feb 22
+rensr
+
+We don't use the capability registry that way. We would have certainly noticed an unimplemented function before sending it to audit.
+
+Timeline
+Submitted
+Created: 546d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

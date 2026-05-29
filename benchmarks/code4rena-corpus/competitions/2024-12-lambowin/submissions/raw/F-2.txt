@@ -1,0 +1,207 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-2
+Medium
+Primary
+S-91
+Since the cost of launching a new pool is minimal, an attacker can maliciously consume VirtualTokens.
+shaflow2
+71
+Sufficient
+383d ago
+Finding description and impact
+
+When launching a new pool, the factory contract needs to call the takeLoan function to intervene with virtual liquidity. The amount that can be borrowed is limited to 300 ether per block.
+
+github:https://github.com/code-423n4/2024-12-lambowin/blob/874fafc7b27042c59bdd765073f5e412a3b79192/src/VirtualToken.sol#L93
+
+    function takeLoan(address to, uint256 amount) external payable onlyValidFactory {
+        if (block.number > lastLoanBlock) {
+            lastLoanBlock = block.number;
+            loanedAmountThisBlock = 0;
+        }
+        require(loanedAmountThisBlock + amount <= MAX_LOAN_PER_BLOCK, "Loan limit per block exceeded");
+
+        loanedAmountThisBlock += amount;
+        _mint(to, amount);
+        _increaseDebt(to, amount);
+
+        emit LoanTaken(to, amount);
+    }
+
+
+However, when launching a new pool, the amount of virtual liquidity is controlled by users, and the minimum cost to launch a new pool is very low, requiring only gas fees and a small buy-in fee. This allows attackers to launch malicious new pools in each block, consuming the borrowing limit, which prevents legitimate users from launching new pools.
+
+Proof of Concept
+User 1 and User 2 submit transactions to launch pools with virtual liquidity of 10 ether and 20 ether, respectively.
+An attacker submits a transaction to launch a pool with 300 ether of virtual liquidity and offers a higher gas fee, causing their transaction to be prioritized and included in the block.
+Due to the takeLoan debt limit, the transactions of User 1 and User 2 revert.
+The attacker can repeat this attack in the next block.
+    function test_createLaunchPool1() public {
+        (address quoteToken, address pool, uint256 amountYOut) = lamboRouter.createLaunchPadAndInitialBuy{
+            value: 10
+        }(address(factory), "LamboToken", "LAMBO", 300 ether, 10);
+    }
+
+Running the above test can prove that an attacker only needs to consume the gas fee + 10 wei to exhaust the entire block's virtual liquidity available for creating new pools.
+
+Recommended mitigation steps
+Charge a launch fee for new pools to increase attack costs
+Limit the maximum virtual liquidity a user can consume per transaction
+Links to affected code
+VirtualToken.sol#L93
+Opens in a new window
+Submissions touching same files
+VirtualToken.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-91.
+S-538 enunciates the DoS more comprehensively
+Edited: Feb 22
+RaymondFam
+
+S-538 is more convincing with reasons alleging the need for better code refactoring.
+
+Duplicates
+32
+S-304
+DOS of `createLaunchPadAndInitialBuy`
+EPSec
+88
+S-107
+Token creators can be griefed due to permissionless and free access
+zxriptor
+81
+S-675
+`createLaunchPad` can be DoS'd by deploying launchpads with `virtualLiquidityAmount = MAX_LOAN_PER_BLOCK` at the beginning of every blocks
+Infect3d
+72
+S-246
+Attacker can DDOS launchpad creations at no-cost by hitting `MAX_LOAN_PER_BLOCK` in each blod
+rouhsamad
+64
+S-654
+Attacker can DOS launchpad creations at minimal cost
+MrPotatoMagic
+59
+S-406
+Block Loan Limit DoS Through Token Deployment
+Tychai0s
+58
+S-711
+Griefing attack on creating launch pad
+pontifex
+54
+S-193
+Creating launch pads can be completely DOS'd
+zzebra83
+54
+S-721
+```createLaunchPad()``` in LamboFactory.sol could be permanently DoSed
+prapandey031
+53
+S-617
+Malicious user can DoS launch pad creation by exploiting per-block loan limit through front-running
+Evo
+52
+S-324
+createLaunchPad can be abused due to missing access control leading to DoS and inflating VETH supply
+kodyvim
+47
+S-714
+createLaunchPad can be front-run and DOS'ed as loanedAmountThisBlock hits limit for a block
+c0pp3rscr3w3r
+45
+S-124
+Creation of LaunchPads can be exploited to block the creation of all other LaunchPads for the same token
+typicalHuman
+43
+S-189
+LamboFactory.sol :: createLaunchPad() can be exploited to reach MAX_LOAN_PER_BLOCK, resulting in a DOS attack that blocks all subsequent launchpad creations.
+Fitro
+40
+S-480
+Launchpad creation can be DOS by front-running with max loan amount
+m4k2
+33
+S-664
+MEV-Based Denial of Service Vulnerability in VirtualToken Loan System
+NexusAudits
+31
+S-384
+MAX_LOAN_PER_BLOCK in VirtualToken Enables Validator Reordering Attacks, Leading to Service Denial for Users
+NexusAudits
+31
+S-365
+Anyone can prevent LamboFactory.createLaunchPad to be called by maxing out the virtualLiquidityAmount
+jaraxxus
+11
+S-738
+Malicious user could block the creation of lambo tokens for other users
+Vasquez
+00
+S-733
+An attacker could cause a Denial of Service Attacker in the whole protocol by taking advantage of the 300 ether loan per block
+0xD4n13l
+00
+S-589
+DOS via Front-Running Attack on Loan Functionality
+macart224
+00
+S-587
+an attacker can grief other users by frontrunning calls to `function createLaunchPad`
+Fon
+00
+S-577
+DoS the creation of a LamboToken by front-running the MAX_LOAN_PER_BLOCK
+Le_Rems
+00
+S-544
+Denial of Service Vulnerability in createLaunchPad Function of LamboFactory.sol
+jkk812812
+00
+Timeline
+Submitted
+Created: 537d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,367 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-45
+Low
+Primary
+S-1104
+`withdrawalQueue` burns users' shares while still lending out the user's assets, causing loss of yield for users in the withdrawal queue
+rscodes
+92
+Sufficient
+383d ago
+Vulnerability Details
+
+When an user trys to withdraw but there isnt enough liquidity, the order gets sent to the withdrawal queue.
+
+function _withdraw(uint256 assets_, address receiver_, address owner_, uint256 shares, uint256 feeShares) private {
+        if (msg.sender != owner_) {
+              _approve(owner_, msg.sender, allowance(owner_, msg.sender) - shares);
+        }
+1.)-->  _burn(owner_, shares);
+        if (feeShares > 0) _mint(feeRecipient, feeShares);
+        uint256 availableAssetsForWithdrawal = getAvailableAssetsForWithdrawal();
+        if (availableAssetsForWithdrawal >= assets_) {
+              _withdrawStrategyFunds(assets_, receiver_);
+        } else {
+              if (address(withdrawalQueue) == address(0)) {
+                  revert InsufficientVaultFunds(address(this), assets_, availableAssetsForWithdrawal);
+              }
+ 2.)-->       withdrawalQueue.requestWithdrawal(receiver_, assets_);
+        }
+        emit Withdraw(msg.sender, receiver_, owner_, assets_, shares);
+}
+
+As shown, regardless of whether the user gets their withdrawal processed immediately or if their order has been sent to the queue, the code burns their shares.
+
+This leads to loss of yield for the users as their assets are still being lent out (which is why they cannot withdraw). By burning their shares they will not be able to receive the yield from their assets that are still being lent out.
+
+Impact
+
+Let's put that in diagram form:
+
+          |---------------------------------|----------------------------------|----------------------|
+       Time 0                             Time X                             Time Y                 Time Z
+Alice deposits 10ether     Vault lends Alice's assets to ClaimRouter  Alice calls withdraw   CR repays debt + reward
+
+
+At time Y, after Alice calls withdraw, the order will be sent to the withdrawalQueue as Alice's assets are being lent out and can't be withdrawn immediately.
+
+However, the code burns all of Alice's shares, causing Alice to lose all the yield from Time X to Time Z.
+
+Since Alice's assets was being lent out from time X to time Z, it is rightful for Alice to receive yield/rewards during that time period since the yield/rewards was generated from her tokens being lent out
+
+Note that I am just using lending to ClaimRouter as an example, it could also be lending on individual strategies(like Aave).
+
+In that case all reward distribution by individual strategies during time Y to Z, which is through harvestRewards, will end up not distributing any rewards to Alice even though it is Alice's tokens that are still being lent out, as Alice has not legitimately withdrew yet (only waiting in the queue, thats all)
+
+This is because distribution of rewards from individual strategies use userBalance of shares to distribute, and since withdrawalQueue has prematurely burned all of Alice's shares, the vault gets to lend out Alice's tokens without giving Alice any reward.
+
+PoC
+
+Go to the folder /test and create a file LossOfYield.t.sol:
+
+//SPDX-License-Identifier: MIT
+pragma solidity 0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {console2 as console} from "forge-std/console2.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {MockERC20} from "../test/utils/mocks/MockERC20.sol";
+import {ConcreteMultiStrategyVault} from "../src/vault/ConcreteMultiStrategyVault.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {Strategy, VaultFees, Allocation, GraduatedFee} from "../src/interfaces/IConcreteMultiStrategyVault.sol";
+import {VaultRegistry} from "../src/registries/VaultRegistry.sol";
+import {IMockStrategy} from "../src/interfaces/IMockStrategy.sol";
+import {Errors} from "../src/interfaces/Errors.sol";
+import {MockERC4626} from "./utils/mocks/MockERC4626.sol";
+import {MockERC4626Protect} from "./utils/mocks/MockERC4626Protect.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+import {MockBeraOracle} from "./utils/mocks/MockBeraOracle.sol";
+import {TokenRegistry} from "../src/registries/TokenRegistry.sol";
+import {ClaimRouter, ClaimRouterEvents} from "../src/claimRouter/ClaimRouter.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {VaultFlags} from "../src/interfaces/IClaimRouter.sol";
+import {IMockProtectStrategy} from "../src/interfaces/IMockProtectStrategy.sol";
+import {IStrategy} from "../src/interfaces/IStrategy.sol";
+import {WithdrawalQueue} from "../src/queue/WithdrawalQueue.sol";
+import "../src/strategies/ProtectStrategy/ProtectStrategy.sol";
+import {IProtectStrategy} from "../src/interfaces/IProtectStrategy.sol";
+
+contract ClaimRouterTest is Test, ClaimRouterEvents {
+    using Math for uint256;
+
+    uint8 ORACLE_QUOTE_DECIMALS = 8;
+    bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
+    bytes32 public constant BLUEPRINT_ROLE = keccak256("BLUEPRINT_ROLE");
+    GraduatedFee[] zeroFees;
+
+    address treasury = address(0x1111);
+    address feeRecipient = address(0x2222);
+    address[] blueprints = [address(0x3333)];
+    address admin = address(0x4444);
+
+    MockERC20 fakeETH;
+    MockERC20 fakeBTC;
+    MockERC20 fakeUSDC;
+
+    VaultRegistry vaultRegistry;
+
+    address implementation;
+    bytes32 vaultImplId;
+
+    ConcreteMultiStrategyVault ethVault1;
+
+    MockBeraOracle oracle;
+    string fETHfUSDPair = "FETH/FUSDC";
+    string fBTCfUSDPair = "FBTC/FUSDC";
+    string[] currencyPairs = [fETHfUSDPair, fBTCfUSDPair];
+    address[] tokenCascade;
+    int256 BTCPrice = int256(65000 * 10 ** ORACLE_QUOTE_DECIMALS);
+    int256 ETHPrice = int256(4000 * 10 ** ORACLE_QUOTE_DECIMALS);
+
+    TokenRegistry tokenRegistry;
+
+    ClaimRouter claimRouter;
+    address public PS;
+
+    function setUp() public {
+        vaultRegistry = new VaultRegistry(admin);
+        fakeETH = new MockERC20("FakeETH", "FETH", 18);
+        fakeBTC = new MockERC20("FakeBTC", "FBTC", 18);
+        fakeUSDC = new MockERC20("FakeUSDC", "FUSDC", 6);
+        implementation = address(new ConcreteMultiStrategyVault());
+        vaultImplId = keccak256(abi.encode(implementation));
+
+        zeroFees.push(GraduatedFee({lowerBound: 0, upperBound: 10000, fee: 0}));
+
+        ethVault1 = _createVault(fakeETH);
+
+        //OraclePlug and TokenRegistry setup
+
+        oracle = new MockBeraOracle();
+        oracle.addCurrencyPairs(currencyPairs);
+
+        tokenRegistry = new TokenRegistry(admin, treasury);
+        _setOraclePrices(ETHPrice, BTCPrice);
+
+        //ClaimRouter setup
+        tokenCascade.push(address(fakeUSDC));
+        tokenCascade.push(address(fakeETH));
+
+        claimRouter = new ClaimRouter(admin, address(vaultRegistry), address(tokenRegistry), blueprints, tokenCascade);
+        vm.prank(admin);
+        IProtectStrategy(PS).setClaimRouter(address(claimRouter));
+    }
+    function test_LossOfYield() public {
+        address Alice = address(0x12354);
+        uint256 amount = 10 ether;
+        uint256 yield = 5 ether;
+
+        WithdrawalQueue queue = new WithdrawalQueue(address(ethVault1));
+        vm.prank(admin);
+        ethVault1.setWithdrawalQueue(address(queue));
+        
+        vm.prank(admin);
+        fakeETH.mint(Alice, amount);
+        vm.startPrank(Alice);
+        fakeETH.approve(address(ethVault1), type(uint256).max);
+        ethVault1.deposit(amount, Alice);
+        vm.stopPrank();
+
+        vm.prank(blueprints[0]);
+        claimRouter.requestToken(VaultFlags.BUFFER, address(fakeETH), amount, payable(blueprints[0])); //Lend out Alice's tokens
+
+        // At Time Y as shown in the diagram in the submission, Alice trys to withdraw
+        assertEq(queue.getLastRequestId(), 0, "Last request");
+        vm.prank(Alice);
+        ethVault1.withdraw(amount, Alice, Alice);
+        assertEq(queue.getLastRequestId(), 1, "Last request");
+
+        // At Time Z 
+        vm.prank(admin);
+        fakeETH.mint(blueprints[0], yield);
+        vm.startPrank(blueprints[0]);
+        fakeETH.approve(address(claimRouter), type(uint256).max);
+        claimRouter.repay(address(fakeETH), amount, blueprints[0]);
+        claimRouter.addRewards(address(fakeETH), yield, blueprints[0]);
+        vm.stopPrank();
+
+        vm.prank(admin);
+        ethVault1.batchClaimWithdrawal(1);
+
+        console.log("Alice's balance:", fakeETH.balanceOf(Alice)/1 ether, "ether");
+    }
+
+
+    function _createVault(ERC20 asset) internal returns (ConcreteMultiStrategyVault) {
+        vm.startPrank(admin);
+        string memory symbol = asset.symbol();
+        ConcreteMultiStrategyVault newVault = ConcreteMultiStrategyVault(Clones.clone(implementation));
+        Strategy[] memory newStrategy = new Strategy[](1);
+        newStrategy[0] = Strategy({
+            strategy: IStrategy(
+                address(
+                    new ProtectStrategy(
+                        asset,
+                        address(0x12355),
+                        admin,
+                        address(claimRouter),
+                        address(newVault)
+                    )
+                )
+            ),
+            allocation: Allocation({index: 0, amount: 10000})
+        });
+        newVault.initialize(
+            ERC20(address(asset)),
+            string.concat("Vault ", symbol, "Shares"),
+            string.concat("V", symbol),
+            newStrategy,
+            feeRecipient,
+            VaultFees({depositFee: 0, withdrawalFee: 0, protocolFee: 0, performanceFee: zeroFees}),
+            type(uint256).max,
+            admin
+        );
+        vaultRegistry.addVault(address(newVault), vaultImplId);
+        PS = address(newStrategy[0].strategy);
+        vm.stopPrank();
+        return newVault;
+    }
+    function _setOraclePrices(int256 ETHPrice_, int256 BTCPrice_) public {
+        // set prices for the oracle
+        oracle.setPriceDecimalsAndTimestamp("FETH/FUSDC", ETHPrice_, ORACLE_QUOTE_DECIMALS, 1);
+        oracle.setPriceDecimalsAndTimestamp("FBTC/FUSDC", BTCPrice_, ORACLE_QUOTE_DECIMALS, 1);
+
+        // register the tokens with the TokenRegistry
+        vm.prank(admin);
+        tokenRegistry.registerToken(
+            address(fakeETH), // token Address
+            false, // is Reward
+            address(oracle), // oracleAddr_,
+            ORACLE_QUOTE_DECIMALS, // oracleDecimals_,
+            fETHfUSDPair
+        ); // oraclePair_
+        vm.prank(admin);
+        tokenRegistry.registerToken(
+            address(fakeBTC), // token Address
+            false, // is Reward
+            address(oracle), // oracleAddr_,
+            ORACLE_QUOTE_DECIMALS, // oracleDecimals_,
+            fBTCfUSDPair
+        ); // oraclePair_
+    }
+}
+
+Run forge test --mt test_LossOfYield -vv
+
+Ran 1 test for test/LossOfYield.t.sol:ClaimRouterTest
+[PASS] test_LossOfYield() (gas: 1499759)
+Logs:
+  Alice's balance: 10 ether
+
+As shown, instead of getting 15 ether, Alice only gets back her original balance which is 10 ether. Despite lending out Alice's tokens the whole time, Alice fully loses the 5 ether yield.
+
+Recommendation
+
+Don't burn the shares immediately.
+
+Note that instead of pushing in the amount of assets, withdrawalQueue should push in the amount of shares instead. (This is because assets can change during the actual withdrawal just like the example i provided above)
+
+Only during the actual withdrawal, read the shares that are pushed into the queue, then burn it.
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L423
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1104.
+This is an intended behaviour
+Edited: Feb 22
+gerantonyk
+
+We want to freeze the conversion at the moment of the request. We don’t want the user to remain exposed to share price changes after they request the withdrawal.
+
+Picodes
+12/19/2024
+
+As long as this is the intended design, i think we could justify both options so I'll downgrade to low
+
+Duplicates
+7
+S-1336
+Users can redeem their shares for much more assets than their actual value
+samuraii77
+63
+S-1458
+Premature Share Burning in Strategy Withdrawals Can Lead to Fund Loss
+Sparrow
+55
+S-793
+Withdrawal queue hardcodes the cumulative amount which results in withdrawal request executing at outdated prices / rebasing tokes can't be supported
+iamandreiski
+51
+S-788
+Saving user withdrawal amount in form of asset value causes loss of yield to users
+lanrebayode77
+30
+S-29
+Share Burning Before Asset Availability Verification Leads to Permanent Fund Loss
+0xbrett8571
+00
+S-449
+Incorrect Tracking in withdrawalQueue Leading to Potential Yield Loss and Locking of funds for last withdrawer
+a2security
+00
+S-217
+Users cannot cancel withdrawal requests; they can only wait
+levi_104
+00
+Timeline
+Submitted
+Created: 542d ago
+High
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

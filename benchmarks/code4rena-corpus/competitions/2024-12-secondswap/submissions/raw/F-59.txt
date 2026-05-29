@@ -1,0 +1,206 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-59
+Medium
+Primary
+S-750
+Missing sellable check in completePurchase will cause a user to buy a token marked as unsellable by S2ADMIN if it was listed beforehand
+Bigsam
+29
+Sufficient
+383d ago
+Finding description and impact
+
+A token marked sellable can be purchased because of the absence of the sellable check when completing a spot purchase.
+
+Proof of Concept
+
+A user is not permitted to vest tokens that are not marked as sellable by the contract and admin
+
+  /**
+     * @notice Lists tokens for sale in the marketplace
+     * @dev Validates selling limits and transfers tokens to contract
+     * @param seller Address of the token seller
+     * @param plan Address of the vesting plan
+     * @param amount Amount of tokens to list
+     * @custom:throws vesting not sellable
+     * @custom:throws SS_VestingManager: insufficient availablility
+     * @custom:throws SS_VestingManager: cannot list more than max sell percent
+     */
+    function listVesting(address seller, address plan, uint256 amount) external onlyMarketplace {
+
+
+@audit>>        require(vestingSettings[plan].sellable, "vesting not sellable");
+  
+
+      require(SecondSwap_Vesting(plan).available(seller) >= amount, "SS_VestingManager: insufficient availablility"); 
+
+
+
+
+But this tokens are always marked as sellable on deployment and admin has the Power to mark them as unsellable
+
+
+    /**
+     * @notice Sets whether tokens can be sold from a vesting contract
+     * @dev Also initializes default settings for new sellable vestings
+     * @param vesting Address of the vesting contract
+     * @param sellable Whether the tokens can be sold
+     * @custom:throws SS_VestingManager: Unauthorised user
+     */
+    function setSellable(address vesting, bool sellable) external {
+
+@audit >> 1. admin>>        require(s2Admin == msg.sender || vestingDeployer == msg.sender, "SS_VestingManager: Unauthorised user");
+
+        VestingSettings storage vestingSetting = vestingSettings[vesting];
+
+        vestingSetting.sellable = sellable;
+        if (vestingSetting.maxSellPercent == 0 && vestingSetting.sellable) {
+            vestingSetting.maxSellPercent = 2000;
+            vestingSetting.buyerFee = -1;
+            vestingSetting.sellerFee = -1;
+            emit MaxSellPercentUpdated(vesting, 2000);
+        }
+        emit VestingSellableUpdated(vesting, sellable);
+    }
+
+
+On deployment it is always set to true
+
+
+  */
+    function deployVesting(
+        address tokenAddress,
+        uint256 startTime,
+        uint256 endTime,
+        uint256 steps,
+        string memory vestingId
+    ) external {
+        require(_tokenOwner[msg.sender] == tokenAddress, "SS_VestingDeployer: caller is not the token owner");
+        //require(_tokenOwner[msg.sender] == address(SecondSwap_StepVesting(_stepVesting).token()), "SS_VestingDeployer: caller is not the token owner"); Can't implement this as the stepVesting Contract is not deployed
+        require(tokenAddress != address(0), "SS_VestingDeployer: token address is zero"); // 3.2. Arbitrary transfer of vesting
+
+        require(startTime < endTime, "SS_VestingDeployer: start time must be before end time");
+        require(steps > 0, "SS_VestingDeployer: steps must be greater than 0");
+        require(manager != address(0), "SS_VestingDeployer: manager not set");
+
+        address newVesting = address(
+            new SecondSwap_StepVesting(
+                msg.sender,
+                manager,
+                IERC20(tokenAddress),
+                startTime,
+                endTime,
+                steps,
+                address(this)
+            )
+        );
+
+
+@audit>>>        IVestingManager(manager).setSellable(newVesting, true);
+      
+
+       emit VestingDeployed(tokenAddress, newVesting, vestingId);
+    }
+
+After a user lists this token and admin makes this token unsellable a user can still purchase this token successfully 1 second after it has been marked unsellable because of a missing check in the complete purchase function
+
+
+    /**
+     * @notice Completes a purchase of vested tokens
+     * @dev Updates buyer allocation and transfers tokens
+     * @param buyer Address of the token buyer
+     * @param vesting Address of the vesting contract
+     * @param amount Amount of tokens purchased
+     */
+    function completePurchase(address buyer, address vesting, uint256 amount) external onlyMarketplace {
+        allocations[buyer][vesting].bought += amount;
+        SecondSwap_Vesting(vesting).transferVesting(address(this), buyer, amount);
+    }
+Recommended mitigation steps
+
+Add a sellable check in the completePurchase function has done in the listVesting function
+
+Links to affected code
+SecondSwap_VestingManager.sol#L167-L186
+Opens in a new window
+SecondSwap_VestingManager.sol#L161-L164
+Opens in a new window
+Submissions touching same files
+SecondSwap_VestingManager.sol
+View full submission
+Duplicates
+7
+S-925
+When admin change a vesting to `sellable = false`, it's still possible to buy a vesting already listed
+foufrix
+00
+S-751
+A seller might still manage to sell a token marked as non-sellable by the admin in the marketplace.
+knight18695
+00
+S-699
+In VestingManager, purchase possible even after setSellable set to false
+hubble
+00
+S-648
+`SecondSwap_VestingManager.completePurchase()` doesn't check if the token is sellable
+Benterkiii
+00
+S-511
+[M-01] Vesting manager cannot stop the sale of a token after it's listed
+attentioniayn
+00
+S-318
+Tokens can still be sold even if vesting's `sellable` flag is disabled
+spuriousdragon
+00
+S-198
+Purchasing a currently listed vesting does not check the `sellable` status
+farismaulana
+00
+Timeline
+Submitted
+Created: 522d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

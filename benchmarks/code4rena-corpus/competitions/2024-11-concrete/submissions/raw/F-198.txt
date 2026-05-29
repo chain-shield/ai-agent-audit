@@ -1,0 +1,143 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-198
+Low
+Primary
+S-1215
+Users will miss Morpho Strategy last epoch reward
+ChainProof
+00
+Sufficient
+383d ago
+Description
+
+Concrete strategies include a function to claim rewards from specific strategies. However, the MorphoVaultStrategy handles reward claiming differently from the others, as evident in the implementation below.
+
+On the display side:
+The reward calculation logic is block-based and the displayed amount is updated at different periods. The displayed amount of MORPHO rewards corresponds to the amount earned up to 00:00:00 UTC. For other rewards, the displayed amounts correspond to the amounts earned up to 30 minutes ago.
+
+On the claim side:
+Rewards work with an epoch system. When an epoch ends, rewards accrued during the epoch become available to claim. Currently epochs last 2 weeks, current one should end around November 5. Goal is to make this epochs short asap.
+
+As shown above, rewards can only be claimed every two weeks.
+With the current implementation in Concrete, users depositing into the vault with the Morpho strategy may miss out on receiving rewards.
+
+Proof of Concept
+
+Consider the following scenario:
+
+Reward amount is updated by the admin. But Morpho strategy reward amout not received due to epoch withdrawal system. (it will be received after 2 week period as shown above)
+Use withdraw assets. Due to user withdrawal of assets his reward index(serRewardIndex[userAddress][rewardAddresses[i]]) is set to current gloabl reward index(tokenRewardIndex) as here. On this time, Last epoch reward amount is not send to the MorphoVaultStrategy contract yet.
+So user unable to claim those last Epoch reward.
+Impact
+
+User will lose last epoch rewards(here assume Owner called harvestRewards function at least 1 time for every two weeks) they are entitled to and will never have the opportunity to claim it.
+
+Also user will lose rewards acquired time between harvestRewards to withdraw functions calling period.(this is applicable for all the strategy rewards)
+
+Recommended mitigation steps
+
+Implement a distinct handling mechanism for the Morpho strategy to ensure that users remain entitled to rewards, even after withdrawing, once the rewards become available.
+
+Links to affected code
+MorphoVaultStrategy.sol#L101
+Opens in a new window
+Submissions touching same files
+MorphoVaultStrategy.sol
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-1215.
+Faulty Design
+Edited: Feb 22
+Takarez
+OP
+
+Hello @judge, appreciate the time and effort here.
+
+We can agree about the "design" thing, but its a faulty one.
+
+Consider this scenario
+
+A user opt into a vault with moprho strategy included, user will miss last epoch reward if he withdraws, this breaks the core feature of "yield earning" thing.
+
+more impact of this if we are to add is that, a user that opt into the vault minutes or hours before the exact time of the 2 weeks will be entitled to the reward and user that has been there for the entire two week will miss, this is a faulty design.
+
+Regarding the validator's comment of tradeoff and timebased
+
+This same tradeOff is not available to other strategies, as soon as the user withdraws, the _getRewardsToStrategy ( this is for silo) gets called to get the reward and user can withdraw it, this is not the same for morpho.
+
+This discord post notifying users of reward earned up to 00:00:00 Dec, 30 is available for claim
+https://discord.com/channels/851206607324577823/1101074832017334284/1323697673261289483
+
+This is explaining the claim functionality
+https://discord.com/channels/851206607324577823/851206607324577826/1311674730125856849
+
+This is confirming the timeBase
+https://discord.com/channels/851206607324577823/1204370671971336222/1320631619702358016
+
+Here is an invite the Morpho discord channel
+https://discord.com/invite/BWXbJMHMdz/
+
+we would appreciate another review of this issue.
+
+Picodes
+01/23/2025
+
+Hi ! You can find an explanation regarding why this is of low severity to me here https://code4rena.com/evaluate/2024-11-concrete/submissions/S-639?commentParent=NAohFNSfu5u&commentChild=VgGVf85jPTm
+
+0xnev-validator-comment-S-1215
+Edited: Feb 22
+0xnev
+
+QA could be more appropriate here, hence default to invalid. This is a tradeoff that users should consider before performing a withdrawal. If they intend to claim rewards, they should remain staked to the strategy. Additionally, looking at the URD claim function, it does not look like it is timebased
+
+By design
+Edited: Feb 22
+Picodes
+
+Considering how the system works, I'll downgrade to Low considering this is by design
+
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

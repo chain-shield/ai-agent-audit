@@ -1,0 +1,161 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-123
+Medium
+Primary
+S-1193
+Dust Shares Check Bypass Through Mint Function
+a2security
+00
+Sufficient
+383d ago
+Finding Description and Impact
+
+The vault implements a dust shares check in the deposit function to prevent users from minting very small amounts of shares (less than 1e8). However, this check can be bypassed by using the mint function directly, which lacks the same validation. This allows users to mint any amount of shares, even as small as 1 share.
+
+The impact is:
+
+Users can bypass the intended minimum shares requirement
+accounting precision issues with extremely small share amounts
+Inconsistency between deposit and mint functions behavior
+Proof of Concept
+
+The deposit function properly implements the dust check:
+
+function _deposit(uint256 assets_, address receiver_) private returns (uint256 shares) {
+    // Calculate the net shares to mint for the deposited
+    shares = _convertToShares(assets_, Math.Rounding.Floor) - feeShares;
+    if (shares <= DUST) revert ZeroAmount();
+    ...
+}
+
+However, the mint function lacks this check, allowing users to mint dust amounts:
+
+function mint(uint256 shares_, address receiver_) public override returns (uint256) {
+    if (shares_ > maxMint(receiver_)) revert MaxError();
+    uint256 assets = previewMint(shares_);
+    _deposit(assets, receiver_);
+    return assets;
+}
+
+Here's a POC demonstrating the issue:
+
+    function reInitVaultWithUsdc() public returns (ConcreteMultiStrategyVault, MockERC20) {
+        MockERC20 usdc = new MockERC20("Mock Asset", "MA", 18);
+        address implementation = address(new ConcreteMultiStrategyVault());
+        address vaultAddress = Clones.clone(implementation);
+
+        ConcreteMultiStrategyVault _vault = ConcreteMultiStrategyVault(vaultAddress);
+
+        _vault.initialize(
+            IERC20(address(usdc)),
+            "Mock Vault",
+            "MV",
+            new Strategy[](0),
+            feeRecipient,
+            VaultFees({depositFee: 0, withdrawalFee: 0, protocolFee: 0, performanceFee: graduatedFees}),
+            type(uint256).max,
+            admin
+        );
+        return (_vault, usdc);
+    }
+
+    function test_mintDust() public {
+        //1. create new vault with only performance fees
+        (ConcreteMultiStrategyVault v, MockERC20 asset) = reInitVaultWithUsdc();
+
+        uint128 amount = 1000000e18;
+
+        asset.mint(hazel, 1000000e18);
+        vm.startPrank(hazel);
+        asset.approve(address(v), type(uint256).max);
+        // hazel deposit 10 tokens , and get 10e9 shares
+        v.mint(1, hazel);
+        assertEq(v.balanceOf(hazel), 1);
+        // notice that hazel can mint 1e8 shares , for only 1 assets :
+        v.mint(1e8);
+        assertEq(asset.balanceOf(address(v)), 2);
+        assertEq(v.balanceOf(hazel) , 1e8 + 1);
+    }
+Recommended Mitigation Steps
+
+Add the dust check to the mint function:
+
+function mint(uint256 shares_, address receiver_) public override returns (uint256) {
+    if (shares_ > maxMint(receiver_)) revert MaxError();
+    if (shares_ <= DUST) revert ZeroAmount();  // Add dust check
+
+    .............
+}
+Links to affected code
+ConcreteMultiStrategyVault.sol#L243
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Duplicates
+5
+S-502
+DUST validation is inconsistent and incorrect
+trachev
+56
+S-1251
+Missing `DUST` Check in `mint()` Function
+0x2517
+00
+S-1194
+First depositor can DoS ConcreteMultiStrategyVault.
+Jiri123
+00
+S-990
+The protocol does not check minimal values for the mint and redeem functions.
+tenge_club
+00
+S-303
+Inconsistent Dust Share Validation Between Mint and Deposit Functions Allows Dust Share Minting
+Prosperity
+00
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

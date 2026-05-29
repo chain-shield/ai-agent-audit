@@ -1,0 +1,101 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-36
+Low
+Primary
+S-144
+Bug in skip-mev Connect affecting correct prices on Mantra
+0x41
+00
+Sufficient
+383d ago
+
+Note: The bug is not in Mantra itself, but skip-mev. However, it can lead to wrong prices on Mantra. Therefore, the following from the README seems to apply:
+
+However, if the issue arise from the custom code we made on our cosmos-sdk, or if the issues are directly affecting behavior of our custom modules, or if our custom modules are causing issues in the base cosmos modules (includes cosmwasm and IBC) then they should be included in the scope.
+
+Finding description and impact
+
+oracle.go integrates the connect oracle from skip-mev. This oracle has various providers and integration options such as Invert (to invert the price before returning), which Mantra may use (and currently does for some feeds). The inversion in connect happens within GetProviderPrice when returning the price. However, the Uniswap provider (which can and may be used by Mantra) has a bug: It also inverts the price when the option is set. It is the only provider to do so and the price is therefore inverted twice for this provider, i.e. it is not inverted at all. This leads to completely wrong prices when this provider is used.
+
+Recommended mitigation steps
+
+Fix the bug upstream or create your own fork where the inversion is only done once for the Uniswap provider (i.e. remove the inversion logic there).
+
+Links to affected code
+oracle.go#L22
+Opens in a new window
+Submissions touching same files
+oracle.go
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-144.
+Judging
+Edited: Feb 22
+3docSec
+
+While I do consider this a valid submission, I didn't find proof that the code in scope is actually using the faulty feature, also as outlined by the warden:
+
+Uniswap provider (which can and may be used by Mantra)
+
+Not Valid
+Edited: Feb 22
+mantra_lance
+
+Our current OM/USD market map is here https://api.mantrachain.io/connect/marketmap/v2/market?currency_pair.Base=OM&currency_pair.Quote=USD
+
+It relies on central exchange only. In fact all our price feeds only use central exchange data as of now and these price feeds are also unused (not integrated to any DApps)
+
+Will take note if we were to incorporate uniswap as a price source next time.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid
+
+Timeline
+Submitted
+Created: 510d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

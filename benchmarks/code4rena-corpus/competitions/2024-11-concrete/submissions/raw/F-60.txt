@@ -1,0 +1,263 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-60
+Medium
+Primary
+S-985
+Value leak sent to users from protocol while rounding up in _withdrawStrategyFunds
+nnez
+87
+Sufficient
+383d ago
+Impact
+
+The vault optimistically rounds up calculation of amount to withdraw from each strategy, however, it directly sends excess amount to withdrawing users. This can lead to a value leak from protocol. It also can accumulate and materialize over time, especially for low-decimal token (e.g. WBTC).
+
+Description
+
+The vault's withdrawal logic in _withdrawStrategyFunds introduces rounding issues when calculating per-strategy withdrawals. Using Math.Rounding.Ceil with mulDiv causes each strategy to potentially return 1 additional wei:
+
+When floating assets on the vault is not sufficient for user's withdrawal transaction, it opts to withdraw assets from strategies.
+The amount is divided proportionally according to each strategy's allocation.
+
+See: https://github.com/code-423n4/2024-11-concrete/blob/main/src/vault/ConcreteMultiStrategyVault.sol#L464-L468
+
+function _withdrawStrategyFunds(uint256 amount_, address receiver_) private {
+    IERC20 asset_ = IERC20(asset());
+    uint256 float = asset_.balanceOf(address(this));
+    
+    if (amount_ <= float) {
+        asset_.safeTransfer(receiver_, amount_);
+    } else {
+        uint256 diff = amount_ - float;
+        uint256 totalWithdrawn = 0;
+        uint256 len = strategies.length;
+        for (uint256 i; i < len; ) {
+            Strategy memory strategy = strategies[i];
+            uint256 amountToWithdraw = amount_.mulDiv(
+                strategy.allocation.amount,
+                MAX_BASIS_POINTS,
+                Math.Rounding.Ceil
+            ); // @audit: calculate propotional amount to withdraw from strategy according to its allocation
+            strategy.strategy.withdraw(amountToWithdraw, receiver_, address(this)); // @audit: send directly to receiver
+            totalWithdrawn += amountToWithdraw;
+            unchecked {
+                i++;
+            }
+        }
+    }
+}
+
+As we can see, The logic uses Math.Rounding.Ceil when performing integer division. I reckon that it optimistically rounds up to account for the potential transfer revert case from rounding down because it might be short on a small wei and the transfer will fail from insufficient balance.
+
+For example, let's say there are two stratgies and their allocation are 50 each.
+If users attempt to withdraw 101 assets from the vault, the vault would try to withdraw:
+⌊101 * 50 / 100⌋ + ⌊101 * 50 / 100⌋ = ⌊50.5⌋ + ⌊50.5⌋ = 100 (short by 1 wei)
+
+In contrast for rounding up, calculation unfolds as follows:
+⌈101 * 50 / 100⌉ + ⌈101 * 50 / 100⌉ = ⌈50.5⌉ + ⌈50.5⌉ = 102 (over by 1 wei)
+
+There would be no problem with this approach if excess amount of wei retains within the vault after withdrawal (as it still counts as a utilizable assets within the vault).
+
+However, we can see in the next line after amountToWithdraw calculation, the withdrawn amount is sent directly to receiver (withdrawing user).
+That means, the excess amount of wei doesn't retain in the vault but are leaking to withdrawing users.
+
+The problem amplifies with each rounding up division:
+
+Each strategy's withdrawal calculation rounds up via Math.Rounding.Ceil
+Each strategy can return 1 extra wei due to this rounding
+With N rounding ups, this creates an N-1 wei value leak.
+Ratoinale for Severity
+
+Although value leak per occurence is small, it can accumulate over time because withdrawal operation is a highly common operation. The amount of leak can also be materalized quickly for a low-decimal token, for example, WBTC.
+
+Therfore, I think Medium severity is justified.
+
+Proof of Concept
+
+The following test does the following:
+
+Set up new vault with no deposit/withdraw fee with four strategies, each with 25% allocation
+Simulate some users deposit (or else it would revert from insufficient funds since we are drawing out more than we should)
+Show case the issue by deposit 101 assets but can withdraw 104 assets instantly (extra 3 wei from rounding up)
+Steps
+Paste the following test in 2024-11-concrete/test/ConcreteMultiStrategyVault.t.sol and run forge t --match-contract ConcreteMultiStrategyVaultTest --match-test test_value_leak
+Observe that the test passes, indicating that hazel get 104 assets back after depositing only 101 assets.
+    function test_value_leak() public {
+        /**
+        Set up a new vault,  
+        For simplicity, a vault with no deposit/withdraw fee
+        Each strategy has 25% allocation
+        */
+
+        address _vaultAddress = Clones.clone(implementation);
+        ConcreteMultiStrategyVault newVault = ConcreteMultiStrategyVault(_vaultAddress);
+        Strategy[] memory _strategies = new Strategy[](4);
+        for(uint i; i < 4; i++){
+            _strategies[i] = _createMockStrategy(IERC20(address(asset)), false);
+            _strategies[i].allocation.amount = 2500;
+        }
+        newVault.initialize(
+            IERC20(address(asset)),
+            "Mock Vault",
+            "MV",
+            _strategies,
+            feeRecipient,
+            VaultFees({depositFee: 0, withdrawalFee: 0, protocolFee: 0, performanceFee: zeroFees}),
+            type(uint256).max,
+            admin
+        );
+
+        /**
+        Some random users deposit
+        */
+        asset.mint(jimmy, 10e18);
+        vm.startPrank(jimmy);
+        asset.approve(address(newVault), type(uint).max);
+        newVault.deposit(10e18, jimmy);
+        vm.stopPrank();
+
+        asset.mint(hazel, 101);
+
+        /** 
+        deposit 101
+        withdraw and get 104 (3 extra wei from rounding up)  
+        */
+        vm.startPrank(hazel);
+        asset.approve(address(newVault), type(uint).max);
+        newVault.deposit(101, hazel);
+        assertEq(asset.balanceOf(hazel), 0);
+        newVault.withdraw(101);
+        assertEq(asset.balanceOf(hazel), 104);
+        vm.stopPrank();
+    }
+Recommended Mitigations
+
+This can be fixed by keeping excess amount within the vault. It can be done by:
+
+withdraw from strategy to vault first
+only transfer amount_ which is the exact amount of user's withdrawal.
+Links to affected code
+ConcreteMultiStrategyVault.sol#L464-L468
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Duplicates
+18
+S-172
+`ConcreteMultiStrategyVault::_withdrawStrategyFunds` ceils the withdrawal amount, leading to unexpected reverts on withdrawal
+0xAlix2
+82
+S-1234
+`ConcreteMultiStrategyVault._withdrawStrategyFunds` function call can revert and be DOS'ed because it rounds up vault's needed assets from a strategy though it should round them down
+rbserver
+71
+S-422
+`batchClaimWithdrawal()` likely to DoS due to incorrect rounding direction
+blutorque
+65
+S-1062
+Incorrect rounding direction during withdrawal from vault will lead to reverting transactions
+gesha17
+57
+S-402
+`_withdrawStrategyFunds` rounds in the wrong direction, causing users to withdraw more assets than they should be able to
+trachev
+56
+S-689
+User Withdrawals can be blocked due to wrong rounding direction
+zzebra83
+54
+S-183
+`ConcreteMultiStrategyVault::_withdrawStrategyFunds()` rounds up in favor of users
+gajiknownnothing
+52
+S-534
+The Rounding Direction is incorrect when withdrawStrategyFunds lead to DOS
+ayden
+43
+S-1072
+ConcreteMultiStrategyVault._withdrawStrategyFunds ceils the amount sent to the user
+silver_eth
+37
+S-531
+DOS to the last person to withdraw from ConreteMultistrategyVault due to rounding issues
+Bigsam
+29
+S-106
+Protocol potentially transfers excess `assets` to users during withdrawals
+Tigerfrake
+19
+S-1032
+Strategy withdrawal amount calculation can exceed the maximum withdrawable amount, resulting in failed withdrawals
+berndartmueller
+00
+S-1030
+Pro-rata strategy withdrawal amount can exceed the maximum withdrawable amount from the strategy and cause withdrawals to fail
+berndartmueller
+00
+S-717
+List of reward token addresses returned by getRewardTokenAddresses() in SiloV1Strategy is incomplete
+muellerberndt
+00
+S-711
+Inconsistent asset tracking in `batchClaimWithdrawal` due to miscalculation in `_withdrawStrategyFunds`
+newspacexyz
+00
+S-335
+Users can withdraw more than they requested from the vault.
+mahdifa
+00
+S-332
+Rounding Error in _withdrawStrategyFunds Allows Users to Withdraw More Assets Than Intended
+Prosperity
+00
+S-232
+Potential Denial of Service (DoS) in User Withdraw Function Due to Incorrect Strategy Asset Availability Reporting
+a2security
+00
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

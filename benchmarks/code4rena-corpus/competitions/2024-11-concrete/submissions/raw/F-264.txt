@@ -1,0 +1,151 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-264
+Medium
+Primary
+S-355
+Call to `pauseAllVaults()` fails if any vault is already in paused state
+t0x1c
+46
+Sufficient
+383d ago
+Description
+
+The functions pauseAllVaults() and unpauseAllVaults() are meant to be typically called in emergency situations, specially pauseAllVaults(). However, OZ's _pause(), which is internally called by pauseAllVaults() enforces the condition that the vault must not already be paused, and is checked via the modifier whenNotPaused as can be seen here. Similar condition of whenPaused exists inside _unpause().
+
+Hence if a vault had been individually paused previously, pauseAllVaults() will fail. Note that there's no function inside the protocol currently to retrieve a list of all vaults which are currently in paused state. As a result, custom logic will have to be written & deployed first to retrieve list of all vaults, check if they are in paused state and exclude them from the list OR unpause them before calling pauseAllVaults().
+
+In an emergency situation, this is valuable time lost.
+
+Impact
+
+Not possible to pause or unpause all vaults in emergency situations if one of them is already in paused or unpaused state.
+
+Proof of Concept
+
+We will modify this pre-existing test inside test/VaultManager.t.sol to see it fail when run with forge test --mt test_pauseAllVaults -vv:
+
+    function test_pauseAllVaults() public {
+        (address vault1, ) = _deployVault(false);
+        (address vault2, ) = _deployVault(true);
+        (address vault3, ) = _deployVault(true);
+
+-       vm.prank(admin);
++       vm.startPrank(admin);
++       vaultManager.pauseVault(vault2); // pause a single vault first
+        vaultManager.pauseAllVaults();   // @audit-issue : This will revert with error `EnforcedPause()`
+
+        assertEq(ConcreteMultiStrategyVault(vault1).paused(), true, "Vault 1 should be paused");
+        assertEq(ConcreteMultiStrategyVault(vault2).paused(), true, "Vault 2 should be paused");
+        assertEq(ConcreteMultiStrategyVault(vault3).paused(), true, "Vault 3 should be paused");
+    }
+
+Output:
+
+Ran 1 test for test/VaultManager.t.sol:VaultManagerTest
+[FAIL. Reason: EnforcedPause()] test_pauseAllVaults() (gas: 18508720)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 10.13ms (5.88ms CPU time)
+Mitigation
+
+Add the following conditions:
+
+File: src/managers/VaultManager.sol
+
+    function pauseAllVaults() external onlyRole(VAULT_MANAGER_ROLE) {
+        address[] memory vaults = vaultRegistry.getAllVaults();
+        emit AllVaultsPaused();
+        uint256 vaultsLength = vaults.length;
+        for (uint256 i = 0; i < vaultsLength; ) {
+            //We control both the length of the array and the external call
+            // slither-disable-next-line calls-loop
+-           IConcreteMultiStrategyVault(vaults[i]).pause();
++           if (!IConcreteMultiStrategyVault(vaults[i]).paused()) IConcreteMultiStrategyVault(vaults[i]).pause();
+            unchecked {
+                i++;
+            }
+        }
+    }
+
+    function unpauseAllVaults() external onlyRole(VAULT_MANAGER_ROLE) {
+        emit AllVaultsUnpaused();
+        address[] memory vaults = vaultRegistry.getAllVaults();
+        uint256 vaultsLength = vaults.length;
+        for (uint256 i = 0; i < vaultsLength; ) {
+            //We control both the length of the array and the external call
+            // slither-disable-next-line calls-loop
+-           IConcreteMultiStrategyVault(vaults[i]).unpause();
++           if (IConcreteMultiStrategyVault(vaults[i]).paused()) IConcreteMultiStrategyVault(vaults[i]).unpause();
+            unchecked {
+                i++;
+            }
+        }
+    }
+Links to affected code
+VaultManager.sol#L47-L73
+Opens in a new window
+Submissions touching same files
+VaultManager.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-355.
+Medium severity
+Edited: Feb 22
+Picodes
+
+Keeping severity as this is a functionality made to be used in case of emergency, so the admin wouldn't have the time to craft a workaround
+
+Duplicates
+2
+S-1324
+`pauseAllVaults` and `unpauseAllVaults` will not work if any available vault is paused/unpaused
+inh3l
+66
+S-107
+`vaultManager.sol::pauseAllVaults` and `vaultManager.sol::pauseAllVaults` fonctions does not work as expected
+0x60scs
+00
+Timeline
+Submitted
+Created: 545d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,186 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-148
+Medium
+Primary
+S-157
+maxSellPercent will be broken when a vesting is delisted after a seller has claimed additional steps
+BenRai
+74
+Sufficient
+383d ago
+Impact
+
+When a listed vesting is delisted after the seller has claimed additional steps, the full listed amount is deducted from the sold value of the seller's Allocation data. This allows him to sell tokens which should have already been unlocked and claimable which breaks a core functionality of the protocol, namely the sell limit intended by the value set for maxSellPercent.
+
+Proof of Concept
+
+The SecondSwap_VestingManager contract manages the vesting and selling of tokens through the listVesting() function. This function checks if the vesting plan is sellable and verifies the user's available tokens before allowing a sale. To determine how many tokens a user is allowed to sell, the users current allocation as well as the amounts he has sold and bought until now are taken into account. Each vesting has its own maxSellPercent value to limit the amount of unvested tokens that can be sold at any point in time. This value indicates how many percent of the currently locked tokens should be sellable. E.g. if the total amount of tokens for a vesting is 1000, there are 10 steps and the maxSellPercent is set to 50%, this mean that in the beginning, when all tokens are still locked, a max of 1000 * 50% = 500 tokens should be sellable. At step 5 when only 500 tokens are locked, only 500 * 50% = 250 tokens should be sellable.
+
+However, this invariant is broken if a seller unlist a listed vesting after he has claimed additional steps compared to when he created the listing. This is because the total refunded amount of tokens is deducted from the sold value without regard to the already unlocked and claimed steps of the seller.
+
+    function unlistVesting(address seller, address plan, uint256 amount) external onlyMarketplace {
+@>        allocations[seller][plan].sold -= amount;
+        SecondSwap_Vesting(plan).transferVesting(address(this), seller, amount);
+    }
+Scenario Illustration
+
+The vesting has 1000 tokens, 10 steps and 50% maxSellPercent
+
+Alice has an allocation of 100 tokens and therefor a releaseRate of 100 / 10 = 10 tokens / step. She creates a listing for 50 tokens. The tokens are transferred to the VestingManager and her releaseRate is decreased to (100-50)/10 = 50/10 = 5 tokens per step. Her value for sold is set to 50.
+Time passes and the first 5 steps are unlocked allowing Alice to claim 5 * 5 = 25 tokens leaving her with a remaining allocation of 50 - 25 = 25 tokens.
+Since no one bought the tokens she put for sale she unlist them. She gets refunded 50 tokens and her sold value is reduced by 50 making it 0 again. She now has her initial vesting back with 25 tokens claimed and 75 tokens unclaimed.
+For Alice’s initial vesting, after 5 unlocked steps half of her vesting should still be locked and according to the maxSellPercent she should be able to sell 50% of the tokens still locked. ( 100/2 * 50% = 25 tokens).
+But since her sold value is 0 and her current allocation is used as a basis to calculate her sellLimit, she is able to sell 100 * 50% = 50 tokens which is all her locked allocation.
+Recommended Mitigation Steps
+
+To prevent sellers being able to sell more tokens than specified in ´maxSellPercent´ after unlisting a vesting, consider adding a stepsClaimedSeller vriable to the Listing struct indicating the last step the seller has claimed when he created the listing:
+
+    struct Listing {
+        address seller;
++       uint256 stepsClaimedSeller;
+        uint256 total;
+        uint256 balance;
+        uint256 pricePerUnit;
+        ListingType listingType;
+        DiscountType discountType;
+        uint256 discountPct;
+        uint256 listTime;
+        address whitelist;
+        uint256 minPurchaseAmt;
+        Status status;
+        address currency;
+        address vestingPlan;
+    }
+
+In addition, the variable amountClaimable needs to be added to the Vesting struct:
+
+struct Vesting {
+        uint256 stepsClaimed;
+        uint256 amountClaimed;
++       uint256 amountClaimable;
+        uint256 releaseRate;
+        uint256 totalAmount;
+    }
+
+Once the seller unlists a listing, the value of stepsClaimedSeller is compared to the seller’s current stepsClaimed. If the seller has claimed additional steps since he initially listed the vesting, the number of steps is calculated and a proportional amount of the refunded tokens is added to amountClaimable making them claimable instantly:
+
+amountToAdd = refundedAmount * (stepsClaimed – stepsClaimedSeller) / totalSteps
+
+To ensure the calculation of available tokens stays accurate, the same amount needs to be added to amountClaimed.
+
+The remaining amount of refunded tokens is deducted from the sold amount and is available for sale again.
+
+When claiming tokens the amount saved in amountClaimable is added to the amount transfered to the user and amountClaimable is set to 0.
+
+Links to affected code
+SecondSwap_VestingManager.sol#L149-L152
+Opens in a new window
+SecondSwap_VestingManager.sol#L130-L134
+Opens in a new window
+Submissions touching same files
+SecondSwap_VestingManager.sol
+Comments for the judge
+4
+You are viewing comments for the primary submission, S-157.
+Dupe with 381
+Edited: Feb 22
+gesha17
+
+Hello Judge,
+
+I would like to point out something here. There is this assumption for this finding to be valid:
+
+This value indicates how many percent of the currently locked tokens should be sellable. E.g. if the total amount of tokens for a vesting is 1000, there are 10 steps and the maxSellPercent is set to 50%, this mean that in the beginning, when all tokens are still locked, a max of 1000 * 50% = 500 tokens should be sellable. At step 5 when only 500 tokens are locked, only 500 * 50% = 250 tokens should be sellable.
+
+calvinx stated that this is not intended behavior in S-381. The two findings are describing the same issue, only difference is here alice first lists and unlists her tokens. Same as "Alice deciding to list her tokens at a later date" but with two additional steps, which should not make a difference in the maxSellPercent. If Alice decides to unlist her tokens, she should be able to make a listing for the same amount of tokens right away. If anything this submission is even more invalid than 381.
+
+Valid Med
+Edited: Feb 22
+Koolex
+
+Considering the input above from the wardens and the sponsor, this is a valid Medium.
+
+Medium issue
+Edited: Feb 22
+calvinx
+
+This looks like a medium issue, please include this. We will explore for ways to do 1 fix for both issues.
+
+157 not a duplicate of 140
+Edited: Feb 22
+BenRai
+OP
+
+Hi Koolex, thank you for judging!
+
+THIS ISSUE is not a duplicate of S-140.
+140 describes how the maxSellPercentage can be broken because users can sell vestings they bought before, even though they already claimed some of the bought vesting.
+
+THIS ISSUE is about how maxSellPercentage is broken if a user delist a listed vesting and steps have been unlocked between the listing and delisting.
+
+Both issues are different which is also reflected in their different root causes.
+The root of 140 is in the fact that any previously bought vestings can be sold again, no matter if they have been claimed in the meantime.
+
+The root cause for THIS ISSUE is that the when delisting, the whole refunded amount is deducted from the sold amount without taking into account how many steps have already been unlocked.
+
+The two different root causes need to be fixed in different ways therefore the two issues should not be the same.
+
+Koolex
+01/29/2025
+
+Appears to me that the fixes look the same
+
+BenRai
+OP
+01/30/2025
+
+The roots of the two issues are in two different parts of the code. The root for S-140 is in the listVesting() function the root for THIS ISSUE is in the unlistVesting() function. This by itself should make it impossible to fix both with the same fix. Also the proposed fix for S-140 is to adjust the Allocation struct and the propsosed fix for THIS ISSUE is to adjust the Vesting struct and the Listing stuct. Would be great to know which fix you see that mitigates both issues at the same time. Thanks for your feedback in advance. :)
+
+sl1
+Edited: 01/31/2025
+
+I'm sorry for the late comment, but I think both this issue and S-140 are more fit for the medium severity, as assets are not at risk/no loss of funds (which is a criteria for medium severity in C4 docs), the only impact is user being able to sell more tokens.
+
+Timeline
+Submitted
+Created: 528d ago
+High
+Triage
+Sufficient
+Review
+Judging
+Medium
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

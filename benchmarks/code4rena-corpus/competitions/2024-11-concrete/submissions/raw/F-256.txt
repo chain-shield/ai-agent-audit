@@ -1,0 +1,128 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-256
+Low
+Primary
+S-1469
+No zero check on prices from the Berachain Oracle
+waydou
+75
+Sufficient
+383d ago
+Finding description and impact
+
+The _convertFromTokenToStable function retrieves a price from an oracle via _getPriceFromOracle. However, it does not check if the returned price is zero. since we devide by the price in
+
+stableAmount_.mulDiv(10 ** tokenDecimals, 10 ** CONCRETE_USD_DECIMALS, Math.Rounding.Floor).mulDiv(
+                10 ** quoteDecimals,
+                price,
+                Math.Rounding.Floor
+            )
+
+the whole function will revert. Another issue is that the code assumes that berachain oracle works perfectly. If an asset experiences a huge drop in value (i.e. LUNA crash) the price of the oracle will continue to return the minPrice instead of the actual price of the asset. This would allow user to continue borrowing with the asset but at the wrong price. This is exactly what happened to Venus on BSC when LUNA imploded. However, the protocol misses to implement such a check.
+
+Similar Issues in the past
+
+https://github.com/sherlock-audit/2023-05-USSD-judging/issues/598
+https://github.com/sherlock-audit/2023-02-blueberry-judging/issues/18
+
+Recommended mitigation steps
+
+unfortunately, Not perfectly sure what's the best way to mitigate this
+
+Links to affected code
+OraclePlug.sol#L44
+Opens in a new window
+Submissions touching same files
+OraclePlug.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1469.
+Comment
+Edited: Feb 22
+rdturner
+
+The Berachain oracle is not currently in production. We expect to update this contract once more information is available.
+
+Picodes
+12/20/2024
+
+In addition to this, i am not sure to understand the risk. It'll revert anyway.
+
+Picodes
+12/20/2024
+
+The check on min / max price is a good safeguard though
+
+Duplicates
+6
+S-1297
+`_getPriceFromOracle` doesn't check for 0 prices
+inh3l
+66
+S-1453
+Missing Zero Price Validation in OraclePlug's Price Retrieval
+Sparrow
+55
+S-421
+Price returned by `OraclePlug::_getPriceFromOracle` is not validated against wrong prices
+4B
+42
+S-1373
+Missing Validation for Negative Oracle Prices
+NexusAudits
+31
+S-725
+Unchecked Oracle Price Validation Can Lead to Invalid Conversions
+Daniel526
+03
+S-210
+Missing Checks for Minimum and Maximum Price in OraclePlug Contract
+enami_el
+00
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

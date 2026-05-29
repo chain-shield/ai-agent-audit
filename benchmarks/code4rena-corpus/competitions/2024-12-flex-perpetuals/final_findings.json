@@ -1,0 +1,32 @@
+[
+  {
+    "id": "M-01",
+    "local_markdown_path": "competitions/2024-12-flex-perpetuals/ground_truth/accepted/M-01.md",
+    "markdown_fallback_used": false,
+    "poc_section_removed": false,
+    "poc_stripped": true,
+    "raw_excerpt": "[M-01] Missing slippage protection in AerodromeDexter.sol swapExactTokensForTokens() Submitted by alix40 , also found by 0xKann , 0xlucky , 0xpetern , 0xvd , ABAIKUNANBAEV , Abhan , air_0x , zanderbyte , bharg4v , DharkArtz , dic0de , Hajime , hals , inh3l , John_Femi , kodyvim , lightoasis , Matin , mgf15 , MSaptarshi , Mushow , newspacexyz , NexusAudits , PolarizedLight , Rhaydden , Shinobi , smbv-1923 , Sparrow , tpiliposian , Tumelo_Crypto , udo , vesko210 , waydou , and y51r Finding description and impact Even though there is no frontrunning on L2s, which could mitigate some of the MEV attacks, without defined slippage and in case of congestions the swap could be executed at unfavorable conditions presenting losses for users. https://github.com/code-423n4/2024-12-flex-perpetuals/blob/b84a0812c3368866964b8a16e7c36f6e7a50b655/src/extensions/dexters/AerodromeDexter.sol#L54-L56 uint256 _balanceBefore = ERC20(_tokenOut).balanceOf(address(this)); @>> router.swapExactTokensForTokens(_amountIn, 0, routeOf[_tokenIn][_tokenOut], address(this), block.timestamp); Having the minAmountOut set to 0, will make sure that the swap will always be executed no matter the market condions. Recommended mitigation steps We recommend allowing users to set their desired slippage params. function run( address _tokenIn, address _tokenOut, uint256 _amountIn, + uint256 _minAmountOut, + uint64 _deadline ) external override returns (uint256 _amountOut) {",
+    "schema_version": "code4rena-corpus-v1",
+    "selected_primary_mentioned": false,
+    "severity": "Medium",
+    "source_report_url": "https://code4rena.com/reports/2024-12-flex-perpetuals",
+    "source_snapshot_path": "competitions/2024-12-flex-perpetuals/final_report.html",
+    "source_url": "https://code4rena.com/reports/2024-12-flex-perpetuals",
+    "title": "Missing slippage protection in AerodromeDexter.sol swapExactTokensForTokens()"
+  },
+  {
+    "id": "M-02",
+    "local_markdown_path": "competitions/2024-12-flex-perpetuals/ground_truth/accepted/M-02.md",
+    "markdown_fallback_used": false,
+    "poc_section_removed": true,
+    "poc_stripped": true,
+    "raw_excerpt": "[M-02] Most of the FTC rewards can be taken by single entity Submitted by farman1094 https://github.com/code-423n4/2024-12-flex-perpetuals/blob/b84a0812c3368866964b8a16e7c36f6e7a50b655/src/staking/FTCHook.sol#L61 Finding description and impact Malicious actor can collect the most reward which supposed to be share between genuine traders. There is feature of flex protocol of Flex Trade Credit the user will earn FTC as they trade on the Flex Perpetual. As the position increases the token minted by FTCHook, it\u2019s staked in the TLC Staking for that specific epoch under the user name which increased the position. For that staking, the reward will be issued to the trader in form of USDbC. Instead of opening the position for trading, the user opens the position just for the token and closes it instantly in the same block. As for increasing the position, he would be awarded by FTC but as he closed, instantly no effect on FTC. Because we are doing nothing while decreasing the position. //FTCHook::onDecreasePosition function onDecreasePosition ( address _primaryAccount , uint256 , uint256 , uint256 _sizeDelta , bytes32 ) external onlyWhitelistedCaller { // Do nothing } https://github.com/code-423n4/2024-12-flex-perpetuals/blob/b84a0812c3368866964b8a16e7c36f6e7a50b655/src/staking/FTCHook.sol#L61C1-L69C6 So what happen is, the reward supposed to be shared between all the Genuine traders. Some malicious actor can target it after checking the specific epoch which benefit him most and mint the stake reward as much as possible for small fees. Practical example: This is mere an example, trader can do this in small and big scale as well. If it\u2019s BTC or ETH market, weight 2.5, so user will receive 250,000 FTC for opening $100,000 position. Initial collateral = 100,000 usdc 1st trade opening position trading fee = 100,000 - 100 = 99900 1st trade opening position execution fee = 99900 - 0.1 = 99899.9 2nd trade closing position trading fee = 99899.9 - 100 = 99799.9 2nd trade closing position execution fee = 99799.9 - 0.1 = 99799.8 The total fee trader paid for this 250,000 FTC is $201 ; this way trader can earn the gurranteed profit in small fees. When the rewards came, this traders get the most reward of because of his big number of share. This reward is supposed to be share between all the traders who\u2019s risking their collateral. Proof of Concept Most of the part of this test is taken by another tests. Current in the setUp weight is set to 1x instead of 2.5x. The tlc (FTC) is supposed to be 250,000. // SPDX-License-Identifier: BUSL-1.1 // This code is made available under the terms and conditions of the Business Source License 1.1 (BUSL-1.1). // The act of publishing this code is driven by the aim to promote transparency and facilitate its utilization for educational purposes. pragma solidity 0.8 . 18 ; import { BaseIntTest_WithActions } from \"@hmx-test/integration/99_BaseIntTest_WithActions.i.sol\" ; import { ERC20 } from \"@openzeppelin/contracts/token/ERC20/ERC20.sol\" ; import { LiquidityTester } from \"@hmx-test/testers/LiquidityTester.sol\" ; import { ILiquidityHandler } from \"@hmx/handlers/interfaces/ILiquidityHandler.sol\" ; import { IPerpStorage }",
+    "schema_version": "code4rena-corpus-v1",
+    "selected_primary_mentioned": false,
+    "severity": "Medium",
+    "source_report_url": "https://code4rena.com/reports/2024-12-flex-perpetuals",
+    "source_snapshot_path": "competitions/2024-12-flex-perpetuals/final_report.html",
+    "source_url": "https://code4rena.com/reports/2024-12-flex-perpetuals",
+    "title": "Most of the FTC rewards can be taken by single entity"
+  }
+]

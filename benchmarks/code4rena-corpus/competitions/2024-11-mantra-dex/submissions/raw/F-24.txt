@@ -1,0 +1,244 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-24
+Low
+Primary
+S-143
+`ConstantProduct` invariant is not enforced during liquidity provision
+Abdessamed
+72
+Sufficient
+383d ago
+Vulnerability Details
+
+ConstantProduct pools rely on the fundamental invariant 
+𝑥
+∗
+𝑦
+=
+𝑘
+x∗y=k, where 
+𝑥
+x and 
+𝑦
+y represent the reserves of the two assets, and 
+𝑘
+k is a constant. This invariant ensures that the pool maintains a balanced spot price.
+
+The provide_liquidity function, however, does not enforce this invariant. When adding liquidity, the spot price after the addition should remain equal to the spot price before the addition (
+𝑑
+𝑦
+𝑑
+𝑥
+=
+𝑦
+𝑥
+dx
+dy
+	​
+
+=
+x
+y
+	​
+
+). Currently, the function accepts both asset deposits and directly mints LP tokens without verifying that the spot price is preserved:
+
+pub fn provide_liquidity(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    slippage_tolerance: Option<Decimal>,
+    max_spread: Option<Decimal>,
+    receiver: Option<String>,
+    pool_identifier: String,
+    unlocking_duration: Option<u64>,
+    lock_position_identifier: Option<String>,
+) -> Result<Response, ContractError> {
+    // --SNIP
+    if is_single_asset_provision { // --SNIP
+    } else {
+        let mut messages: Vec<CosmosMsg> = vec![];
+        let liquidity_token = pool.lp_denom.clone();
+        let total_share = get_total_share(&deps.as_ref(), liquidity_token.clone())?;
+
+        let share = match &pool.pool_type {
+            PoolType::ConstantProduct => {
+                if total_share == Uint128::zero() { // --SNIP
+                }else{
+                    let mut asset_shares = vec![];
+
+                    for deposit in deposits.iter() {
+                        let asset_denom = &deposit.denom;
+                        let pool_asset_index = pool_assets
+                            .iter()
+                            .position(|pool_asset| &pool_asset.denom == asset_denom)
+                            .ok_or(ContractError::AssetMismatch)?;
+
+                        asset_shares.push(
+                            deposit
+                                .amount
+                                .multiply_ratio(total_share, pool_assets[pool_asset_index].amount),
+                        );
+                    }     
+                    std::cmp::min(asset_shares[0], asset_shares[1])
+                }
+            PoolType::StableSwap { amp: amp_factor } => {} // --SNIP
+        }
+    }
+}
+
+
+As shown above, the function does not validate whether the ratio of the provided assets maintains the invariant 
+𝑑
+𝑦
+𝑑
+𝑥
+=
+𝑦
+𝑥
+dx
+dy
+	​
+
+=
+x
+y
+	​
+
+. This oversight opens the protocol to price manipulation through imbalanced liquidity provision.
+
+The slippage in pool reserves is at the control over the liquidity provider as seen here and here. However, giving the liquidity providers control over the pool reserves slippage is a bad design and allows for price manipulation.
+
+Impact
+
+The lack of invariant enforcement allows malicious actors to manipulate prices within the pool by providing liquidity in imbalanced proportions.
+
+Mitigations
+
+Consider updating the highlighted code above to enforce the invariant, similar to how it is done in UniswapV2
+
+Links to affected code
+commands.rs#L183-L213
+Opens in a new window
+Submissions touching same files
+commands.rs
+View full submission
+Comments for the judge
+4
+You are viewing comments for the primary submission, S-143.
+The appropriate severity is Medium, following the same reasoning of #F-119
+Edited: Feb 22
+Abdessamed
+OP
+
+The issue mentioned in F-119 (and its duplicates), judged as Medium, is basically an impact of the issue reported here. The only difference is that #F-119 didn't catch the true root cause entirely.
+The root cause in #F-119 according to the report is:
+
+When tokens are provided in different proportions relative to the pool's current reserves, the excess tokens from the higher proportion are effectively donated to the pool. This way, users can lose tokens when providing liquidity with disproportionate amounts.
+
+That's basically another formulation of saying that XYK invariant is not enforced, just less accurate.
+
+In ideal implementation, like implemented in Uniswap and as this report highlights, there can be no excessive tokens donated to the pool since the pool is the one that calculates the amounts in of both reserves and returns any excessive to the user.
+
+So, the true root cause of F-119 is that XYK invariant is not enforced, as this report highlights.
+
+I believe the severity of this report and its duplicates should be Medium, following the same reasoning of #F-119
+
+3docSec
+Edited: 02/05/2025
+
+I agree with you that fixing F-119 (i.e. by sending back tokens as Uniswap does) this one is fixed too.
+
+However, this group:
+
+does not mention that excess tokens should be returned (value loss to liquidity providers)
+does not mention that liquidity providers receive less shares for the imbalanced amount (another way to see the value loss)
+
+and instead focuses on the possibility of altering the pool price, which is an L severity aspect because the attacker is in fact losing, not making, money - the more they want to alter the price, the more money they lose.
+
+That is why I consider this group L. I could alternatively merge this group with F-119 and mark these findings "insufficient proof" but It's probably cleaner this way.
+
+Judging
+Edited: Feb 22
+3docSec
+
+Marking as low as there doesn't seem to be any impact on assets or availability. In fact, the attack seems to be a net loss for the attacker who can lose value to a back-running arbitrage
+
+It could be an improvement, but it's not an issue per se.
+Edited: Feb 22
+jvr0x
+
+There's no incentive for a liquidity provider to do so as the contract will mint the minimum amount of shares based on the tokens provided, i.e. std::cmp::min(asset_shares[0], asset_shares[1]). Any excess would be considered as a donation.
+
+Additionally, providing liquidity in a skewed ratio would be quickly closed by arbitrageurs, benefitting the rest of the liquidity providers are swap fees are accumulated.
+
+Will consider adding this as an improvement. It's not high, medium at most.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid, I may be missing something though, very strange it comes with no dupes
+
+3docSec
+01/16/2025
+
+I believe the attack would not be valid because a liquidity provider acting this way would lose value to back-ran arbitraging
+
+Duplicates
+2
+S-389
+Slippage tolerance can be set to an arbitrary value to manipulate the price of the pool
+c0pp3rscr3w3r
+45
+S-324
+XYK - easy price manipulation
+LonnyFlash
+00
+Timeline
+Submitted
+Created: 511d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

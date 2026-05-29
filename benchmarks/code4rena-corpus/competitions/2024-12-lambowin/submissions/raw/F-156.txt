@@ -1,0 +1,122 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-156
+Medium
+Primary
+S-204
+Users can prevent protocol from rebalancing for his gain and cause loss of funds for protocol and its users
+mrMorningstar
+37
+Sufficient
+383d ago
+Finding description and impact
+
+The protocol have a vETH token that aims to be pegged to the ETH so the ration of vETH -> ETH = 1:1. When depeg happens the protocol can mitigate that via rebalance function in LamboRebalanceOnUniwap that looks like this:
+
+    function rebalance(uint256 directionMask, uint256 amountIn, uint256 amountOut) external nonReentrant {
+        uint256 balanceBefore = IERC20(weth).balanceOf(address(this));
+        bytes memory data = abi.encode(directionMask, amountIn, amountOut);
+        IMorpho(morphoVault).flashLoan(weth, amountIn, data);
+        uint256 balanceAfter = IERC20(weth).balanceOf(address(this));
+        uint256 profit = balanceAfter - balanceBefore;
+        require(profit > 0, "No profit made");
+    }
+
+This function is designed to rebalance ratio by taking a flashloan from MorphoVault, which will be used on UniswapV3 to make a swap, while at the same time make sure there is a profit for the caller which later can be transferred via extractProfit function in the same contract.
+
+Proof of Concept
+
+The issue here is that rebalance function can be frontrun by malicious user who will make a swap directly to the pool which will make disbalance in ratio even greater and just enought for this check to revert:
+
+require(profit > 0, "No profit made");
+
+Which will make the whole function to revert and rebalance will not happen.
+
+PoC:
+
+User call the rebalance function to restore vETH-ETH ratio
+Malicious user see the tx in mempool and front-runs it(for example to swap WETH to vETH which will inflate value of vETH)
+Then the rebalance function is executed and flash loan is taken and going for swap
+The protocol receive less vETH than it should
+Not enough WETH is deposited so the profit <= 0 which will make rebalance revert
+Malicious user can furthermore use the vETH he got to swap and exploit the other Lambo tokens and inflate other pools for its gain via LamboVETHRouter as it expected ratio in buyQuote is 1:1 for vETH/ETH (also by this comment here), by swaping his gained vETH for desired targetToken
+
+In the end attacker successfully DoS the rebalance function and since the rebalance is designed to ignore gas costs to increase rebalancing frequency, accepting gas losses as a trade-off for improved price stability it will result not only just of no profit but even a net loss of funds for the protocol and other users that are in the pool where one of pair tokens is inflated vETH. This will motivate malicious user to keep doing these attacks and stop protocol from rebalancing as long as it is profitable for him.
+
+Impact:
+
+Repeg can be DoS-ed which will prevent protocol from rebalancing and will incur loss of funds.
+
+Recommended mitigation steps
+
+There is no easy solution but, one solution is to use previewRebalance in the rebalance function and compare the returned values and profitability with inputted amounts by the user so even attacker front-runs it the function reverts even before flashloan is taken that can save additional gas cost and it will make each time more expensive and unprofitable for attacker to perform that attack. Also to include mechanism that will account for the possibility of inflated vETH values in LamboVETHRouter.
+
+Links to affected code
+LamboRebalanceOnUniwap.sol#L62
+Opens in a new window
+Submissions touching same files
+LamboRebalanceOnUniwap.sol
+View full submission
+Duplicates
+4
+S-740
+LamboRebalanceOnUniwap rebalance function is susceptible to front-running due to insufficient amount validation
+Evo
+52
+S-556
+`previewRebalance()` vulnerable to manipulation through flash loans due to spot price dependency
+bumbleb33
+00
+S-555
+`previewRebalance()` vulnerable to manipulation through direct token transfers to pool
+bumbleb33
+00
+S-342
+No slippage protection causes the rebalancing to be susceptible to frontrunning & breaks the peg
+0xGondar
+00
+Timeline
+Submitted
+Created: 535d ago
+High
+Triage
+High
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Medium
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

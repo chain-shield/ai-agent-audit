@@ -1,0 +1,132 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-13
+Low
+Primary
+S-464
+A chain reorganization may cause one source to block the price update of another source.
+shaflow2
+71
+Sufficient
+383d ago
+Finding description and impact
+
+Using a global s_latestPriceSequenceNumber for price updates can lead to a situation where, after a chain reorganization, one source blocks another source's price updates. This results in subsequent cross-chain message fees being calculated using outdated prices.
+
+Proof of Concept
+
+Consider the following scenario:
+
+Initially, the offRamp s_latestPriceSequenceNumber is 1.
+The first commit message updates the price on the Base chain, ocrSequenceNumber = 2.
+The second commit message updates the price on the Arbitrum chain and the merkleRoot for minSeqNr 1 to maxSeqNr 100. At this point, ocrSequenceNumber is 3.
+
+After a chain reorganization, the transaction order changes to:
+
+The first transaction updates the price on the Arbitrum chain and the merkleRoot for minSeqNr 1 to maxSeqNr 100. At this point, s_latestPriceSequenceNumber is set to ocrSequenceNumber = 3.
+The second transaction, which originally updated the price on the Base chain, fails to execute because its ocrSequenceNumber = 2. This transaction reverts, and the nodes must re-achieve consensus to update the price.
+
+During this period of consensus re-achievement, many cross-chain transactions will be issued from the OnRamp using outdated prices.
+
+Recommended mitigation steps
+
+Using a strictly incrementing s_latestPriceSequenceNumber or storing sequence numbers separately for each channel can address this issue.
+
+-  uint64 private s_latestPriceSequenceNumber;
++  mapping(bytes16 sourceChain => uint64 latestPriceSequenceNumber) private s_latestPriceSequenceNumber;
+Links to affected code
+OffRamp.sol#L798
+Opens in a new window
+Submissions touching same files
+OffRamp.sol
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-464.
+negative impact
+Edited: Feb 22
+shaflow2
+OP
+
+Dear Judge:
+Expand the example in the report.
+
+The first commit message updates the price on the Arbitrum chain and the merkleRoot for minSeqNr 1 to maxSeqNr 100 in both Arbitrum and Optimism. At this point, ocrSequenceNumber is 2.
+The NOP batch execution first processes the commit message from step 1.
+The third commit message updates the price on the Base chain, with ocrSequenceNumber = 3.
+
+Transaction order after chain reorganization:
+3 -> 1 -> 2
+
+Transaction 3 is processed, but Transaction 1 fails due to the ocrSequenceNumber issue.
+
+Negative impacts:
+
+The NOP batch execution for transaction 2 also fails because the merkleRoots were not successfully set. This results in wasting NOP gas, leading to losses for NOPs.
+The report in Transaction 1 becomes invalid and needs to be re-consensused off-chain, potentially delaying the execution of the CCIP message.
+Users who relied on Transaction 2 for bridge token transactions will have their transactions reverted after re-org due to the reorganization. Furthermore, if during the new consensus process, the source chain mentioned in the report becomes cursed by cciphome, it will not be possible to submit related reports again before the curse is lifted, and the user`s failed transactions cannot be restored to normal temporarily.
+
+Based on the above, I believe it is of med severity.
+
+LSDan
+12/16/2024
+
+It is extremely unlikely. That brings it from medium to low. Ruling stands.
+
+This is fine?
+Edited: Feb 22
+rensr
+
+This transaction reverts, and the nodes must re-achieve consensus to update the price.
+
+This feels completely fine, especially given the explicit callout in the readme that pricing is not always perfect and that's OK. Chain re-orgs that re-order transactions are also extremely rare.
+
+LSDan
+12/10/2024
+
+I agree. I'm not sure I see the negative impact, although it does seems like a valid scenario that could occur. Downgrading to informational/low
+
+Timeline
+Submitted
+Created: 546d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

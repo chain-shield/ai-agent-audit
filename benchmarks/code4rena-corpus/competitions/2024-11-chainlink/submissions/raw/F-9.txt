@@ -1,0 +1,246 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Chainlink
+/
+F-9
+Low
+Primary
+S-354
+Token registration with the multi aggregate rate limiter should function independently for both onRamp and offRamp
+ether_sky
+81
+Sufficient
+383d ago
+Finding description and impact
+
+There are two types of rate limiters in the system:
+
+Token Pool Rate Limiters: These limit individual token transfers.
+Multi-Aggregate Rate Limiters: These limit the total transfer of tokens to and from a chain.
+
+In the previous version, adding a token to the aggregate rate limiter was independent for onRamp (outgoing tokens from a chain) and offRamp (ingoing tokens to a chain).
+This design allowed for flexibility in how token transfers were managed.
+For example:
+
+Selective Limiting: Token owners could limit outgoing transfers from a chain without affecting incoming transfers. This was useful for specific purposes where restricting one direction was sufficient.
+
+There is no requirement for all deployed tokens to be included in the aggregate rate limiter, as the system should remain flexible to accommodate various scenarios.
+However, the current version undermines this flexibility by introducing a unique onRamp, offRamp, and multi-aggregate rate limiter for each chain.
+
+Proof of Concept
+
+Imagine two chains, A and B, and a token T deployed on both chains.
+First, let me explain the previous version.
+In that version, the onRamp and offRamp were implemented for each lane.
+
+For onRamp (A → B):
+Token T was added to the aggregate rate limiter, so its transfer amounts were limited.
+EVM2EVMOnRamp.sol
+
+function forwardFromRouter(
+  uint64 destChainSelector,
+  Client.EVM2AnyMessage calldata message,
+  uint256 feeTokenAmount,
+  address originalSender
+) external returns (bytes32) {
+  if (numberOfTokens > 0) {
+    uint256 value;
+    for (uint256 i = 0; i < numberOfTokens; ++i) {
+      if (message.tokenAmounts[i].amount == 0) revert CannotSendZeroTokens();
+
+@->      if (s_tokenTransferFeeConfig[message.tokenAmounts[i].token].aggregateRateLimitEnabled) {
+@->        value += _getTokenValue(message.tokenAmounts[i], IPriceRegistry(s_dynamicConfig.priceRegistry));
+@->      }
+    }
+    if (value > 0) _rateLimitValue(value);
+  }
+}
+For offRamp (B → A):
+Token T was not added to the aggregate rate limiter, allowing unrestricted transfers.
+EVM2EVMOffRamp.sol
+
+function _releaseOrMintTokens(
+  Client.EVMTokenAmount[] memory sourceTokenAmounts,
+  bytes memory originalSender,
+  address receiver,
+  bytes[] memory encodedSourceTokenData,
+  bytes[] memory offchainTokenData
+) internal returns (Client.EVMTokenAmount[] memory destTokenAmounts) {
+  for (uint256 i = 0; i < sourceTokenAmounts.length; ++i) {
+@->    if (s_rateLimitedTokensDestToSource.contains(destTokenAmounts[i].token)) {
+@->      value += _getTokenValue(destTokenAmounts[i], IPriceRegistry(s_dynamicConfig.priceRegistry));
+@->    }
+  }
+  if (value > 0) _rateLimitValue(value);
+  return destTokenAmounts;
+}
+
+This demonstrates that the inbound and outbound transfer amounts of token T are governed by different aggregate rate limiters on chain A, allowing one direction to be disabled as per the design.
+
+Now, let’s look at the current version.
+
+In this version, there is a unique onRamp, offRamp, and MultiAggregateRateLimiter for each chain.
+The MultiAggregateRateLimiter includes a data structure called s_rateLimitedTokensLocalToRemote, which stores tokens managed by the rate limiter.
+These tokens are stored based on the remote chain selector.
+
+mapping(uint64 remoteChainSelector => EnumerableMapAddresses.AddressToBytesMap tokensLocalToRemote) private
+  s_rateLimitedTokensLocalToRemote;
+
+This means that it is not mandatory to add all deployed tokens to the aggregate rate limiter.
+In other words, token transfer amounts can be restricted for certain remote chains while remaining unrestricted for others.
+The same applies to both inbound and outbound transfer amounts.
+However, once a token is added to the aggregate rate limiter for certain chains, both inbound and outbound transfer amounts are restricted simultaneously.
+
+For example, consider token T added to the aggregate rate limiter for chain B in the chain A.
+When tokens are transferred from chain A to B, the onRamp calls the onOutboundMessage function of the MultiAggregateRateLimiter, applying the aggregate rate limiter for chain B.
+
+function onOutboundMessage(
+  uint64 destChainSelector,
+  Client.EVM2AnyMessage calldata message
+) external onlyAuthorizedCallers {
+  _applyRateLimit(destChainSelector, message.tokenAmounts, true);
+}
+
+When tokens are transferred from chain B to A, the offRamp calls the onInboundMessage function of the MultiAggregateRateLimiter, applying the aggregate rate limiter for chain B.
+
+function onInboundMessage(
+  Client.Any2EVMMessage memory message
+) external onlyAuthorizedCallers {
+  _applyRateLimit(message.sourceChainSelector, message.destTokenAmounts, false);
+}
+
+In both cases, since token T is included in s_rateLimitedTokensLocalToRemote for chain B, the transfer amounts of T are subject to the limiter.
+
+function _applyRateLimit(
+  uint64 remoteChainSelector,
+  Client.EVMTokenAmount[] memory tokenAmounts,
+  bool isOutgoingLane
+) private {
+  RateLimiter.TokenBucket storage tokenBucket = _getTokenBucket(remoteChainSelector, isOutgoingLane);
+
+  if (tokenBucket.isEnabled) {
+    uint256 value;
+    for (uint256 i = 0; i < tokenAmounts.length; ++i) {
+@->      if (s_rateLimitedTokensLocalToRemote[remoteChainSelector].contains(tokenAmounts[i].token)) {
+@->        value += _getTokenValue(tokenAmounts[i]);
+@->      }
+    }
+    if (value > 0) tokenBucket._consume(value, address(0));
+  }
+}
+
+If token T is removed from s_rateLimitedTokensLocalToRemote for chain B, neither inbound nor outbound transfer amounts will be limited simultaneously.
+
+This limitation means that the inbound and outbound transfer amounts cannot be managed independently, which eliminates the flexibility of the rate limiter.
+
+Recommended mitigation steps
++ struct TokensLocalToRemote {
++   EnumerableMapAddresses.AddressToBytesMap inboundTokensLocalToRemote;
++   EnumerableMapAddresses.AddressToBytesMap outboundTokensLocalToRemote;
++ }
+
+- mapping(uint64 remoteChainSelector => EnumerableMapAddresses.AddressToBytesMap tokensLocalToRemote) private
+-   s_rateLimitedTokensLocalToRemote;
+
++ mapping(uint64 remoteChainSelector => TokensLocalToRemote) private
++   s_rateLimitedTokensLocalToRemote;
+
++ function _getTokensLocalToRemote(
++   uint64 remoteChainSelector,
++   bool isOutboundLane 
++ ) internal view returns (EnumerableMapAddresses.AddressToBytesMap storage) {
++   TokensLocalToRemote storage tokensLocalToRemote = s_rateLimitedTokensLocalToRemote[remoteChainSelector];
++   if (isOutboundLane) {
++     return tokensLocalToRemote.outboundTokensLocalToRemote;
++   } else {
++     return tokensLocalToRemote.inboundTokensLocalToRemote;
++   }
++ }
+
+function _applyRateLimit(
+  uint64 remoteChainSelector,
+  Client.EVMTokenAmount[] memory tokenAmounts,
+  bool isOutgoingLane
+) private {
+  RateLimiter.TokenBucket storage tokenBucket = _getTokenBucket(remoteChainSelector, isOutgoingLane);
+
+  // Skip rate limiting if it is disabled.
+  if (tokenBucket.isEnabled) {
+    uint256 value;
+    for (uint256 i = 0; i < tokenAmounts.length; ++i) {
+
+-       if (s_rateLimitedTokensLocalToRemote[remoteChainSelector].contains(tokenAmounts[i].token)) {
++       if (_getTokensLocalToRemote(remoteChainSelector, isOutgoingLane).contains(tokenAmounts[i].token)) {  
+
+          value += _getTokenValue(tokenAmounts[i]);
+      }
+    }
+    // Rate limit on aggregated token value.
+    if (value > 0) tokenBucket._consume(value, address(0));
+  }
+}
+
+Then, add or remove tokens from the aggregate rate limiter separately for inbound and outbound transfers.
+
+Links to affected code
+MultiAggregateRateLimiter.sol#L63-L64
+Opens in a new window
+MultiAggregateRateLimiter.sol#L90
+Opens in a new window
+MultiAggregateRateLimiter.sol#L82
+Opens in a new window
+MultiAggregateRateLimiter.sol#L108-L110
+Opens in a new window
+Submissions touching same files
+MultiAggregateRateLimiter.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-354.
+Design choice
+Edited: Feb 22
+0xA5DF
+
+Seems like a limit that's built into current design, should be reported as QA
+
+Timeline
+Submitted
+Created: 549d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,136 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-18
+Low
+Primary
+S-130
+Fee market governance simulation returns nil messages, breaking proposal testing
+Rhaydden
+30
+Sufficient
+383d ago
+Proof of concept
+
+The ProposalMsgs function of the AppModule struct is responsible for generating weighted proposal messages for simulations. But, due to a mistake in the code, the actual simulation messages are never being generated or returned.
+The bug exists where the simulation handlers for both UpsertFeeDenom and RemoveFeeDenom messages are incorrectly implemented.
+
+Take a look at this part of the x/xfeemarket/module/simulation.go contract:
+
+https://github.com/code-423n4/2024-11-mantra/blob/37dedf312c3ea161792b8e1278978db23bb5a8b0/x/xfeemarket/module/simulation.go#L84-L104
+
+func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.WeightedProposalMsg {
+	return []simtypes.WeightedProposalMsg{
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgUpsertFeeDenom,
+			defaultWeightMsgUpsertFeeDenom,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				xfeemarketsimulation.SimulateMsgUpsertFeeDenom(am.accountKeeper, am.bankKeeper, am.keeper)
+>>>				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgRemoveFeeDenom,
+			defaultWeightMsgRemoveFeeDenom,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				xfeemarketsimulation.SimulateMsgRemoveFeeDenom(am.accountKeeper, am.bankKeeper, am.keeper)
+>>>				return nil
+			},
+		),
+
+This bug manifests in two ways:
+
+The simulation functions are called but their return values are completely ignored
+The handlers unconditionally return nil instead of valid messages
+
+This means that when someone tries to simulate governance proposals for adding new fee denominations, updating fee multipliers and removing existing fee denominations.
+
+The simulation will pass without actually testing anything! This is a problem because fee-related changes directly impact which tokens users can use to pay for transactions, how much users pay for transactions (via multipliers) & the protocol's fee burning and redistribution mechanics.
+
+For example, if someone proposes a governance change to add a new fee denomination with an incorrect multiplier, the simulation would pass even though the actual change might cause transactions to become prohibitively expensive or practically free.
+
+Fix
+func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Weigh
+             opWeightMsgUpsertFeeDenom,
+             defaultWeightMsgUpsertFeeDenom,
+             func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+-                xfeemarketsimulation.SimulateMsgUpsertFeeDenom(am.accountKeeper, am.bankKeeper, am.keeper)
+-                return nil
++                return xfeemarketsimulation.SimulateMsgUpsertFeeDenom(am.accountKeeper, 
++                    am.bankKeeper, am.keeper)(r, ctx, accs)
+             },
+         ),
+         simulation.NewWeightedProposalMsg(
+             opWeightMsgRemoveFeeDenom,
+             defaultWeightMsgRemoveFeeDenom,
+             func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+-                xfeemarketsimulation.SimulateMsgRemoveFeeDenom(am.accountKeeper, am.bankKeeper, am.keeper)
+-                return nil
++                return xfeemarketsimulation.SimulateMsgRemoveFeeDenom(am.accountKeeper, 
++                    am.bankKeeper, am.keeper)(r, ctx, accs)
+             },
+         ),
+Links to affected code
+simulation.go#L84-L104
+Opens in a new window
+Submissions touching same files
+simulation.go
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-130.
+L
+Edited: Feb 22
+mantra_lance
+
+Simulation is only used for testing.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid, assuming simulation is not used only for testing
+
+Timeline
+Submitted
+Created: 514d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

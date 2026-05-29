@@ -1,0 +1,122 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-326
+Low
+Primary
+S-1042
+Unrestricted Token Cascade Configuration Leads To Incorrect Usage
+0x2517
+00
+Sufficient
+383d ago
+Finding description and impact
+
+The ClaimRouter contract contains a critical flaw in its token conversion logic where the tokenCascade array, which should exclusively contain stablecoin addresses, is not properly validated.
+
+The _convertFromTokenToStable function is used to convert token amounts to stable coin values, but the contract fails to enforce that the destination tokens in tokenCascade are actually stablecoins.
+
+                amount = _convertFromTokenToStable(tokenAddress, amount_);
+
+                //We control both the length of the array and the external call
+                // slither-disable-next-line calls-loop
+                (protectionStrat, requiresFunds) = _getStrategy(tokenCascade[i], amount);
+
+However, the tokenCascade array can be configured with any token addresses, including volatile assets like ETH, which defeats the purpose of the stable conversion and can lead to incorrect calculations.
+
+https://github.com/code-423n4/2024-11-concrete/blob/a32913bac502c8f7c092d02824ab50722f89bdc0/test/ClaimRouter.t.sol#L91-L93
+        tokenCascade.push(address(fakeUSDC));
+        tokenCascade.push(address(fakeETH));
+
+As a result, this will lead to incorrect results when non-stablecoins like fakeETH are being used which are not stable coins. This will lead to incorrect price calculations when converting between tokens.
+
+Proof of Concept
+
+The issue can be demonstrated in the test setup where tokenCascade includes non-stablecoin tokens:
+
+// From test/ClaimRouter.t.sol
+tokenCascade.push(address(fakeUSDC)); // Stablecoin - OK
+tokenCascade.push(address(fakeETH));  // Volatile asset - Should not be allowed
+
+When requestToken is called, it uses this conversion:
+
+// From src/claimRouter/ClaimRouter.sol
+amount = _convertFromTokenToStable(tokenAddress, amount_);
+(protectionStrat, requiresFunds) = _getStrategy(tokenCascade[i], amount);
+Recommended mitigation steps
+
+To mitigate this issue:
+
+Consider using a whitelist of known stablecoin addresses instead of allowing arbitrary token addresses to be added to the cascade.
+Add documentation clearly stating that tokenCascade must only contain stablecoin addresses
+Non-stablecoins should never be used as tokenCascade
+Links to affected code
+ClaimRouter.sol#L207-L211
+Opens in a new window
+OraclePlug.sol#L49-L53
+Opens in a new window
+ClaimRouter.t.sol#L92-L93
+Opens in a new window
+Submissions touching same files
+ClaimRouter.sol
+OraclePlug.sol
+ClaimRouter.t.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-1042.
+This is not a duplicate
+Edited: Feb 22
+jesjupyter
+
+Hi Judge,
+
+Thank you for your time and effort in reviewing the findings. I’m here to escalate on issue #1042 for my friend.
+
+This is not about any decimal-related issue, but rather the lack of a check on the type of stablecoin. In the current test setup, a non-stablecoin like fakeETH is being used, which raises a concern. As it stands, it is possible for the tokenCascade to include non-stablecoins, as demonstrated by the team’s current implementation.
+
+Picodes
+01/26/2025
+
+Thanks for your comment. Admin misconfiguration are low under C4 rules and tokenCascade is set by the admin
+
+Timeline
+Submitted
+Created: 542d ago
+High
+Triage
+Sufficient
+Review
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

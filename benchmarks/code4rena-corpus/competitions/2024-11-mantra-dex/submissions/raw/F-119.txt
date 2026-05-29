@@ -1,0 +1,157 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-119
+Medium
+Primary
+S-355
+Liquidity providers can lose tokens due to disproportionate deposits not being properly handled
+honey-k12
+43
+Sufficient
+383d ago
+Finding description and impact
+
+When providing liquidity to a pool that already has liquidity, users may lose a portion of their deposited tokens if they provide tokens in different proportions relative to the current pool reserves. While the slippage_tolerance parameter protects against receiving too few LP tokens, it doesn't protect against token loss due to disproportionate deposits.
+
+The provide_liquidity function in the pool manager calculates LP tokens to mint based on the minimum share ratio of provided tokens. When tokens are provided in different proportions relative to the pool's current reserves, the excess tokens from the higher proportion are effectively donated to the pool. This way, users can lose tokens when providing liquidity with disproportionate amounts.
+
+Proof of Concept
+
+First liquidity provider in a pool may provide arbitrary token amounts and set the initial price, but all other liquidity providers must provide liquidity proportionally to current pool reserves.
+
+Here's the relevant code from commands.rs::provide_liquidity:
+commands.rs#L213-L231
+
+let mut asset_shares = vec![];
+
+    for deposit in deposits.iter() {
+        let asset_denom = &deposit.denom;
+        let pool_asset_index = pool_assets
+            .iter()
+            .position(|pool_asset| &pool_asset.denom == asset_denom)
+            .ok_or(ContractError::AssetMismatch)?;
+
+        asset_shares.push(
+            deposit
+                .amount
+                .multiply_ratio(total_share, pool_assets[pool_asset_index].amount),
+        );
+    }
+
+    std::cmp::min(asset_shares[0], asset_shares[1])
+}
+
+Since a pool is made of two tokens and liquidity is provided in both tokens, there's a possibility for a discrepancy: token amounts may be provided in different proportions. When this happens, the smaller of the proportions is chosen to calculate the amount of LP tokens minted.
+
+For each deposited token, it calculates a share ratio:
+
+share_ratio = deposit_amount * total_share / pool_asset_amount
+
+Then it takes the minimum of these share ratios to determine LP tokens to mint:
+
+final_share = min(share_ratio_token_a, share_ratio_token_b)
+
+As a result, the difference in proportions will create an excess of tokens that won't be redeemable for the amount of LP tokens minted. The excess of tokens gets, basically, donated to the pool: it'll be shared among all liquidity providers of the pool.
+
+While the slippage_tolerance argument of the provide_liquidity function allows liquidity providers to set the minimal amount of LP tokens they want to receive, it doesn't allow them to minimize the disproportion of token amounts or avoid it at all.
+
+Recommended mitigation steps
+
+In the provide_liquidity function, consider calculating optimal token amounts based on the amounts specified by user, current pool reserves, and the minimal LP tokens amount specified by user. As a reference, consider this piece from the Uniswap V2 Router: UniswapV2Router02.sol#L45-L60.
+
+Links to affected code
+commands.rs#L213-L231
+Opens in a new window
+Submissions touching same files
+commands.rs
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-355.
+Judging
+Edited: Feb 22
+3docSec
+
+I consider this group a valid M, basing on the following facts:
+
+as said here, frontrunning is difficult to automate
+there is slippage protection in place that is sufficient to avoid considerable losses
+because extra tokens are not returned, however, the "accidental" frontrun case can lead to non-dust value leakage, which is a solid M-severity impact
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+More M than H; tokens unused due to frontrunning swaps should be refunded; reasonable
+
+Duplicates
+6
+S-360
+Depositors can lose funds to other depositors in constant product pool due to unreturned assets
+oakcobalt
+68
+S-342
+Dust token should be returned to the user in `liquidity.provide_liquidity`
+jasonxiale
+42
+S-185
+Mantra's single-sided liquidity provision implementation causes pool liquidity provision imbalance due to enforced swaps and allows older liquidity providers to steal assets from newer liquidity providers
+Bauchibred
+27
+S-325
+XYK incorrect shares given to lp provider
+LonnyFlash
+00
+S-212
+Liquidity Provision For Constant Product Consumes Tokens That Do Not Increase Liquidity
+Lambda
+00
+S-202
+Single-sided liquidity provision algorithm leads to significant value loss
+Lambda
+00
+Timeline
+Submitted
+Created: 497d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Medium
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

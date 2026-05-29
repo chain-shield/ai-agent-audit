@@ -1,0 +1,242 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-48
+Low
+Primary
+S-1367
+Fee-on-Transfer tokens will cause incorrect accounting and losses/reverts in protocol
+Maroutis
+37
+Sufficient
+383d ago
+Finding description and impact
+
+The protocol does not properly handle fee-on-transfer tokens, which are tokens that deduct a fee upon transfer. In various parts of the code, such as during asset deposits/mints and reward deposits/claims, the protocol assumes that the amount of tokens sent by the user or received from a strategy is equal to the amount intended or specified. The protocol does not calculate the exact amount of assets deposited or withdrawn by checking the actual balance changes before and after the transfer. This assumption leads to incorrect accounting when interacting with fee-on-transfer tokens, as the actual amount received is less than the amount sent due to the fee deduction.
+
+Impact
+The protocol overestimates the amount of tokens it has received, leading to inaccurate total asset calculations.
+Rewards may not be properly accounted for or distributed when fee-on-transfer tokens are involved.
+Transactions may fail unexpectedly due to insufficient balances or allowances.
+Withdrawing funds from strategies can also cause issues.
+Proof of Concept
+
+Example for the function deposit in ConcreteMultiStrategyVault :
+
+function deposit(
+    uint256 assets_,
+    address receiver_
+) public override nonReentrant whenNotPaused returns (uint256 shares) {
+    _validateAndUpdateDepositTimestamps(receiver_);
+
+    if (assets_ > maxDeposit(receiver_) || assets_ > depositLimit) revert MaxError();
+
+    IERC20(asset()).safeTransferFrom(msg.sender, address(this), assets_);
+
+    uint256 feeShares = shares.mulDiv(uint256(fees.depositFee), MAX_BASIS_POINTS, Math.Rounding.Ceil);
+
+    shares = _convertToShares(assets_, Math.Rounding.Floor) - feeShares;
+The function calls IERC20(asset()).safeTransferFrom(msg.sender, address(this), assets_); to transfer assets_ tokens from the user to the contract.
+It assumes that the contract will receive exactly assets_ tokens.
+However, for fee-on-transfer tokens, the contract will receive less than assets_ tokens due to the transfer fee.
+The calculation of shares uses _convertToShares(assets_, Math.Rounding.Floor), which overestimates the amount of assets received.
+This leads to minting more shares than appropriate, diluting existing holders and causing accounting inaccuracies.
+
+This applies to many sections of the contracts, withrawing tokens, claiming rewards...
+
+Recommended mitigation steps
+
+Instead of assuming the amount transferred equals the amount specified, calculate the actual amount by checking the balance before and after the transfer.
+
+Links to affected code
+StrategyBase.sol#L136
+Opens in a new window
+ConcreteMultiStrategyVault.sol#L242-L250
+Opens in a new window
+Submissions touching same files
+StrategyBase.sol
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-1367.
+Duplicate issue is flagged as medium while others are low
+Edited: Feb 22
+Maroutis
+OP
+
+I believe this issue and its duplicate should be a duplicate of F-48 or F-48 should be downgraded as both of them mention the impact of FOT tokens on the protocol.
+
+serial-coder
+01/09/2025
+
+I agree with this comment
+
+0xStalin
+01/09/2025
+
+Good point, I also agree with this comment
+
+Picodes
+01/24/2025
+
+Thanks for flagging !
+
+Dispute Logic
+Edited: Feb 22
+rdturner
+
+As a protocol we tightly control which tokens we can take in. Therefore assessing for the existence of a "Fee on transfer" token is not an actual threat for the time being. Adding unnecessary checks for every token transfer would only service to increase gas costs.
+
+Picodes
+12/27/2024
+
+Downgrading to Low for coherence with other findings and because underlying yield generating protocols don't support FoT although it was mentioned in the contest's readme
+
+Maroutis
+OP
+Deleted: 01/08/2025
+This comment was deleted.
+Duplicates
+34
+S-1202
+`harvestRewards` can cause all changes of balances of vault shares to brick, freezing critical functions like deposit and withdraw
+rscodes
+92
+S-819
+Rebasing Token Problems
+EPSec
+88
+S-999
+ConcreteMultiStrategyVault.harvestRewards can't handle fee-on-transfer token as reward token
+nnez
+87
+S-960
+Fee-On-Transfer/Rebasing tokens are not supported by any of Aave, Compound, Morpho, Radiant and Silo protocols
+stuart_the_minion
+83
+S-1276
+`ConcreteMultiStrategyVault` and all customized `Strategy` vaults do not work with fee-on-transfer tokens
+serial-coder
+78
+S-1415
+Silo is not compatible with Fee-on-transfer or rebasing tokens
+waydou
+75
+S-1239
+`ConcreteMultiStrategyVault.mint` function call can revert and be DOS'ed for fee-on-transfer tokens
+rbserver
+71
+S-740
+The protocol is not compatible with fee on transfer tokens
+0x007
+70
+S-221
+`ConcreteMultiStrategyVault` is not compatible with FoT tokens
+Egis_Security
+67
+S-1290
+Deposit and mint calls will fail for fee on transfer tokens
+MrPotatoMagic
+59
+S-382
+ConcreteMultiStrategyVault does not support fee on transfer tokens
+trachev
+56
+S-441
+Deposits will fail with fee on transfer tokens and stETH token when vaultIdle is true
+Giorgio
+54
+S-820
+`ConcreteMultiStrategyVault` is incompatible with Fee-on-Transfer Tokens
+honey-k12
+43
+S-8
+StrategyBase.sol :: _deposit() will not work with fee-on-transfer (FOT) tokens.
+Fitro
+40
+S-1382
+Rebasing tokens like stETH can cause accounting issues in the protocol
+Maroutis
+37
+S-629
+Concrete Multi strategy vault is not compatible with feeon transfer tokens and rebasing token
+Bigsam
+29
+S-1112
+Protocol expects to work with `Fee on transfer tokens` but does not implement logic to account for it
+Udsen
+27
+S-1395
+The previous user always gets shares worth less than the latter user for Fee on transfer tokens.
+Anirruth
+27
+S-267
+DoS in `deposit()` & `mint()` due to rounding errors in `stETH` transfers
+Tigerfrake
+19
+S-360
+Fee-on-Transfer Tokens Cause Over-Minting of Shares in `_deposit` Function
+Mrxstrange
+18
+S-912
+If a `Fee-on-transfer` token (i.e. `USDT`) would be used as a underlying token of the Vault, the TX may be failed - due to insufficient underlying token balance of the strategy contract to be deposited into a DeFi protocol
+0xmuxyz
+12
+S-1400
+Asset-Share Desynchronization in Fee-On-Transfer Token Deposits
+mansa11
+05
+S-1448
+SHARE INFLATION CAUSED BY FEE-ON-TRANSFER TOKENS
+0x40saoirse
+00
+S-1252
+Fee On Transfer tokens are not properly handled
+TheWeb3Mechanic
+00
+Timeline
+Submitted
+Created: 542d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

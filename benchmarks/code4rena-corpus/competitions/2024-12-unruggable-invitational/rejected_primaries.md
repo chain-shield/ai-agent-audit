@@ -1,0 +1,7 @@
+# Rejected Primary Findings: Unruggable Invitational
+
+No rejected primary findings were captured for this contest in the current corpus.
+
+- **Rejected primary count:** 0
+- **Primary submission rows captured:** 0
+- **Submission status:** captured_from_authenticated_browser

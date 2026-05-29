@@ -113,6 +113,13 @@ fn context_docs(repo: &RepoPaths, source_root: &Path) -> Result<Vec<String>> {
         push_unique_doc(&mut docs, context_doc_entry(scoped_files, &project_root));
     }
 
+    if let Some(validation_sidecar) = generated_validation_sidecar(repo) {
+        push_unique_doc(
+            &mut docs,
+            context_doc_entry(&validation_sidecar, &project_root),
+        );
+    }
+
     let readme = source_root.join("README.md");
     if readme.exists() {
         push_unique_doc(&mut docs, "{{SOURCE_ROOT}}/README.md".to_string());
@@ -125,6 +132,27 @@ fn context_docs(repo: &RepoPaths, source_root: &Path) -> Result<Vec<String>> {
         _ => {}
     }
     Ok(docs)
+}
+
+fn generated_validation_sidecar(repo: &RepoPaths) -> Option<PathBuf> {
+    repo.audit_scope
+        .as_deref()
+        .and_then(validation_sidecar_from_generated_context_path)
+        .or_else(|| {
+            repo.scoped_files
+                .as_deref()
+                .and_then(validation_sidecar_from_generated_context_path)
+        })
+}
+
+fn validation_sidecar_from_generated_context_path(path: &Path) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_str()?;
+    let validation_name = file_name
+        .strip_suffix("-scope.md")
+        .or_else(|| file_name.strip_suffix("-scope.txt"))
+        .map(|prefix| format!("{prefix}-validation.md"))?;
+    let validation_path = path.with_file_name(validation_name);
+    validation_path.exists().then_some(validation_path)
 }
 
 fn context_doc_entry(path: &Path, project_root: &Path) -> String {
@@ -268,9 +296,11 @@ mod tests {
         fs::write(source_root.join("README.md"), "# Olas").unwrap();
         let docs = project.join("audit-docs/2026-01-olas-docs.md");
         let scope = project.join("audit-docs/2026-01-olas-scope.md");
+        let validation = project.join("audit-docs/2026-01-olas-validation.md");
         fs::create_dir_all(docs.parent().unwrap()).unwrap();
         fs::write(&docs, "# Docs").unwrap();
         fs::write(&scope, "# Scope").unwrap();
+        fs::write(&validation, "# Validation").unwrap();
 
         let repo = repo_paths(project.join("audit-workspace"), vec![docs], Some(scope));
         let report = project.join("2026-01-olas/report/audit-report.md");
@@ -290,6 +320,7 @@ mod tests {
         assert!(rendered.contains("audit_report: "));
         assert!(rendered.contains("audit-docs/2026-01-olas-docs.md"));
         assert!(rendered.contains("audit-docs/2026-01-olas-scope.md"));
+        assert!(rendered.contains("audit-docs/2026-01-olas-validation.md"));
         assert!(rendered.contains("\"{{SOURCE_ROOT}}/README.md\""));
         assert!(rendered.contains("\"{{THREE_SHOT_ROOT}}/v12-checklist.md\""));
     }

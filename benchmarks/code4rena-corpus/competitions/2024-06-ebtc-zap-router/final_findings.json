@@ -1,0 +1,32 @@
+[
+  {
+    "id": "M-01",
+    "local_markdown_path": "competitions/2024-06-ebtc-zap-router/ground_truth/accepted/M-01.md",
+    "markdown_fallback_used": false,
+    "poc_section_removed": true,
+    "poc_stripped": true,
+    "raw_excerpt": "[M-01] Incorrect comparison logic in post-operation checks Submitted by Nexarion , also found by chaduke , SBSecurity , lian886 , Drynooo , stacey , jesjupyter , and Rhaydden The _doCheckValueType function, which is crucial for post-operation validation, contains reversed comparison logic for the gte (greater than or equal to) and lte (less than or equal to) operators. This reversal causes the function to perform the opposite checks than intended, potentially allowing operations to pass validation when they should fail, or fail when they should pass. This issue could lead to: Incorrect validation of CDP (Collateralized Debt Position) states after operations. Potential manipulation of the system by exploiting these misaligned checks. Proof of Concept The issue is located in the _doCheckValueType function of the LeverageMacroBase contract: https://github.com/code-423n4/2024-06-badger/blob/9173558ee1ac8a78a7ae0a39b97b50ff0dd9e0f8/ebtc-protocol/packages/contracts/contracts/LeverageMacroBase.sol#L277-L289 Specifically, the problematic comparisons are: } else if ( check . operator == Operator . gte ) { require ( check . value >= valueToCheck , \"!LeverageMacroReference: gte post check\" ); } else if ( check . operator == Operator . lte ) { require ( check . value <= valueToCheck , \"!LeverageMacroReference: let post check\" ); } These comparisons are reversed and should be: } else if ( check . operator == Operator . gte",
+    "schema_version": "code4rena-corpus-v1",
+    "selected_primary_mentioned": false,
+    "severity": "Medium",
+    "source_report_url": "https://code4rena.com/reports/2024-06-ebtc-zap-router",
+    "source_snapshot_path": "competitions/2024-06-ebtc-zap-router/final_report.html",
+    "source_url": "https://code4rena.com/reports/2024-06-ebtc-zap-router",
+    "title": "Incorrect comparison logic in post-operation checks"
+  },
+  {
+    "id": "M-02",
+    "local_markdown_path": "competitions/2024-06-ebtc-zap-router/ground_truth/accepted/M-02.md",
+    "markdown_fallback_used": false,
+    "poc_section_removed": true,
+    "poc_stripped": true,
+    "raw_excerpt": "[M-02] Staking ETH incorrectly assumes revert bubbling Submitted by 0xBinChook , also found by debo , pep7siup , DemoreX , Greed , alix40 , and Chad0 When EbtcLeverageZapRouter::openCdpWithEth and EbtcLeverageZapRouter::adjustCdpWithEth stake ETH with Lido, the underlying function performing the call assumes that any exceptions (from Lido) will be bubbled up, but with call being a low level rather than a Solidity function, it is not the case. Lido stETH has two cases where a revert on depositing ETH for staking may be encountered, when deposits are paused or when staking limits are enabled and it is exceeded. If Lido returns a revert it is ignored and the entire CDP flow continues (permits, flash loans, account synching, CDP initialization, eBTC minting), with a revert only being cause only by one of the last step of the flow, moving the collateral to the active pool. Proof of Concept The two parts to the issue: Any possibility of reverts during staking ETH with Lido. Incorrect assumption that revert would bubble. 1. Lido deposit could revert: Lido has pausable staking on Ethereum stETH /** * @notice Stops accepting new Ether to the protocol * * @dev While accepting new Ether is stopped, calls to the `submit` function, * as well as to the default payable function, will revert. * * Emits `StakingPaused` event. */ function pauseStaking () external { Lido can impose a per block stake limit on Ethereum stETH * @ dev Reverts if : * - `_maxStakeLimit` == 0 * - `_maxStakeLimit` >= 2 ^ 96 * - `_maxStakeLimit` < `_stakeLimitIncreasePerBlock` * - `_maxStakeLimit` / `_stakeLimitIncreasePerBlock` >= 2 ^ 32 ( only if `_stakeLimitIncreasePerBlock` != 0 ) * * Emits `StakingLimitSet`",
+    "schema_version": "code4rena-corpus-v1",
+    "selected_primary_mentioned": false,
+    "severity": "Medium",
+    "source_report_url": "https://code4rena.com/reports/2024-06-ebtc-zap-router",
+    "source_snapshot_path": "competitions/2024-06-ebtc-zap-router/final_report.html",
+    "source_url": "https://code4rena.com/reports/2024-06-ebtc-zap-router",
+    "title": "Staking ETH incorrectly assumes revert bubbling"
+  }
+]

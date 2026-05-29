@@ -1,0 +1,523 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Concrete
+/
+F-312
+High
+Primary
+S-1080
+Withdrawing directly from vault breaks strategy allocation which leads to loss of funds
+gesha17
+57
+Sufficient
+383d ago
+Finding description and impact
+
+If the requested withdrawal is less than or equal to the vault contract balance, the withdrawal will directly send the funds to the user, without pulling funds from the strategies. However, this creates a problem for other users, as they will still pull funds from the strategies based on their allocation. If allocation is less than 100%, the part of user withdrawal which will be send from the vaults balance will be lost due to insufficient vault balance.
+
+Proof of Concept
+
+Consider this scenario:
+
+Asset to share ratio is 1:1 for simplicity.
+1 strategy with 50% allocation
+User A deposits 1000e18 assets.
+
+As a result there are 500e18 assets in vault and 500e18 assets in strategy.
+
+User B deposits 200e18 assets
+
+Now, there are 600e18 assets in vault and 600e18 in strategy.
+
+User B submits a withdrawal request for 200e18 assets. Since there are already 600e18 assets in the strategy, they will be directly sent to the user in the first if-statement:
+
+https://github.com/code-423n4/2024-11-concrete/blob/main/src/vault/ConcreteMultiStrategyVault.sol#L450
+
+function _withdrawStrategyFunds(uint256 amount_, address receiver_) private {
+        ...
+        // If there is enough in the vault, send the full amount
+        if (amount_ <= float) {
+            asset_.safeTransfer(receiver_, amount_);
+        } else {
+        ...
+        }
+    }
+
+As a result of this transaction there will now be 400e18 assets in the vault and 600e18 assets in the strategy.
+
+User A now attempts to redeem his 1000e18 shares. In the for loop, only 500e18 will be pulled from the strategy:
+
+https://github.com/code-423n4/2024-11-concrete/blob/main/src/vault/ConcreteMultiStrategyVault.sol#L464
+
+    function _withdrawStrategyFunds(uint256 amount_, address receiver_) private {
+        ...
+        if (amount_ <= float) {
+            asset_.safeTransfer(receiver_, amount_);
+        } else {
+            ...
+            for (uint256 i; i < len; ) {
+                ...
+                uint256 amountToWithdraw = amount_.mulDiv(
+                    strategy.allocation.amount,
+                    MAX_BASIS_POINTS,
+                    Math.Rounding.Ceil
+                );
+                ...
+            }
+            ...
+        }
+    }
+
+This is because amountToWithdraw is 1000e18 and at 50% allocation, the calculation for amountToWithdraw results in 500e18 assets, so 100e18 assets are left permanently stuck in the strategy.
+
+Then in the final if statement, the user will fail to pull the 400 assets left in the vault:
+
+https://github.com/code-423n4/2024-11-concrete/blob/main/src/vault/ConcreteMultiStrategyVault.sol#L478
+
+    function _withdrawStrategyFunds(uint256 amount_, address receiver_) private {
+        IERC20 asset_ = IERC20(asset());
+        //Not in a loop
+        //slither-disable-next-line calls-loop
+        uint256 float = asset_.balanceOf(address(this));
+        // If there is enough in the vault, send the full amount
+        if (amount_ <= float) {
+            asset_.safeTransfer(receiver_, amount_);
+        } else {
+            ...
+            // If enough wasn't drawn out, use the float (this is due to dust)
+            
+            if (totalWithdrawn < amount_ && amount_ - totalWithdrawn <= float) {
+                asset_.safeTransfer(receiver_, amount_ - totalWithdrawn);
+            }
+        }
+    }
+
+This is because if we substitue in the if-statement amount_ - totalWithdrawn <= float:
+1000e18 - 500e18 <= 400e18, which is false so no further withdrawal will happen.
+
+I want to specifically emphasize here, that even if the last if-statement is fixed to send what is left in the vault, the user will still lose 100e18 assets. On the contrary if the first if-statement is fixed then the latter one can still lead to loss of funds due to rounding up when withdrawing. So they are two separate issues. I have submitted a seprate report detailing the issue with the last if-statement.
+
+Recommended mitigation steps
+
+Apply the following change to remove the first if-statement and preserve the strategy allocation invariant during withdrawals:
+
+    function _withdrawStrategyFunds(uint256 amount_, address receiver_) private {
+        IERC20 asset_ = IERC20(asset());
+        //Not in a loop
+        //slither-disable-next-line calls-loop
+        uint256 float = asset_.balanceOf(address(this));
+-        // If there is enough in the vault, send the full amount
+-        if (amount_ <= float) {
+-            asset_.safeTransfer(receiver_, amount_);
+-        } else {
+            uint256 diff = amount_ - float;
+            uint256 totalWithdrawn = 0;
+            uint256 len = strategies.length;
+            for (uint256 i; i < len; ) {
+                Strategy memory strategy = strategies[i];
+                //We control both the length of the array and the external call
+                //slither-disable-next-line calls-loop
+                uint256 withdrawable = strategy.strategy.previewRedeem(strategy.strategy.balanceOf(address(this)));
+                if (diff.mulDiv(strategy.allocation.amount, MAX_BASIS_POINTS, Math.Rounding.Ceil) > withdrawable) {
+                    revert InsufficientFunds(strategy.strategy, diff * strategy.allocation.amount, withdrawable);
+                }
+                uint256 amountToWithdraw = amount_.mulDiv(
+                    strategy.allocation.amount,
+                    MAX_BASIS_POINTS,
+                    Math.Rounding.Ceil
+                );
+                //We control both the length of the array and the external call
+                //slither-disable-next-line unused-return,calls-loop
+                strategy.strategy.withdraw(amountToWithdraw, receiver_, address(this));
+                totalWithdrawn += amountToWithdraw;
+                unchecked {
+                    i++;
+                }
+            }
+            // If enough wasn't drawn out, use the float (this is due to dust)
+            if (totalWithdrawn < amount_ && amount_ - totalWithdrawn <= float) {
+                asset_.safeTransfer(receiver_, amount_ - totalWithdrawn);
+            }
+-        }
+    }
+Links to affected code
+ConcreteMultiStrategyVault.sol#L450
+Opens in a new window
+Submissions touching same files
+ConcreteMultiStrategyVault.sol
+View full submission
+Comments for the judge
+2
+You are viewing comments for the primary submission, S-1080.
+Dedupe from S-1053
+Edited: Feb 22
+gesha17
+OP
+
+Hello Judge,
+
+I see this issue was duped with my other submission S-1053, following this comment from 0xStalin on S-598. I tried explaining this to 0xStalin in the long thread above, so to avoid making this super long and wasting your time, here is the short argument why it should be deduped:
+
+None of the other submissions, apart from S-337, identify that the withdrawing directly from vault should be removed. If me or peter, the warden from S-337, did not submit our reports this issue would have been left as a high severity vulnerability in the code.
+
+I really want to stress that its important for the sponsor to fix BOTH issues, fixing just one doesn't fix the other. There is not a single report that identifies BOTH issues. To sum it up:
+
+Group 1:
+
+S-1080(this one)
+S-337
+
+Group 2:
+
+S-1053
+S-699, S-698 - identical submissions by same user
+S-87
+S-1299
+S-1130 - already duped with 1053
+S-1001
+S-598 - already duped with 1053
+Note: If you still have doubts, I can make unit tests to show that mitigating one does not mitigate the other.
+0xStalin
+Edited: 01/23/2025
+
+Withdrawing directly from the Vault is not a root problem per se, the root problem is the unhandled scenario on the withdrawStrategyFunds.
+
+withdrawing directly from the vault can cause the imbalance that would make the contract to fall in the vulnerable state for the _withdrawStrategyFunds().
+
+There are different ways for the contract to fall into the vulnerable state.
+
+One of them is by directly withdrawing from the Vault.
+Another one is by deposits to the Vault when the Vault is idle
+
+Any of those two paths are just means to an end, they are not a bug per se, the bug is the incorrect handling of withdrawals due to imbalance.
+
+The root problem of the bug is incorrectly handling withdrawals when there is an imbalance on the contract. How this imbalance was caused it is not the problem, therefore, IMHO, any submission that identifies different means for the contract to fall in the vulnerable state of withdrawals are duplicates of the root problem, and, if there would be a single submission that identifies all of the possible paths that would lead to the root problem, then, that one should be the primary, and the rest of duplicates should be partially awarded based on the total number of possible paths that can make the contract fall into the vulnerable state.
+
+gesha17
+OP
+01/24/2025
+
+Withdrawing directly from the Vault is not a root problem per se, the root problem is the unhandled scenario on the withdrawStrategyFunds.
+
+By withdrawing directly from the vault any user can force 100% allocation to strategies and 0% to the vault. Suppose there is 50% allocated to strategies and 50% to a vault. A malicios user can just do a deposit and withdraw(directly from vault) and the strategy will reach 100% allocation. This increases risk for the users as now all of their funds are deposited in the strategy rather than half, and obviously this will break withdrawals no matter how you decide to mitigate the other bug.
+
+It makes no sense to maintain allocation during deposits but then just allow anyone to break it during withdrawals.
+
+0xStalin
+Edited: 01/24/2025
+
+Then you need to realize there are two possible existing categories on which this bug fits in:
+
+Breaking allocations. F-59 and duplicates
+Loss of funds because of incorrectly handling edge case on _withdrawStrategyFunds(). F-312 and duplicates.
+
+I believe the judge granted the deduplication from F-59 because of the impact that has on the _withdrawStrategyFunds(), but, if you are arguing about breaking allocations, then, breaking allocations is the root impact of F-59, different submissions are talking about other ways of how allocations are broken. Now, if we focus on the end impact described in this report, we have a duplicate of F-312, the loss of funds because of incorrectly handling the state of the vault on _withdrawStrategyFunds().
+
+gesha17
+OP
+Edited: 01/24/2025
+
+Hey 0xStalin. I am afraid things are not as simple as you are trying to portray them.
+
+"Breaking allocations" is not a root cause. F-59 identifies that insufficient withdrawal liquidity due to incorrect allocation will cause withdrawals DoS for end users. F-312 is currently this one, but I guess you mean S-1053 - it describes an incorrect accounting check leading to loss of funds, which can happen even if allocations are correct(see my PoC in S-1053). And this issue is different from both as it describes that any end user can force 0% allocation in the vault, which will be a problem no matter how you fix S-1053.
+
+0xStalin
+Edited: 01/24/2025
+
+F-59 identifies that insufficient withdrawal liquidity due to incorrect allocation will cause withdrawals DoS for end users.
+
+Yes, incorrect allocation it is the same as broken allocations, the points is, when a withdrawal request comes in, the allocations on Strategies and Vault are not evenly distributed. Regardless of how the allocations were broken, F-59 and duplicates root's problem is the broken allocations that lead to the DoS.
+
+it describes an incorrect accounting check leading to loss of funds, which can happen even if allocations are correct(see my PoC in S-1053).
+
+This is exactly the same as broken allocations. The moment the Vault has less allocation than the Strategy, the allocations have been broken. But, withdrawing directly from the Vault per se is not a problem, the problem on _withdrawStrategyFunds() would not exists, then, withdrawing from the vault has 0 impact, the root problem is caused when withdrawing and the sum of strategy allocations does not equal 100% and the floating balance is insufficient to cover the amount left of the withdrawal, as explained on S-598, a duplicate of F-312
+
+And this issue is different from both as it describes that any end user can force 0% allocation in the vault, which will be a problem no matter how you fix S-1053.
+
+This is not true, fixing the edge case on _withdrawStrategyFunds() will solve the problem of withdrawing from the vault leading to loss of funds because even if withdrawing from the vault consumes only the vault's allocation, by fixing the problem on _withdrawStrategyFunds(), the tx would either revert, or request will be added to the queue, it depends on the final fix for F-312.
+
+The point is, withdrawing directly from the Vault is just one way for the contract to fall in the state where the _withdrawStrategyFunds() would be vulnerable, but, this is not the only way, as explained in the other duplicates, another way is via deposits when the Vault is idle.
+
+Correctly fixing the edge case on _withdrawStrategyFunds() will solve the problem of loss of funds.
+
+gesha17
+OP
+Edited: 01/24/2025
+
+This is exactly the same as broken allocations. The moment the Vault has less allocation than the Strategy, the allocations have been broken.
+
+I think "broken allocations" refers to actual amounts, not dust amounts due to rounding errors. A rounding error is not the same root cause as a user forcing the vault to go to 0% allocation.
+
+This is not true, fixing the edge case on _withdrawStrategyFunds() will solve the problem of withdrawing from the vault leading to loss of funds because even if withdrawing from the vault consumes only the vault's allocation, by fixing the problem on _withdrawStrategyFunds(), the tx would either revert, or request will be added to the queue, it depends on the final fix for F-312.
+
+Fixing it via revert opens a DoS vector where a malicios user forces 0% allocation in the vault to cause reverts.
+
+Fixing it via sending to the withdrawal queue does not fix the issue because fulfilling requests from the withdrawal queue via batchClaimWithdrawal calls _withdrawStrategyFunds in it's flow, so it goes back to the same issue and thus users can be DoSed from withdrawing their funds.
+
+Trying to bundle this submission with some of the other issues will result in there being leftover vulnerabilities in the code. Theres a lot of bugs in this contest, and it's important to identify and mitigate each properly! I think my report provides quite a lot of value based on that and the dedupe is not just for my sake, but also essential to providing a full list of issues to the sponsor.
+
+0xStalin
+Edited: 01/24/2025
+
+Withdrawing from the Vault has 0 impact until it gets to the point where the _withdrawStrategyFunds() would process the withdrawal without sending the full expected amount to be withdrawn because of an imbalance in the allocations.
+
+Such imbalance can be caused by different ways, one of them is because withdrawing from the vault till the point where it would need to process a request by withdrawing from the vault, and the rest from the strategies. This is the exact problem, the fact that the _withdrawStrategyFunds() processes the withdrawal without validating if enough was withdrawn, not the fact that withdrawals were made directly from the Vault, which, is the same root problem of F-312.
+
+Fixing it via revert opens a DoS vector where a malicious user forces 0% allocation in the vault to cause reverts.
+
+Then, maybe none of the reports have provided a correct mitigation, the thing is, fixing the root problem on _withdrawStrategyFunds() will fix the problem of this report, and the other duplicates.
+
+Or maybe forcing a DoS is the easiest way to solve this without introducing more dangerous bugs, this DoS is a transitory state that is solved by the admins rebalancing the allocations.
+
+Whichever is the final fix for the root problem on _withdrawStrategyFunds() will solve the problem of this report, which will allow direct withdrawals when the Vault has enough assets on it, and, correctly handling the scenario when a withdrawal comes in and it would need to withdraw from the vault and strategies, and because of imbalanced allocations the withdrawal would not withdraw a 100% of the requested amount.
+
+gesha17
+OP
+Edited: 01/24/2025
+
+Okay, at this point you are just speculating that there exists some fix of S-1053 which will fix the impact of this issue as well, without changing what I define as the root cause - withdrawing directly from the vault. You can't show that such a fix exists(because it does not) and yet you draw the conclusion that my two reports should be duped?
+
+And if such a fix doesn't exists, you just say: maybe its best to let users DoS each other - so basically don't fix the issue and thus my report is invalid. Sorry, but you are being extremely unfair. How about just fix S-1053, and then also acknowledge and fix this one? Everything is fixed and then we can just leave this long discussion in the past.
+
+0xStalin
+Edited: 01/24/2025
+
+This will be my last reply and let the judge take it from here, we have made our points and there is enough information for the judge to make a final decision.
+
+at this point you are just speculating that there exists some fix of S-1053 which will fix the impact of this issue as well,
+
+The impact of this report that granted the deduplication from F-59 is that this report identifies a way for the contract to fall into the vulnerable state of _withdrawStrategyFunds(), therefore, leading to the loss of funds, which, is the same root problem of F-312.
+
+without changing what I define as the root cause - withdrawing directly from the vault.
+
+Your definition of root cause is wrong, withdrawing directly from the vault is not a root cause, it is just a path that leads to the root problem, which, again, it is the unhandled edge case on _withdrawStrategyFunds().
+
+so basically don't fix the issue and thus my report is invalid.
+
+I never said this report should be invalid. I always said this report is a duplicate of F-312, it is not a separate bug family because the root problem is the same, the unhandled edge case on _withdrawStrategyFunds().
+
+How about just fix S-1053, and then also acknowledge and fix this one?
+
+The same fix for the unhandled edge case on _withdrawStrategyFunds() will fix the root problem of this report. It is not required to remove the direct withdrawals from the Vault, that is actually a good design choice, (as long as F-312 is fixed). Withdrawing from the vault when there are enough assets to process a withdrawal request is the most optimal route, in this way, all the assets that Strategies have already invested on external protocols remains untouched and continue generating yield.
+
+There is no need to fix what you are calling the root cause, because that is not the root cause, the root problem is the unhandled edge case on _withdrawStrategyFunds(), which, once fixed, all the paths that would've caused the problem will be mitigated.
+
+a_kalout
+Edited: 01/25/2025
+
+Hey!
+
+I won't get into any discussions with anyone, I'll just throw my 2 cents here...
+
+This issue shows a legitimate scenario where a user might be transitorily DoSed from withdrawing his funds. On the other hand, S-1053 shows another scenario where the same could happen.
+It is also good to mention that S-1280 shows a third scenario of the same impact, but requires some admin action (having the vault set as idle). All of those issues are rooted in the same problem: strategies-vault imbalances.
+
+First, none of the above issues would have happened if the allocation was 100% to strategies (except for S-1280). Second, all of this could be solved by the admin redistributing funds, so this is an obvious transitory DoS => medium severity, similar to other transitory DoS reports.
+
+Regarding the mitigation of each, we're all SRs here, we're not in a place to give a 100% mitigation for the issue, each of the above reports gave a mitigation that solves the issue from their POV, it's the sponsor's responsibility to implement the right mitigation; having a different mitigation doesn't mean different impact/issue.
+
+As a result, I believe S-1080 (this), S-1053, and S-1280 are all showing the same medium severity issue, but each showing it in a different scenario => leading to different mitigations from the SRs' POV.
+
+I hope this is of some help to the judge, thanks!
+
+Showing 10 of 34 replies
+View more
+Dedupe from S-1280
+Edited: Feb 22
+gesha17
+OP
+
+Hello Judge,
+
+This issue is incorrectly duped with S-1280. S-1280 describes a scenario where the vault becomes imbalanced because it's set in an idle state.
+
+This issue S-1080 identifies that during withdrawals if the vault itself has funds available to cover the withdrawal request, the funds will be directly pulled from it, instead of pulled based on allocation which will cause an immediate imbalance and make future withdrawals fail.
+
+TLDR of PoC in my original submission:
+
+If a vault has 1 strategy with 50% allocation, its expected to maintain that to be able to fulfill withdrawals. As a result the vault is expected to hold 50% and the strategy the other 50%. If a user submits a withdrawal for 25% of the total funds, they will be pulled just from the vault, creating an imbalance.
+
+EDIT: I checked all dupes of S-1280, and I couldn't find dupes of this one.
+
+0xStalin
+01/08/2025
+
+Probably S-1280 will be invalidated during PJQA, check this comment to track that progress.
+
+If that happens, this submission as well as the rest of the duplicates for F-59 seems to be correctly duplicated under the admin's ability to rebalance the vault and strategies to fix any imbalances that happen by the vault's operations.
+
+gesha17
+OP
+01/09/2025
+
+I believe the admin is not expected to rebalance a vault after every user interaction with it. Vaults have to maintain balance unless put in idle state. This, or my other submissions describe different root causes and impacts from 1280.
+
+0xStalin
+01/09/2025
+
+Admin does not need to rebalance after each withdrawal.
+
+Also, each withdrawal would indeed cause an imbalance in terms of the total assets being held by each strategy, but, this alone does not cause any problem, if more request withdrawals come, they will be served by withdrawing what is left and available on each strategy.
+
+gesha17
+OP
+Edited: 01/09/2025
+
+Even a single withdrawal can remove all assets from the vault and break withdrawals for other users. The vault is expected to maintain allocation balance during deposits AND withdrawals.
+
+Im sorry but please read the PoC in my submission. This will lead to loss of funds for users should be high severity, I don't see how you can be making the case that this is expected behavior.
+
+0xStalin
+Edited: 01/09/2025
+
+Oh, sorry for the confusion, I get what you are saying, this is exactly what is reported on S-981, which, is a dupe of the same Finding group as this submission.
+
+I do actually agree with the judge's criteria to group all the withdrawal DoS under the same Finding group, assets are not lost, and withdraws may fall into DoS temporarily until the Admin rebalances the Vault and Strategies.
+
+But, leaving it up to the judge if he decides to dedupe from the current finding group, if that happens, then S-1080 and S-981 are dupes of each other.
+
+gesha17
+OP
+Edited: 01/10/2025
+
+Nope, this is not a dupe of S-981. I describe that issue in my other submission S-1045 which is correctly duped with S-981. This report is describing a very different issue.
+
+Also, assets are lost. In the example I give, the user loses 40% of his funds. And as far as I understand, findings should be grouped by root cause, not impact. This finding is completely different from S-1280.
+
+0xStalin
+01/10/2025
+
+I see what you are saying, though, the root cause is the same, an imbalance in the vault which is addressed by the protocol by rebalancing and distributing.
+
+Nevertheless, in case this gets deduped from the primary, I checked a couple of submissions from the duplicates and found this comment on S-1053 that mentions more duplicates of the same problem described on this submission. There may be more, but that list is a good starting point
+
+gesha17
+OP
+Edited: 01/10/2025
+
+Hey 0xStalin. Thanks for the response, but I still disagree this is the same root cause. The issue I am describing is about withdrawing directly from the vault. You cannot expect the protocol to rebalance for such an issue because consider this:
+
+There is x funds allocated to the vault itself and y funds allocated to strategies. An honest user submits a withdrawal for some amount. A malicios user can frontrun the honest user transaction and withdraw exactly x. Since these funds are available in the vault, they will be directly withdrawn from it and there will be imbalance. As a result the honest user will lose funds, as I show in my PoC.
+
+S-1280 is about the vault being set to idle state by the admin becoming imbalanced, which is protocol design in my opinion, which is why I am submitting this dedupe request.
+
+Also, this submission is different from S-1053, because again, they describe different root causes. If you fix 1053, this submissions is still a valid issue, and vice-versa if you fix this issue, S-1053 is still a valid issue.
+
+0xStalin
+Edited: 01/10/2025
+
+I have to disagree with this:
+
+his submission is different from S-1053, because again, they describe different root causes. If you fix 1053, this submission is still a valid issue, and vice-versa if you fix this issue, S-1053 is still a valid issue.
+
+The root cause for both submissions is the same, withdrawing assets from the vault could lead to losing assets. The way how the assets are on the Vault is not the root cause per se, assets would either be on the vault because strategies do not have a 100% allocation, or because the deposits are set as idle, but, any of these two are the root cause of the problem.
+
+About the fix.
+
+The fix of S-1053 will effectively revert withdrawals when there could be a loss of assets
+The fix recommended on this report seems to attempt to withdraw evenly from the vault and strategies, even though the vault has enough assets on its balance to process the withdraw
+
+Point is, any of the two fixes would fix the loss of assets:
+
+wether by reverting the tx and waiting for a vault relocation (Fix of S-1053)
+Withdrawing proportionally from vault and strategies, instead of withdrawing everything from the vault (Fix of S-1080)
+
+I think after this conversation, the judge will have enough points to assess if a deduplication should be granted, and a good starting point of all potential duplicates about the same problem.
+
+Thanks for your time and comments.
+
+gesha17
+OP
+Edited: 01/11/2025
+The fix of S-1053 will effectively revert withdrawals when there could be a loss of assets
+
+No there won't be a reverting transaction, point of the suggested fix of 1053, is that if the funds left in the vault are some small dust amount less than what needs to be sent to the user, then just send that, instead of not sending anything.
+
+Point is, any of the two fixes would fix the loss of assets:
+
+I already explain why that is not the case in my original submission. Fixing one only partly reduces the impact of the other. To clarify, if it was not clearly explained:
+
+If we assume 1053 was already fixed, in the example I give in this issue, the loss of funds will be reduced from 400 tokens to 100 tokens. But the core issue still remains - the first if-statement.
+
+On the other hand if we assume this issue was fixed, then in 1053 you are just mitigating one way the core problem can be triggered. There can still be other reasons such as changing allocations, rounding up when withdrawing, etc. that can trigger the bug and lead to loss of funds. Point is the bug itself, the last if-statement, will remain not fixed.
+
+Showing 10 of 12 replies
+View more
+Duplicates
+9
+S-699
+Withdrawals can result in providing fewer assets to users.
+stuart_the_minion
+83
+S-698
+Withdrawals can result in providing fewer assets to users.
+stuart_the_minion
+83
+S-1053
+Unhandled case in _withdrawStrategyFunds will lead to significant loss of funds
+gesha17
+57
+S-337
+Flawed withdrawal accounting logic exposes protocol to attacks irreversibly locking majority of user funds in vault
+peter
+50
+S-87
+ConcreteMultiStrategyVault LP providers might lose funding during withdrawal as _withdrawStrategyFunds might send less funds than it is supposed to.
+chaduke
+38
+S-1299
+User withdrawal requests may finalize without full payout, leading to fund losses
+EaglesSecurity
+33
+S-1130
+The `ConcreteMultiStrategyVault._withdrawStrategyFunds` function implementation is wrong and causes loss of funds to the `receiver` of the `withdraw` transaction
+Udsen
+27
+S-1001
+The user will lose money if the strategies fail to fully compensate for the required withdrawal amount.
+tenge_club
+00
+S-598
+Direct Loss of Funds on Withdrawal if float doesn't cover missing withdrawal amount
+a2security
+00
+Timeline
+Submitted
+Created: 542d ago
+High
+Triage
+Sufficient
+Review
+Judging
+High
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

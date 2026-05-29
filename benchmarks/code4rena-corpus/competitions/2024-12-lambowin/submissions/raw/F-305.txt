@@ -1,0 +1,86 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-305
+Low
+Primary
+S-403
+User can avoid paying protocol fee when using `LamboVEthRouter::createLaunchPadAndInitialBuy` by setting low `buyAmount`
+farismaulana
+00
+Sufficient
+383d ago
+Finding description and impact
+
+Because of lack minimum amount of initial buy when calling createLaunchPadAndInitialBuy, any user can set small amount of msg.value so the precision loss would incurr when calculating the formula below in the _buyQuote function:
+
+LamboVEthRouter.sol#L152
+
+        // handle fee
+        uint256 fee = (amountXIn * feeRate) / feeDenominator;
+
+with feeRate = 100 and feeDenominator = 10000
+as long as the amountXIn * feeRate < feeDenominator is true, then the amount of fee would be 0 because of the rounding down.
+this can be achieved if the amountXIn less than 100.
+
+Proof of Concept
+alice call LamboVEthRouter::createLaunchPadAndInitialBuy and providing msg.value and buyAmount equal to 90 wei
+alice then pay 0 protocol fee after using the protocol services.
+
+this is would effectively bypass the protocol fee after the core function is called.
+meaning that the protocol would loss the fee revenue.
+
+Recommended mitigation steps
+
+there should be a minimum amount of buyAmount enforced in createLaunchPadAndInitialBuy function so user cant bypass the protocol fee by setting 1-99 wei for the buyAmount
+
+also add minimum amount of buy and sell in the _buyQuote and _sellQuote function so the fee cant bypassed
+
+Links to affected code
+LamboVEthRouter.sol#L152
+Opens in a new window
+Submissions touching same files
+LamboVEthRouter.sol
+Timeline
+Submitted
+Created: 532d ago
+High
+Triage
+High
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

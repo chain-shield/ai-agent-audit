@@ -1,0 +1,177 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+SecondSwap
+/
+F-4
+Low
+Primary
+S-162
+Transfer vestings without fee payment through listing and purchasing with high discount and low price
+fyamf
+69
+Sufficient
+383d ago
+Finding description and impact
+
+Users are able to bypass fee payment when transferring vestings to another address by listing a vesting with maximum discount and minimum price.
+
+Proof of Concept
+
+Normally, users cannot directly transfer their vesting, but they can list it for sale and buy it themselves. In this case, they would need to pay fees twice: once on the selling side and once on the buying side. The _handleTransfers function is responsible for calculating these fees during the purchase based on the baseAmount.
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L520
+
+    function _handleTransfers(
+        Listing storage listing,
+        uint256 _amount,
+        uint256 discountedPrice,
+        uint256 bfee,
+        uint256 sfee,
+        address _referral
+    ) private returns (uint256 buyerFeeTotal, uint256 sellerFeeTotal, uint256 referralFeeCost) {
+        uint256 baseAmount = (_amount * discountedPrice) / 
+            uint256(
+                10 ** 
+                    (
+                        IERC20Extended(
+                            address(
+                                IVestingManager(IMarketplaceSetting(marketplaceSetting).vestingManager())
+                                    .getVestingTokenAddress(listing.vestingPlan)
+                            )
+                        ).decimals()
+                    )
+            ); // 3.1. Rounding issue leads to total drain of vesting entries
+        require(baseAmount > 0, "SS_Marketplace: Amount too little"); // 3.1. Rounding issue leads to total drain of vesting entries
+
+        buyerFeeTotal = (baseAmount * bfee) / BASE;
+        sellerFeeTotal = (baseAmount * sfee) / BASE;
+
+        // .......
+    }
+
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L459-L474
+
+The issue arises because users can avoid paying fees by setting the discountPct to the highest possible value and the price to the lowest possible value. For example, if the user sets the discountPct to 9999 (representing a 99.99% discount) and sets the price to 10000:
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L313
+https://github.com/code-423n4/2024-12-secondswap/blob/b9497bcf5100046a169276cb6b351ebc0eddc2cc/contracts/SecondSwap_Marketplace.sol#L310
+
+When the user purchases their own listed vesting, the discounted price would be 1 (in the case of a fixed discount type for simplicity):
+
+discountedPrice = (discountedPrice * (BASE - listing.discountPct)) / BASE = (10000 * (10000 - 9999)) / 10000 = 1
+
+
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L517
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L419
+
+When handling the transfers, the base amount would be (assuming the user is purchasing 100 * 10 ** 18 tokens):
+
+uint256 baseAmount = (_amount * discountedPrice) / 10 ** decimals = (100 * 10 ** 18 * 1) / 10 ** 18 = 100
+
+
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L459
+
+The fees would be calculated as (using a default fee of 2.5%):
+
+        buyerFeeTotal = (baseAmount * bfee) / BASE = (100 * 250) / 10000 = 2
+        sellerFeeTotal = (baseAmount * sfee) / BASE = (100 * 250) / 10000 = 2
+
+
+Thus, the total fee would be 4 currency tokens, while 100 * 10 ** 18 tokens are purchased. If the currency token is USDT (with 6 decimals), this fee would be negligible.
+
+In summary, users can bypass paying fees by listing a vesting with the maximum discount and the minimum price, allowing them to transfer their vestings to another address without paying the appropriate fees.
+
+The root cause of this issue is that the fee is calculated based on the discounted amount, when it should instead be calculated based on the pricePerUnit before applying the discount.
+
+Recommended mitigation steps
+
+The fee should be calculated based on the pricePerUnit instead of the discounted price.
+
+    function _handleTransfers(
+        Listing storage listing,
+        uint256 _amount,
+        uint256 discountedPrice,
+        uint256 bfee,
+        uint256 sfee,
+        address _referral
+    ) private returns (uint256 buyerFeeTotal, uint256 sellerFeeTotal, uint256 referralFeeCost) {
+-       uint256 baseAmount = (_amount * discountedPrice) /
++       uint256 baseAmount = (_amount * listing.pricePerUnit) /
+            uint256(
+                10 **
+                    (
+                        IERC20Extended(
+                            address(
+                                IVestingManager(IMarketplaceSetting(marketplaceSetting).vestingManager())
+                                    .getVestingTokenAddress(listing.vestingPlan)
+                            )
+                        ).decimals()
+                    )
+            ); // 3.1. Rounding issue leads to total drain of vesting entries
+        require(baseAmount > 0, "SS_Marketplace: Amount too little"); // 3.1. Rounding issue leads to total drain of vesting entries
+
+        buyerFeeTotal = (baseAmount * bfee) / BASE;
+        sellerFeeTotal = (baseAmount * sfee) / BASE;
+
+        // .......
+    }
+
+https://github.com/code-423n4/2024-12-secondswap/blob/main/contracts/SecondSwap_Marketplace.sol#L459-L474
+
+An alternative solution would be to prevent the listing and purchasing of a vesting within the same transaction. This would reduce the risk of a user listing a vesting with a high discount and low price, which could potentially be purchased by another user.
+
+Links to affected code
+SecondSwap_Marketplace.sol#L253
+Opens in a new window
+Submissions touching same files
+SecondSwap_Marketplace.sol
+Comments for the judge
+1
+You are viewing comments for the primary submission, S-162.
+Economic disincentive
+Edited: Feb 22
+calvinx
+
+If a seller is willing to risk getting his listing sniped and also commit gas fees to this, then this is not an issue to us as there is inbuilt economic disincentive to do this
+
+Timeline
+Submitted
+Created: 528d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Informative
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

@@ -1,0 +1,200 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-22
+Medium
+Primary
+S-173
+Block gas utilization is slightly lower than the actual gas utilization due to the gas snapshot being taken too early resulting in an inaccurate base fee calculation
+berndartmueller
+00
+Sufficient
+383d ago
+Finding description and impact
+
+xfeemarket implements a custom PostHandler() for skip-mev's feemarket. At almost the very end of the execution, the feemarket's state is updated with the consumed gas amount so that the current block's gas utilization and, thus, the base fee can be calculated.
+
+However, the gas snapshot that is provided is not 100% accurate. It is taken in line 81. But any gas consumed by the subsequent actions, e.g., GetMinGasPrice() in line 101, or ante.CheckTxFee() in line 112, are not accounted for in the gas snapshot.
+
+As a result, the block utilization for the current height is inaccurate, leading to a slightly lower base fee than it should be.
+
+Proof of Concept
+
+x/xfeemarket/post/fee.go#L129
+
+In line 129, the skip-mev's feemarket state is updated with the currently used gas so that the block utilization for the current height is calculated correctly.
+
+129: err = state.Update(gas, params)
+
+https://github.com/skip-mev/feemarket/blob/f1f216e15aa6bcc05075a7079496764820a0f545/x/feemarket/types/state.go#L26-L36
+
+// Update updates the block utilization for the current height with the given
+// transaction utilization i.e. gas limit.
+func (s *State) Update(gas uint64, params Params) error {
+	update := s.Window[s.Index] + gas
+	if update > params.MaxBlockUtilization {
+		return fmt.Errorf("block utilization of %d cannot exceed max block utilization of %d", update, params.MaxBlockUtilization)
+	}
+
+	s.Window[s.Index] = update
+	return nil
+}
+
+However, the gas snapshot is taken in line 81, which does not include any gas consumed in lines 101-127 up until the state update.
+
+81: 	gas := ctx.GasMeter().GasConsumed() // use context gas consumed
+Recommended mitigation steps
+
+Consider taking the snapshot right before calling state.Update().
+
+Links to affected code
+fee.go#L129
+Opens in a new window
+Submissions touching same files
+fee.go
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-173.
+PoC demonstrating how much gas is not accounted for in the block utilization
+Edited: Feb 22
+berndartmueller
+OP
+
+Here's a simple PoC that shows how much gas is left out to account for the block utilization.
+
+Add lines after x/xfeemarket/post/fee.go#L99
+
+feeGas := int64(feeTx.GetGas())
+
++ snapshot := ctx.GasMeter().GasConsumed()
+
+and after L142
+
++ // figure out the diff of gas consumed since snapshot
++ gasDiff := ctx.GasMeter().GasConsumed() - snapshot
++ fmt.Println("gasDiff", gasDiff)
+
+Copy paste the following test case to x/xfeemarket/post/fee_test.go
+
+func TestPostHandle_Audit(t *testing.T) {
+	// Same data for every test case
+	const (
+		baseDenom           = "stake"
+		resolvableDenom     = "atom"
+		expectedConsumedGas = 59122
+
+		gasLimit = 100000
+	)
+
+	validFeeAmount := types.DefaultMinBaseGasPrice.MulInt64(int64(gasLimit))
+	validFee := sdk.NewCoins(sdk.NewCoin(baseDenom, validFeeAmount.TruncateInt()))
+
+	testCases := []postsuite.TestCase{
+		{
+			Name: "signer has enough funds, should pass, with tip",
+			Malleate: func(s *postsuite.TestSuite) postsuite.TestCaseArgs {
+				accs := s.CreateTestAccounts(1)
+
+				balance := postsuite.TestAccountBalance{
+					TestAccount: accs[0],
+					Coins:       validFee,
+				}
+				s.SetAccountBalances([]postsuite.TestAccountBalance{balance})
+
+				return postsuite.TestCaseArgs{
+					Msgs:      []sdk.Msg{testdata.NewTestMsg(accs[0].Account.GetAddress())},
+					GasLimit:  gasLimit,
+					FeeAmount: validFee,
+				}
+			},
+			RunAnte:           true,
+			RunPost:           true,
+			Simulate:          false,
+			ExpPass:           true,
+			ExpErr:            nil,
+			ExpectConsumedGas: 34836,
+			Mock:              false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("Case %s", tc.Name), func(t *testing.T) {
+			s := postsuite.SetupTestSuite(t, tc.Mock)
+			s.TxBuilder = s.ClientCtx.TxConfig.NewTxBuilder()
+			args := tc.Malleate(s)
+
+			s.RunTestCase(t, tc, args)
+			s.Fail("fail")
+		})
+	}
+}
+
+Running the test logs shows the gas diff since taking a snapshot:
+
+gasDiff 31368
+
+To put this into context: A simple bank send tx (https://explorer.mantrachain.io/MANTRA-1/tx/FBA240100B1D4115C2D2D53A23AC0036787EE241E30C9AA10441B3400380E668), consumed 151,517 gas, that's 31,368 / 151,517 = ~21% of the gas of such a tx.
+
+When Mantra chain is heavily utilized, this gas inaccuracy is not negligible and results in underestimated base fees, failing to properly increase gas fees to counteract high utilization (and e.g. spam). Therefore, I kindly ask the judge to reconsider the severity and consider Medium appropriate.
+
+3docSec
+02/15/2025
+
+Agreed, 21% of the gas accounting being off for reasonably popular transactions is enough impact for M severity
+
+L
+Edited: Feb 22
+mantra_lance
+
+Is indeed valid as the excluded operations cost gas. We followed skip-mev implementation where they have the same issue. L at best as this has no chance for exploits and would not come up in normal circumstance. Even if it does it has limited impact as users just have to do the transaction with more slightly gas.
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks valid, may be worth verifying if the excluded operations actually cost gas
+
+Timeline
+Submitted
+Created: 505d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

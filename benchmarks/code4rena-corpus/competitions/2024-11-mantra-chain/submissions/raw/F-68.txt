@@ -1,0 +1,171 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA Chain
+/
+F-68
+High
+Primary
+S-197
+Multiplier is calculated using denom and not coin.Denom
+ABAIKUNANBAEV
+26
+Sufficient
+383d ago
+Finding description and impact
+
+Currently, there is a resolver that helps to convert different coins to the corresponding amount of the base coin to ensure multiple fee coin market can be supported. However, it incorrectly fetches the multiplier using the base denom instead of taking denom of the denom in the function.
+
+Proof of Concept
+
+Take a look at how multiplier is now derived:
+
+https://github.com/code-423n4/2024-11-mantra/blob/main/x/xfeemarket/keeper/resolver.go#L11-23
+
+func (k Keeper) ConvertToDenom(ctx sdk.Context, coin sdk.DecCoin, denom string) (sdk.DecCoin, error) {
+	if coin.Denom == denom {
+		return coin, nil
+	}
+
+	multiplier, err := k.DenomMultipliers.Get(ctx, denom)
+	if err != nil {
+		return sdk.DecCoin{}, err
+	}
+	amount := coin.Amount.Mul(multiplier.Dec)
+
+	return sdk.NewDecCoinFromDec(denom, amount), nil
+}
+
+
+
+As you can see here, it fetches multiplier by putting denom in the mapping that's stored in the feemarket keeper:
+
+https://github.com/code-423n4/2024-11-mantra/blob/main/x/xfeemarket/keeper/keeper.go#L28-29
+
+	// DenomMultipliers is a map of denomination and their multipliers against the default base fee denomination.
+		DenomMultipliers collections.Map[string, sdk.DecProto]
+
+
+
+
+So this mapping serves as a way to get the corresponding denom => multiplier against the default base fee denomination. The problem is that currently it's the base denom that's provided in the Get() function:
+
+multiplier, err := k.DenomMultipliers.Get(ctx, denom)
+
+
+Instead, it has to take coin.Denom as the previous line makes sure that the denom is not the base one:
+
+if coin.Denom == denom {
+		return coin, nil
+	}
+
+
+This results in a situation where we take the multiplier for a base denom instead of taking it for the denom that's used against the base one.
+
+Recommended mitigation steps
+
+Change the current functionality on the following line:
+
+multiplier, err := k.DenomMultipliers.Get(ctx, coin.Denom)
+
+Links to affected code
+resolver.go#L16
+Opens in a new window
+Submissions touching same files
+resolver.go
+View full submission
+Comments for the judge
+5
+You are viewing comments for the primary submission, S-197.
+Question
+Edited: Feb 22
+ABAIKUNANBAEV
+OP
+
+Hi @3docSec! Thanks for judging. I have a question regarding the validity of this issue as I believe it's totally valid:
+
+-The contest page (that's the source of truth) states that the multi-token support for transaction fees is one of the main features of this audit
+-The file is in-scope meaning the issues inside of it should be considered valid
+-The problem that the report demonstrates is not just about, for instance, wiring a resolver - it affects the crucial functionality of the multi-token support
+-There is no any comment indicating that this code has not yet been fully implemented (similarly to a TODO comment)
+
+Overall, I believe that it creates a really bad precedent and unfairness towards the wardens when it can be basically said about any other issue in this contest that the functionality is not yet fully implemented and therefore it's a low
+
+Thanks for considering an escalation!
+
+3docSec
+02/15/2025
+
+Agreed, see comment here.
+
+Judging comment
+Edited: Feb 22
+3docSec
+
+Marking QA as it's a valid issue on dead code
+
+L
+Edited: Feb 22
+mantra_lance
+
+Indeed a error. But this resolver is not wired in and is not used. It is not the final implementation thus L.
+
+Deleted comment
+Deleted: 01/09/2025
+mantra_lance
+This comment was deleted.
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Plausible, can't exclude a misunderstanding
+
+Duplicates
+1
+S-168
+Base fee coin likely has no multiplier configured, preventing using other allowed fee coins for gas payments or, if it has a multiplier, it leads to inflated priority fees
+berndartmueller
+00
+Timeline
+Submitted
+Created: 504d ago
+High
+Triage
+High
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+High
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

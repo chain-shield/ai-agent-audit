@@ -1,0 +1,80 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+Lambo.win
+/
+F-25
+Low
+Primary
+S-744
+`VirtualToken` accounting might break if `USDT` or `USDC` fees get activated
+Infect3d
+72
+Sufficient
+383d ago
+Finding description and impact
+
+While USDC and USDT fees are not activated right now, they can be activated at anytime.
+The issue is that cashIn and cashOut functions rely on the amount parameter to decide how much virtual counterpart to mint/burn to/from msg.sender.
+
+Doing so will break accounting.
+
+Proof of Concept
+
+As a simple scenario:
+
+USDT fees are activated to 5%
+100 USDT are deposited (cashIn), in response 100 vUSDT get minted
+Because of fees the VirtualToken only received 95 USDT
+It is not possible to withdraw 100 USDT as only 95 USDT are available
+95 USDT are withdrawn, now there are 5 vUSDT left in VirtualToken
+Recommended mitigation steps
+
+Measure how much token have been received and mint the same quantity of virtual tokens.
+
+Links to affected code
+VirtualToken.sol#L72-L86
+Opens in a new window
+Submissions touching same files
+VirtualToken.sol
+Timeline
+Submitted
+Created: 532d ago
+Medium
+Triage
+Medium
+Invalid
+Insufficient
+Primary
+Review
+Judging
+Low
+Valid
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete

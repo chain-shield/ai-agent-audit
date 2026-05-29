@@ -1,0 +1,235 @@
+News
+
+Leaderboard
+
+Submissions
+
+Explore C4
+
+Audits
+
+Bounties
+
+Reports
+
+Support
+
+Resources
+
+Docs
+
+Terms
+
+Privacy
+
+saraswati
+Submissions
+MANTRA DEX
+/
+F-47
+Low
+Primary
+S-119
+Inconsistent fee validation logic during pool creation leads to incorrect payment rejections
+Tigerfrake
+19
+Sufficient
+383d ago
+Finding description and impact
+
+The validate_fees_are_paid() function employs inconsistent methods for validating fee payments based on the length of denom_creation_fee. When the token factory fee has only one option, it uses cw_utils::must_pay() which strictly requires a single payment entry, while other cases use get_paid_pool_fee_amount() which can aggregate multiple payments of the same denomination.
+
+This inconsistency can cause valid fee payments to be incorrectly rejected.
+
+Proof of Concept
+
+Here's how the validation differs in the current implementation:
+
+    pub fn validate_fees_are_paid(
+        pool_creation_fee: &Coin,
+        denom_creation_fee: Vec<Coin>,
+        info: &MessageInfo,
+    ) -> Result<Vec<Coin>, ContractError> {
+        // ... 
+        if denom_creation_fee.len() == 1usize {
+            let total_fee_amount = tf_fee.amount.checked_add(pool_creation_fee.amount)?;
+            // @audit-info Strict single payment validation
+>>          let paid_fee_amount = cw_utils::must_pay(info, pool_fee_denom)?; // REVERTS HERE! ❌
+            
+            ensure!(
+                paid_fee_amount == total_fee_amount,
+                ContractError::InvalidPoolCreationFee {
+                    amount: paid_fee_amount,
+                    expected: total_fee_amount,
+                }
+            );
+        } else {
+            // @audit-info Flexible payment validation that can handle multiple entries
+>>          let paid_fee_amount = get_paid_pool_fee_amount(info, pool_fee_denom)?;
+            // ...
+        }
+
+Scenario:
+
+User needs to pay 2000 uusd as a fee
+User sends two transactions of 800 uusd and 1200 uusd each due to wallet constraints
+info.funds contains:
+    vec![
+        Coin { denom: "uusd", amount: 800 },
+        Coin { denom: "uusd", amount: 1200 }
+    ]
+If denom_creation_fee.len() == 1, the transaction reverts because must_pay() expects exactly one entry
+However, if denom_creation_fee.len() > 1, the same payment structure would be accepted because get_paid_pool_fee_amount() correctly sums the amounts.
+Test:
+<details> <summary>Coded PoC</summary>
+
+In pool_manager/src/tests/integration_tests.rs, add the following test:
+
+#[test]
+fn inconsistent_fee_validation_during_pool_creation_leads_to_payment_rejections() {
+    let mut suite = TestingSuite::default_with_balances(
+        vec![
+            coin(1_000_000_001u128, "uwhale".to_string()),
+            coin(1_000_000_000u128, "uluna".to_string()),
+            coin(1_000_000_001u128, "uusd".to_string()),
+            coin(1_000_000_001u128, "uom".to_string()),
+        ],
+        StargateMock::new("uusd".to_string(), "1000".to_string()), // tf_fee same denom as creation fee
+    );
+    let creator = suite.creator();
+
+    let asset_infos = vec!["uom".to_string(), "uusd".to_string()];
+
+    let pool_fees = PoolFee {
+        protocol_fee: Fee {
+            share: Decimal::zero(),
+        },
+        swap_fee: Fee {
+            share: Decimal::zero(),
+        },
+        burn_fee: Fee {
+            share: Decimal::zero(),
+        },
+        extra_fees: vec![],
+    };
+
+    suite
+        .instantiate_default()
+        .add_one_epoch()
+        .create_pool(
+            &creator,
+            asset_infos,
+            vec![6u8, 6u8],
+            pool_fees,
+            PoolType::ConstantProduct,
+            None,
+            vec![coin(800, "uusd"), coin(1_200, "uusd")], // Total sum split here but enough
+            |result| {
+                let err = result.unwrap_err().downcast::<ContractError>().unwrap();
+                match err {
+                    ContractError::PaymentError { .. } => {} // Fails 
+                    _ => panic!(
+                        "Wrong error type, should return ContractError::PaymentError"
+                    ),
+                }
+            },
+        );
+}
+
+Output:
+
+running 1 test
+test tests::integration_tests::inconsistent_fee_validation_during_pool_creation_leads_to_payment_rejections ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 50 filtered out; finished in 0.01s
+</details>
+Recommended mitigation steps
+
+Use get_paid_pool_fee_amount() consistently for all cases to allow flexible payment structures:
+
+    if denom_creation_fee.len() == 1usize {
+        let total_fee_amount = tf_fee.amount.checked_add(pool_creation_fee.amount)?;
+-       let paid_fee_amount = cw_utils::must_pay(info, pool_fee_denom)?;
++       let paid_fee_amount = get_paid_pool_fee_amount(info, pool_fee_denom)?;
+        
+        ensure!(
+            paid_fee_amount == total_fee_amount,
+            ContractError::InvalidPoolCreationFee {
+                amount: paid_fee_amount,
+                expected: total_fee_amount,
+            }
+        );
+    }
+
+This change ensures consistent behavior regardless of the payment structure, as long as the total amount matches the required fee.
+
+Links to affected code
+helpers.rs#L543-L561
+Opens in a new window
+Submissions touching same files
+helpers.rs
+Comments for the judge
+3
+You are viewing comments for the primary submission, S-119.
+User error
+Edited: Feb 22
+carrotsmuggler
+
+This is user error, where user decides to intentionally split up a single payment into multiple ones leading to failure. It does not impact real users at all, causes no loss of funds and can be easily fixed by just sending the transaction properly.
+
+Why would a user send 2 transactions of 800 and 1200 instead of 2000 in the same transaction? Users bricking their own transaction should be invalid.
+
+The report is invalid and the revert will be based on a pure user error
+Edited: Feb 22
+Abdessamed
+
+This seems a pure user error and thus invalid.
+
+If the fee creation requires paying in one denomination, why would a user sends to separate coins of the same denom?
+
+vec![
+    Coin { denom: "uusd", amount: 800 },
+    Coin { denom: "uusd", amount: 1200 }
+]
+
+Why The user doesn't send the expected funds:
+
+vec![
+    Coin { denom: "uusd", amount: 2000 },
+]
+
+User sends two transactions of 800 uusd and 1200 uusd each due to wallet constraints
+
+Under what constraints the user is enforced to do this?
+
+3docSec
+02/04/2025
+
+👍 agreed for L
+
+Validator's comment during triage
+Edited: Feb 22
+3docSec
+
+Looks reasonable
+
+Timeline
+Submitted
+Created: 520d ago
+Medium
+Triage
+Medium
+Valid
+Primary
+Sufficient
+Review
+Accepted
+Judging
+Low
+Valid
+Primary
+Sufficient
+Post-judging QA
+Complete
+Reporting
+Complete
