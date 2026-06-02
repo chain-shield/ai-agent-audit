@@ -267,6 +267,8 @@ pub fn estimate_chat_completion_tokens(user_message: &str) -> usize {
 mod tests {
     use super::*;
 
+    static COST_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
     #[test]
     fn test_gpt_5_5_model_uses_expected_cost_rates() {
         assert_eq!(
@@ -305,6 +307,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cost_calculation_accuracy() {
+        let _guard = COST_TEST_LOCK.lock().await;
+
         // Reset cost tracking
         let cost_data = Arc::clone(&INFERENCE_COST_DATA);
         {
@@ -354,6 +358,8 @@ mod tests {
     async fn test_cost_calculation_vs_openai_api() {
         use reqwest::Client;
         use serde_json::{Value, json};
+
+        let _guard = COST_TEST_LOCK.lock().await;
 
         // Skip test if no API key
         let api_key = match std::env::var("OPENAI_API_KEY") {

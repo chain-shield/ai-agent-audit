@@ -1078,6 +1078,33 @@ fn slither_output_preview(text: &str) -> String {
     }
 }
 
+fn slither_combined_output(output: &Output) -> String {
+    format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn slither_has_foundry_artifact_schema_error(output: &Output) -> bool {
+    let text = slither_combined_output(output);
+    text.contains("KeyError: 'output'") && text.contains("crytic_compile")
+}
+
+fn slither_has_ir_ssa_error(output: &Output) -> bool {
+    let text = slither_combined_output(output);
+    text.contains("Failed to convert IR to SSA")
+        || text.contains("slithir/utils/ssa.py")
+        || text.contains("AssertionError")
+}
+
+fn slither_attempt_uses_foundry_artifacts(attempt: &SlitherAttempt) -> bool {
+    attempt
+        .args
+        .iter()
+        .any(|arg| arg == "--foundry-ignore-compile")
+}
+
 fn slither_verbose_output_enabled() -> bool {
     std::env::var_os("AI_AGENT_AUDIT_SLITHER_VERBOSE").is_some()
 }
@@ -1123,8 +1150,18 @@ fn run_slither_json_with_fallbacks(
 ) -> Result<String> {
     let attempts = json_slither_attempts(repo, printer, subfolder.clone());
     let mut failures = Vec::new();
+    let mut skip_foundry_artifact_attempts = false;
 
     for (idx, attempt) in attempts.iter().enumerate() {
+        if skip_foundry_artifact_attempts && slither_attempt_uses_foundry_artifacts(attempt) {
+            log::warn!(
+                "Skipping Slither {} attempt `{}` after Foundry artifact schema failure",
+                printer,
+                attempt.label
+            );
+            continue;
+        }
+
         if idx > 0 {
             log::warn!(
                 "Retrying Slither {} using {}",
@@ -1174,6 +1211,24 @@ fn run_slither_json_with_fallbacks(
             log::warn!("Slither {} fallback failed. {}", printer, summary);
         }
         failures.push(summary);
+
+        if slither_has_foundry_artifact_schema_error(&output) {
+            skip_foundry_artifact_attempts = true;
+        }
+
+        if printer == "call-graph" && slither_has_ir_ssa_error(&output) {
+            log::warn!(
+                "Slither {} hit an internal IR/SSA failure; switching to scoped single-file fallback",
+                printer
+            );
+            if let Ok(json) = run_printer_json_per_file(repo, printer, subfolder.clone()) {
+                log::warn!(
+                    "Slither {} succeeded with single-file fallback after project-level IR/SSA failure",
+                    printer
+                );
+                return Ok(json);
+            }
+        }
     }
 
     if printer == "call-graph"

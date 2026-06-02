@@ -1,0 +1,60 @@
+{
+  "benchmark": "2025-07-gte-clob",
+  "results": [
+    {
+      "finding_id": "M-1",
+      "notes": "Attacker cancels only its own tail order, victim head order remains unreachable, and taker fill reverts ZeroCostTrade.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-1-SamePriceTailCancelBricksLimitPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path test/c4-poc/M-1-SamePriceTailCancelBricksLimitPoC.t.sol --match-test submissionValidity",
+      "test_result": "passed",
+      "title": "Broken same-price order links let a maker cancel the tail order and brick the best price level"
+    },
+    {
+      "finding_id": "M-4",
+      "notes": "Non-exempt makers build stale best asks with real CLOB calls. One taker fill clears six expired heads then matches live liquidity.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-4-ExpiredTopOfBookCleanupPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-contract ExpiredTopOfBookCleanupPoC --match-test submissionValidity -vvv",
+      "test_result": "passed",
+      "title": "Expired top-of-book orders require unbounded cleanup before any matching can proceed"
+    },
+    {
+      "finding_id": "M-5",
+      "notes": "Marketable limit buy reverts on bitwise ZeroCostTrade while equivalent fill succeeds.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-5-BitwiseZeroCostLimitCrossPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path test/c4-poc/M-5-BitwiseZeroCostLimitCrossPoC.t.sol --match-test submissionValidity -vvv",
+      "test_result": "passed",
+      "title": "Bitwise zero-cost check reverts valid crossing limit trades with nonzero base and quote amounts"
+    },
+    {
+      "finding_id": "M-23",
+      "notes": "PoC creates sub-minimum same-price ask dust with zero quote value through valid fills. Victim buy reverts ZeroCostTrade and dust plus valid ask remain, showing impact beyond the dust creator.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-23-ZeroQuoteDustBlocksBookPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "cd /Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob && forge test --match-path test/c4-poc/M-23-ZeroQuoteDustBlocksBookPoC.t.sol --match-test submissionValidity -vvv",
+      "test_result": "passed",
+      "title": "Zero-quote dust orders can permanently block one side of a CLOB market"
+    },
+    {
+      "finding_id": "M-25",
+      "notes": "Non-exempt account creates four bid price levels with side cap 2 after worst limit had two orders. Uses reduced cap for concise trace.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-25-PriceLevelCapEvictionPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --match-path test/c4-poc/M-25-PriceLevelCapEvictionPoC.t.sol --match-test testMultiOrderWorstLimitLetsBookExceedSideCap",
+      "test_result": "passed",
+      "title": "Non-competitive eviction can bypass maxNumLimitsPerSide and allow unbounded price-level growth"
+    },
+    {
+      "finding_id": "M-59",
+      "notes": "Creates 1200 valid same-price maker orders, proves the full fill uses more than 30M gas, restores state, then shows the capped fill fails. Whitelist is test harness compression for multi-transaction public buildup.",
+      "poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-59-SamePriceOrderFloodingPoC.t.sol",
+      "status": "PoC Created",
+      "test_command": "forge test --offline --match-path test/c4-poc/M-59-SamePriceOrderFloodingPoC.t.sol --match-test submissionValidity",
+      "test_result": "passed",
+      "title": "Unlimited orders per price level can make CLOB matching and settlement exceed block gas"
+    }
+  ],
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/submission-candidates/v2/2025-07-gte-clob-gte-clob-clean-r1r2-10-inv3-actor2-001.md"
+}

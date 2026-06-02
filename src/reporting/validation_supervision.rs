@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
-use log::info;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -78,7 +78,11 @@ pub struct ValidationJobPaths {
     pub ready_marker_path: PathBuf,
 }
 
-pub fn write_gui_job(repo: &RepoPaths, config_path: &Path) -> Result<ValidationJobPaths> {
+pub fn write_gui_job(
+    repo: &RepoPaths,
+    config_path: &Path,
+    overwrite_existing: bool,
+) -> Result<ValidationJobPaths> {
     let config_path = absolute_path(config_path)?;
     let config_text = fs::read_to_string(&config_path)
         .with_context(|| format!("Failed to read {}", config_path.display()))?;
@@ -94,7 +98,7 @@ pub fn write_gui_job(repo: &RepoPaths, config_path: &Path) -> Result<ValidationJ
     let events_path = job_dir.join("events.jsonl");
     let ready_marker_path = job_dir.join("ready");
 
-    refuse_existing_non_terminal_job(&manifest_path)?;
+    refuse_existing_non_terminal_job(&manifest_path, overwrite_existing)?;
 
     fs::create_dir_all(&job_dir)
         .with_context(|| format!("Failed to create {}", job_dir.display()))?;
@@ -181,13 +185,17 @@ pub fn write_gui_job(repo: &RepoPaths, config_path: &Path) -> Result<ValidationJ
     })
 }
 
-pub fn refuse_existing_non_terminal_job_for_repo(repo: &RepoPaths) -> Result<()> {
+pub fn refuse_existing_non_terminal_job_for_repo(
+    repo: &RepoPaths,
+    run_id: &str,
+    overwrite_existing: bool,
+) -> Result<()> {
     let benchmark = three_shot_config::config_slug(&repo.repo_name);
-    let manifest_path = job_dir_for(&benchmark, three_shot_config::RUN_ID).join("manifest.json");
-    refuse_existing_non_terminal_job(&manifest_path)
+    let manifest_path = job_dir_for(&benchmark, run_id).join("manifest.json");
+    refuse_existing_non_terminal_job(&manifest_path, overwrite_existing)
 }
 
-fn refuse_existing_non_terminal_job(manifest_path: &Path) -> Result<()> {
+fn refuse_existing_non_terminal_job(manifest_path: &Path, overwrite_existing: bool) -> Result<()> {
     if !manifest_path.exists() {
         return Ok(());
     }
@@ -202,8 +210,17 @@ fn refuse_existing_non_terminal_job(manifest_path: &Path) -> Result<()> {
         return Ok(());
     }
 
+    if overwrite_existing {
+        warn!(
+            "Overwriting active Codex GUI validation job at {} because validation_supervision_overwrite is enabled and manifest status is '{}'",
+            manifest_path.display(),
+            status
+        );
+        return Ok(());
+    }
+
     bail!(
-        "Refusing to overwrite active Codex GUI validation job at {} because manifest status is '{}'. Delete the job folder or change run_id after the current validation job is resolved.",
+        "Refusing to overwrite active Codex GUI validation job at {} because manifest status is '{}'. Delete the job folder, change run_id, or set validation_supervision_overwrite: true after confirming the current validation job can be replaced.",
         manifest_path.display(),
         status
     );
@@ -491,7 +508,7 @@ mod tests {
         let manifest = temp.path().join("manifest.json");
         fs::write(&manifest, r#"{ "status": "running" }"#).unwrap();
 
-        let err = refuse_existing_non_terminal_job(&manifest).unwrap_err();
+        let err = refuse_existing_non_terminal_job(&manifest, false).unwrap_err();
 
         assert!(
             err.to_string()
@@ -505,7 +522,7 @@ mod tests {
         let manifest = temp.path().join("manifest.json");
         fs::write(&manifest, r#"{ "status": "completed" }"#).unwrap();
 
-        refuse_existing_non_terminal_job(&manifest).unwrap();
+        refuse_existing_non_terminal_job(&manifest, false).unwrap();
     }
 
     #[test]
@@ -514,8 +531,17 @@ mod tests {
         let manifest = temp.path().join("manifest.json");
         fs::write(&manifest, "{}").unwrap();
 
-        let err = refuse_existing_non_terminal_job(&manifest).unwrap_err();
+        let err = refuse_existing_non_terminal_job(&manifest, false).unwrap_err();
 
         assert!(err.to_string().contains("status is 'missing'"));
+    }
+
+    #[test]
+    fn existing_non_terminal_job_can_be_overwritten_when_explicitly_enabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = temp.path().join("manifest.json");
+        fs::write(&manifest, r#"{ "status": "pending" }"#).unwrap();
+
+        refuse_existing_non_terminal_job(&manifest, true).unwrap();
     }
 }
