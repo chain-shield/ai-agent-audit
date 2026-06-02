@@ -69,6 +69,7 @@ pub enum VulnerabilityPattern {
     UnsafeRecipient,
     PrecisionDriftAccumulation, // Medium
     PricePrecisionOrRoundingError,
+    AtomicFillResidualDoS,
 
     //Token Standard Allowance
     StandardViolation,
@@ -83,6 +84,7 @@ pub enum VulnerabilityPattern {
 
     //Lifecycle & State Machines
     MaturityorGatingByPass,
+    LifecycleOperationLimitBypass,
     EpochOrIndexMonotonicity,
 
     // DoS, Gas, and Complexity - all Mediums
@@ -141,6 +143,7 @@ pub enum VulnerabilityPattern {
     UnincentivizedMaintenanceOrKeeperlessProgress,
     FirstOrLastMoverAdvantage,
     CheapGriefingOrDosProfit,
+    MinimumLivenessEvictionGriefing,
     QueueOrderDependentMevExtraction,
     FixedPotRewardRaceOrGasAuction,
     RewardCheckpointFreeRiderOrLateJoiner,
@@ -275,6 +278,11 @@ impl EnumData for VulnerabilityPattern {
                 VulnerabilityType::AuthByPass,
                 VulnerabilityType::TimestampDependentLogic,
             ],
+            VulnerabilityPattern::LifecycleOperationLimitBypass => &[
+                VulnerabilityType::Dos,
+                VulnerabilityType::AccountingInvariantViolation,
+                VulnerabilityType::GasGriefBlockLimit,
+            ],
             VulnerabilityPattern::EpochOrIndexMonotonicity => {
                 &[VulnerabilityType::AccountingInvariantViolation]
             }
@@ -360,6 +368,11 @@ impl EnumData for VulnerabilityPattern {
                 VulnerabilityType::PricePrecision,
                 VulnerabilityType::RoundingError,
                 VulnerabilityType::ERC20DecimalsMismatch, // <- new, if caused by decimals
+            ],
+            VulnerabilityPattern::AtomicFillResidualDoS => &[
+                VulnerabilityType::Dos,
+                VulnerabilityType::RoundingError,
+                VulnerabilityType::PricePrecision,
             ],
 
             // Reentrancy via token standards (optional specialization)
@@ -492,6 +505,11 @@ impl EnumData for VulnerabilityPattern {
                 VulnerabilityType::AccountingInvariantViolation,
             ],
             VulnerabilityPattern::CheapGriefingOrDosProfit => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::Dos,
+                VulnerabilityType::GasGriefBlockLimit,
+            ],
+            VulnerabilityPattern::MinimumLivenessEvictionGriefing => &[
                 VulnerabilityType::IncentiveMisalignmentOrGameTheory,
                 VulnerabilityType::Dos,
                 VulnerabilityType::GasGriefBlockLimit,
@@ -850,12 +868,31 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
         static_signals: &[
             "divide before multiply",
             "mix 6/8/18 decimals without normalization",
+            "rounds fill amount down to lot/step size",
+            "rejects any residual instead of residual above minimum executable unit",
+            "all-or-nothing order type checks raw remainder after rounded matching",
         ],
         examples: &[
             "lpSupply miscalc on division order",
             "priceALast precision loss",
+            "atomic fill reverts because only sub-lot dust remains unfilled",
         ],
         impact_hint: ImpactHint::MediumLow,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::AtomicFillResidualDoS,
+        definition: "Fill-or-kill or all-or-nothing execution reverts on any nonzero local residual even when the residual is below the protocol's minimum executable unit.",
+        static_signals: &[
+            "FOK/fill-or-kill/all-or-nothing branch reverts when remainder > 0",
+            "same local matching path rounds down by lot size, step size, tick size, or minimum unit",
+            "residual compared to zero instead of minimum executable lot/notional",
+            "no tolerance, write-off, or success path for sub-unit residual dust",
+        ],
+        examples: &[
+            "fill-or-kill order reverts when only remainder below lot size is unfilled",
+            "all-or-nothing local fill rejects a sub-step remainder after rounded matching",
+        ],
+        impact_hint: ImpactHint::Medium,
     },
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::ReserveOrPriceDesync,
@@ -1038,6 +1075,26 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
         impact_hint: ImpactHint::HighMedium,
     },
     VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::LifecycleOperationLimitBypass,
+        definition: "A later lifecycle operation such as amend/update/move/rollover/cancel-repost has the same external effect as create/post/enter but omits the limits, counters, caps, or anti-DoS checks enforced on the create path.",
+        static_signals: &[
+            "create/post path increments or checks a per-tx/per-user/per-epoch limit",
+            "amend/update/move path can create equivalent new state without the same check",
+            "modify function changes price, side, bucket, owner, collateral, queue, or epoch placement",
+            "state is removed and reinserted without incrementing placement counters",
+            "cap protects new entries but update path can bypass or exceed it",
+            "docs describe the limit as anti-spam or anti-DoS protection",
+            "client order update emits successful amendment while affecting a new limit/bucket",
+        ],
+        examples: &[
+            "postOrder enforces max orders per tx, but amend moves orders to new price levels without incrementing the counter",
+            "deposit cap applies to deposit(), but increasePosition() creates equivalent exposure without cap accounting",
+            "register() checks max active entries while migrate() inserts into the same active set unchecked",
+            "createAuction validates max lots but rollover recreates lots without enforcing the cap",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
         key: VulnerabilityPattern::EpochOrIndexMonotonicity,
         definition: "Cumulative indexes/epochs can decrease/reset breaking accrual math.",
         static_signals: &["index set from smaller value", "epoch decrement path"],
@@ -1047,7 +1104,7 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
     // H) DoS, Gas, Complexity
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::UnboundedLoops,
-        definition: "Unbounded iteration in hot paths (loops, recursion, state-dependent iteration) enables gas-based DoS, making functions unusable as state grows or attacker inflates iteration count.",
+        definition: "Unbounded or gas-explosive iteration in hot/progress paths (loops, recursion, repeated allocation/combinatorial helpers, state/config-derived iteration) enables gas-based DoS, making required functions unusable as state grows, config reaches valid high bounds, or attacker inflates iteration count.",
         static_signals: &[
             "loops over user-controlled arrays/sets",
             "nested loops in external functions",
@@ -1055,7 +1112,12 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "iteration count grows with contract state (e.g., all users, all proposals)",
             "no pagination or batching mechanism",
             "loop bound depends on attacker-controlled value",
+            "loop bound depends on valid configuration/state range, not only direct user input",
             "state enumeration via unbounded array traversal",
+            "required callback/finalizer/settlement path contains nested loops or repeated allocations",
+            "combinatorial helper called inside another loop (choose/generateSubsets/permutation/sort over growing data)",
+            "callback gas limit or fee formula scales with one parameter while actual work scales with nested or repeated computation",
+            "same pure/helper result recomputed inside outer loop instead of cached",
             "no gas limit checks in loop body",
         ],
         examples: &[
@@ -1065,8 +1127,11 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "vote() scans entire proposal history (gas cost increases over time)",
             "liquidateAll() iterates unbounded positions array",
             "nested loop: for each user, for each token (O(n²) gas)",
+            "lottery settlement callback recomputes ticket subsets for every configured bonus ball and exceeds chain gas limit",
+            "epoch finalizer recomputes combinations in an inner loop so valid high configuration bricks rollover",
+            "callback gas stipend scales linearly with item count while nested library work scales superlinearly",
         ],
-        impact_hint: ImpactHint::Medium,
+        impact_hint: ImpactHint::HighMedium,
     },
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::GriefableCallbacks,
@@ -1557,7 +1622,7 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
     },
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::GlobalParamMidFlowManipulation,
-        definition: "Global configuration parameter can be changed by admin/owner during an active multi-phase flow (e.g., between ticket purchase and settlement), causing unexpected behavior or manipulation.",
+        definition: "Global configuration parameter or dependency can be changed during an active multi-phase flow (e.g., after users enter a round/epoch/position but before settlement/claim/finalization), and later phases reread the live value instead of the value/dependency intended for that active flow.",
         static_signals: &[
             "global param read during settlement but modifiable by owner anytime",
             "no snapshot of critical params at flow start",
@@ -1565,6 +1630,11 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "fee/oracle/manager address changeable mid-epoch/mid-round",
             "multi-phase flow uses current param values, not snapshotted values",
             "callback/settlement reads global state that admin controls",
+            "comments/docs say setter affects future rounds/epochs but active settlement reads live value",
+            "normal maintenance update can alter already-started user flow without malicious admin behavior",
+            "multiple setters share same missing freeze/snapshot guard for active flow",
+            "dependency address/calculator/oracle/manager is changed after flow start and before callback/settlement/claim",
+            "active flow stores some parameters but omits others later read in settlement/claim",
         ],
         examples: &[
             "admin changes fee between ticket purchase and drawing settlement",
@@ -1572,6 +1642,10 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "manager address updated between claim and settlement causes mismatch",
             "yield rate changed while unstaking period is active",
             "reward token address changed before pending claims are processed",
+            "owner changes fee/dependency for future epoch but current epoch settlement rereads it",
+            "calculator/oracle/manager address changed after tickets are bought but before callback finalizes payouts",
+            "protocol snapshots price but not fee/dependency, so a routine config update mutates active settlement",
+            "governance maintenance update causes active claims to use new rules instead of entry-time rules",
         ],
         impact_hint: ImpactHint::Medium,
     },
@@ -1682,6 +1756,25 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "attacker submits junk requests that make processQueue() revert and block all withdrawals",
             "anyone can call settleAll() over a huge array; a griefer repeatedly reverts via callback, burning more gas for others than for themselves",
             "liquidateAll() loops user positions and reverts if one underflows; attacker ensures the underflow condition so liquidations are DoS'd",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::MinimumLivenessEvictionGriefing,
+        definition: "A user can place short-lived, immediately cancellable, or otherwise low-risk state that evicts or displaces longer-lived third-party state, allowing cheap griefing of shared queues, books, auctions, or allocation caps.",
+        static_signals: &[
+            "new entry evicts worst/oldest/non-competitive existing entry",
+            "entry can expire immediately or be cancelled immediately by its creator",
+            "no minimum liveness, bond, or cancellation delay before eviction power is granted",
+            "one-sided or sparse market/book/queue lets attacker avoid execution risk",
+            "attacker recovers most capital after evicting third-party live state",
+            "cap is enforced by deleting existing state instead of rejecting short-lived state",
+        ],
+        examples: &[
+            "short-expiry orders evict legitimate one-sided order-book liquidity and then expire/refund",
+            "immediately cancellable auction bids evict standing bids without sustained capital risk",
+            "queue entries with no liveness bond displace real users and are cancelled after eviction",
+            "temporary allocation requests consume a cap, evict real requests, then withdraw at low cost",
         ],
         impact_hint: ImpactHint::Medium,
     },

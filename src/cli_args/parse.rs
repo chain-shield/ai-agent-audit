@@ -297,6 +297,16 @@ impl PocConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BenchmarkConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub output_dir: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedRepoConfig {
     pub repo_url: String,
@@ -436,6 +446,12 @@ pub struct Cli {
     #[serde(default)]
     pub validation_supervision: Option<ValidationSupervisionMode>,
 
+    /// Replace an existing non-terminal Codex GUI validation job with the same run id.
+    /// Defaults to false; use only for intentional benchmark reruns.
+    #[arg(long)]
+    #[serde(default)]
+    pub validation_supervision_overwrite: bool,
+
     /// Optional generated audit context configuration. YAML-only for now.
     #[arg(skip)]
     #[serde(default)]
@@ -445,6 +461,11 @@ pub struct Cli {
     #[arg(skip)]
     #[serde(default)]
     pub poc: PocConfig,
+
+    /// Optional benchmark telemetry configuration. YAML-only for now.
+    #[arg(skip)]
+    #[serde(default)]
+    pub benchmark: Option<BenchmarkConfig>,
 }
 
 fn validate_repo_url(s: &str) -> std::result::Result<String, String> {
@@ -534,10 +555,16 @@ impl Cli {
             {
                 config_cli.validation_supervision = config_values.validation_supervision;
             }
+            if config_values.validation_supervision_overwrite {
+                config_cli.validation_supervision_overwrite = true;
+            }
             if config_values.context.is_some() {
                 config_cli.context = config_values.context;
             }
             config_cli.poc = config_values.poc;
+            if config_values.benchmark.is_some() {
+                config_cli.benchmark = config_values.benchmark;
+            }
 
             // Always use YAML values for these fields if present
             config_cli.audit_type = config_values.audit_type;
@@ -762,6 +789,65 @@ validation_supervision: "gui"
             cli.validation_supervision,
             Some(ValidationSupervisionMode::Gui)
         );
+    }
+
+    #[test]
+    fn validation_supervision_overwrite_defaults_false_and_accepts_yaml_true() {
+        let default_cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+"#,
+        )
+        .unwrap();
+        assert!(!default_cli.validation_supervision_overwrite);
+
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+validation_supervision: "gui"
+validation_supervision_overwrite: true
+"#,
+        )
+        .unwrap();
+        assert!(cli.validation_supervision_overwrite);
+    }
+
+    #[test]
+    fn benchmark_config_accepts_yaml_block() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+benchmark:
+  enabled: true
+  run_id: "example-run-001"
+  output_dir: "benchmarks/example/runs"
+"#,
+        )
+        .unwrap();
+
+        let benchmark = cli.benchmark.expect("benchmark config should parse");
+        assert_eq!(benchmark.enabled, Some(true));
+        assert_eq!(benchmark.run_id.as_deref(), Some("example-run-001"));
+        assert_eq!(
+            benchmark.output_dir.as_deref(),
+            Some("benchmarks/example/runs")
+        );
+    }
+
+    #[test]
+    fn benchmark_config_accepts_partial_yaml_block_without_enabled() {
+        let cli: Cli = serde_yaml::from_str(
+            r#"
+repo: "https://github.com/example/protocol.git"
+benchmark:
+  run_id: "example-run-001"
+"#,
+        )
+        .unwrap();
+
+        let benchmark = cli.benchmark.expect("benchmark config should parse");
+        assert_eq!(benchmark.enabled, None);
+        assert_eq!(benchmark.run_id.as_deref(), Some("example-run-001"));
     }
 
     #[test]

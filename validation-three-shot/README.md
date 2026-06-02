@@ -87,6 +87,7 @@ GUI-supervised validation:
 - Audit runs emit Codex GUI supervision jobs by default after report export.
 - Disable job emission with `--validation-supervision off`, `validation_supervision: off` in the audit YAML config, or `AI_AGENT_AUDIT_VALIDATION_SUPERVISION=off`.
 - Explicit `--validation-supervision gui`, `validation_supervision: gui`, or `AI_AGENT_AUDIT_VALIDATION_SUPERVISION=gui` keep the default enabled behavior.
+- Existing non-terminal GUI jobs are protected by default. For intentional benchmark reruns that reuse a `run_id`, set `validation_supervision_overwrite: true` or pass `--validation-supervision-overwrite`.
 - The audit app still only produces deterministic artifacts. It does not run R1-R9 directly.
 - After report export, the app writes a ready-marked job folder:
   - `validation-three-shot/jobs/<benchmark>/<run-id>/manifest.json`
@@ -96,7 +97,7 @@ GUI-supervised validation:
   - `validation-three-shot/jobs/<benchmark>/<run-id>/events.jsonl`
   - `validation-three-shot/jobs/<benchmark>/<run-id>/ready`
 - `ready` is written last. Codex GUI supervisors should ignore job folders without this marker.
-- If the same `<benchmark>/<run-id>` already has a non-terminal `manifest.json` status, such as `pending` or `running`, the audit app refuses to overwrite that job. Delete the job folder or change `run_id` after the current validation job is resolved.
+- If the same `<benchmark>/<run-id>` already has a non-terminal `manifest.json` status, such as `pending` or `running`, the audit app refuses to overwrite that job unless `validation_supervision_overwrite` is enabled. Delete the job folder, change `run_id`, or explicitly enable the overwrite after confirming the current validation job can be replaced.
 - The manifest points at the job-local `config.yaml` snapshot, not the shared `validation-three-shot/<benchmark>-config.yaml`, so later audit runs cannot mutate the config a running GUI supervisor is using.
 - The intended trigger is a dedicated Codex heartbeat supervisor that wakes every 5 minutes, scans `validation-three-shot/jobs/*/*/ready`, claims pending manifests, runs preflight, then follows the job-specific `supervisor.md`.
 - The GUI supervisor provides commentary and status updates; minimal Codex workers launched from the emitted `worker_spawn_command` do the production R1-R9 work.

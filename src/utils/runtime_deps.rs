@@ -7,6 +7,7 @@ use std::{
 };
 
 const MIN_NODE_MAJOR: u64 = 18;
+const MIN_SLITHER_VERSION: (u64, u64, u64) = (0, 11, 5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeDependency {
@@ -42,7 +43,7 @@ impl RuntimeDependency {
         match self {
             Self::Git => "Install Git and make sure `git` is available on PATH.",
             Self::Slither => {
-                "Install Slither (`pipx install slither-analyzer` is recommended) and make sure `slither` is available on PATH."
+                "Install or upgrade Slither (`pipx install slither-analyzer` or `pipx upgrade slither-analyzer` is recommended) and make sure the newer `slither` is available on PATH."
             }
             Self::Forge => {
                 "Install Foundry (`curl -L https://foundry.paradigm.xyz | bash`, then `foundryup`) and make sure `forge` is available on PATH."
@@ -68,6 +69,7 @@ impl RuntimeDependency {
     fn version_issue(self) -> Result<Option<String>> {
         match self {
             Self::Node => check_node_version(),
+            Self::Slither => check_slither_version(),
             _ => Ok(None),
         }
     }
@@ -171,6 +173,35 @@ fn check_node_version() -> Result<Option<String>> {
     Ok(None)
 }
 
+fn check_slither_version() -> Result<Option<String>> {
+    let output = Command::new("slither").arg("--version").output()?;
+    if !output.status.success() {
+        return Ok(Some(format!(
+            "`slither --version` failed with status {}.",
+            output.status
+        )));
+    }
+
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let Some(parsed) = parse_semver_triplet(&version) else {
+        return Ok(Some(format!(
+            "Could not parse `slither --version` output `{version}`."
+        )));
+    };
+
+    if parsed < MIN_SLITHER_VERSION {
+        let path = find_command_path("slither")
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "unknown path".to_string());
+        return Ok(Some(format!(
+            "Found Slither {version} at {path}, but Slither >= {}.{}.{} is required for modern Foundry/solc projects.",
+            MIN_SLITHER_VERSION.0, MIN_SLITHER_VERSION.1, MIN_SLITHER_VERSION.2
+        )));
+    }
+
+    Ok(None)
+}
+
 fn parse_node_major(version: &str) -> Option<u64> {
     version
         .trim()
@@ -179,6 +210,21 @@ fn parse_node_major(version: &str) -> Option<u64> {
         .next()?
         .parse()
         .ok()
+}
+
+fn parse_semver_triplet(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version
+        .trim()
+        .trim_start_matches('v')
+        .split(|ch: char| !(ch.is_ascii_digit() || ch == '.'))
+        .next()?
+        .split('.');
+
+    Some((
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next().unwrap_or("0").parse().ok()?,
+    ))
 }
 
 #[cfg(windows)]
@@ -225,5 +271,14 @@ mod tests {
         assert_eq!(parse_node_major("v18.19.1"), Some(18));
         assert_eq!(parse_node_major("20.11.0"), Some(20));
         assert_eq!(parse_node_major("not-node"), None);
+    }
+
+    #[test]
+    fn parses_semver_triplet_versions() {
+        assert_eq!(parse_semver_triplet("0.11.5"), Some((0, 11, 5)));
+        assert_eq!(parse_semver_triplet("v1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_semver_triplet("0.11.5+local"), Some((0, 11, 5)));
+        assert_eq!(parse_semver_triplet("0.11"), Some((0, 11, 0)));
+        assert_eq!(parse_semver_triplet("not-slither"), None);
     }
 }

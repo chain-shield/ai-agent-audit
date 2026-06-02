@@ -138,6 +138,8 @@ Use `Client` for internal or client-style audits. Use the contest values when yo
 | `monorepo_folders` / `--monorepo-folders` | Local text file listing repo-relative package roots for monorepo-aware analysis. |
 | `exclude_folders` / `--exclude-folders` | Repo-relative folders to exclude from scope. |
 | `scoped_files` / `--scoped-files` | Local text file listing repo-relative files that should be treated as in scope. |
+| `validation_supervision` / `--validation-supervision` | Emit a Codex GUI three-shot validation job after report export. Defaults to `gui`; set `off` to disable. |
+| `validation_supervision_overwrite` / `--validation-supervision-overwrite` | Replace an existing non-terminal GUI validation job with the same run id. Defaults to `false`; use only for intentional reruns. |
 | `context` | YAML-only block for generated audit scope/docs context. Defaults to `README.md`, `audit-docs`, `force_regenerate: true`, and 5000 tokens per generated Markdown file. |
 | `audit_type` / `--audit-type` | One of `Code4rena`, `Code4renaBounty`, `Sherlock`, `Cantina`, `Client`. |
 | `builder` / `--builder` | One of `Foundry`, `Hardhat`, `HardhatYarn`, `Custom`, `Auto`. Default is `Auto`. |
@@ -265,7 +267,7 @@ If the build output shows `No build system detected`, the target repo likely doe
 
 ### Missing Runtime Dependencies
 
-The Docker execution path has been removed. If `git`, `slither`, `forge`, `node`, `npm`, `npx`, `yarn`, or `pnpm` is required and missing or incompatible, startup/build/static-analysis will fail with an install note for the missing command. Node-based builds require Node.js 18 or newer.
+The Docker execution path has been removed. If `git`, `slither`, `forge`, `node`, `npm`, `npx`, `yarn`, or `pnpm` is required and missing or incompatible, startup/build/static-analysis will fail with an install note for the missing command. Node-based builds require Node.js 18 or newer. Modern Foundry/solc projects require Slither 0.11.5 or newer.
 
 ### Wrong Source Folder
 

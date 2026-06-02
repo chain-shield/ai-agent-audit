@@ -1,5 +1,12 @@
 # Validation Prompt Changelog
 
+## Code4rena FN recovery update on 2026-06-01
+
+- Added FN-sensitive validation guidance for lifecycle parity, atomic-fill residual dust, and minimum-liveness eviction roots.
+- R3 now asks workers to preserve create-vs-update limit bypasses, fill-or-kill residual dust bugs, and short-lived eviction bugs as distinct H/M candidates when code evidence supports them.
+- R4 now prevents canonicalization from merging those roots into broader dust, expired-cleanup, or generic order-book liveness families.
+- R9 now judges those roots under Code4rena-specific materiality rules instead of dismissing them as ordinary amendments, harmless dust, or generic expiry cleanup.
+
 ## Private-client validation profile on 2026-05-20
 
 - Added `validation_profile: private-client` prompts for R1-R9.

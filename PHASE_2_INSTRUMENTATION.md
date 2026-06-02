@@ -2,7 +2,22 @@
 
 Phase 2 adds opt-in JSONL telemetry so benchmark runs can show where findings are created, merged, rejected, retained, or lost. The benchmark endpoint is the full product flow: Rust discovery/verification/report generation plus final GUI-supervised three-shot validation and professional report production.
 
-Telemetry is disabled by default. Enable it for controlled benchmark runs:
+Telemetry is disabled by default. Prefer enabling it in the run YAML so the benchmark settings travel with the protocol config:
+
+```yaml
+benchmark:
+  enabled: true
+  run_id: "olas-baseline-001"
+  output_dir: "benchmarks/code4rena-2026-01-olas/runs"
+```
+
+Then run normally:
+
+```bash
+cargo run --release -- --config audit-docs/olas.yaml
+```
+
+Environment variables are still supported for ad-hoc runs:
 
 ```bash
 AI_AGENT_AUDIT_BENCHMARK_TELEMETRY=1 \

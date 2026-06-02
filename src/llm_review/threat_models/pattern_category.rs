@@ -490,7 +490,7 @@ pub const ESCROW_VESTING_PATTERNS: &[VulnerabilityPattern; 9] = &[
     VulnerabilityPattern::ExternalCallAfterStateChange,
 ];
 
-pub const MARKETPLACE_EXCHANGE_PATTERNS: &[VulnerabilityPattern; 14] = &[
+pub const MARKETPLACE_EXCHANGE_PATTERNS: &[VulnerabilityPattern; 22] = &[
     VulnerabilityPattern::PermitOrSignatureReplay,
     VulnerabilityPattern::EIP1271ByPass,
     VulnerabilityPattern::DoubleExecutionOrReplay,
@@ -505,6 +505,14 @@ pub const MARKETPLACE_EXCHANGE_PATTERNS: &[VulnerabilityPattern; 14] = &[
     VulnerabilityPattern::UnsafeRecipient,
     VulnerabilityPattern::TimestampOrBlockManipulation,
     VulnerabilityPattern::ForcedAssetVsStrictEquality,
+    VulnerabilityPattern::PricePrecisionOrRoundingError,
+    VulnerabilityPattern::AtomicFillResidualDoS,
+    VulnerabilityPattern::MaturityorGatingByPass,
+    VulnerabilityPattern::LifecycleOperationLimitBypass,
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::StateGrowthOrStorageBloat,
+    VulnerabilityPattern::CheapGriefingOrDosProfit,
+    VulnerabilityPattern::MinimumLivenessEvictionGriefing,
 ];
 
 pub const RANDOMNESS_RAFFLE_LOTTERY_PATTERNS: &[VulnerabilityPattern; 10] = &[
@@ -554,7 +562,7 @@ pub const LIBRARY_ANALYSIS_PATTERNS: &[VulnerabilityPattern; 20] = &[
 
 /// Curated list of High/Medium severity patterns for focused analysis.
 /// Excludes Low-severity patterns (TimestampOrBlockManipulation, ChainIdorDomainDrift).
-pub const R1_PATTERNS: &[VulnerabilityPattern; 49] = &[
+pub const R1_PATTERNS: &[VulnerabilityPattern; 50] = &[
     // ============================================
     // SYNTACTIC PATTERNS (Easy for LLMs)
     // ============================================
@@ -581,6 +589,7 @@ pub const R1_PATTERNS: &[VulnerabilityPattern; 49] = &[
     VulnerabilityPattern::UnsafeRecipient,
     VulnerabilityPattern::PrecisionDriftAccumulation,
     VulnerabilityPattern::PricePrecisionOrRoundingError,
+    VulnerabilityPattern::AtomicFillResidualDoS,
     // Token Standard (syntactically visible allowance/transfer)
     VulnerabilityPattern::StandardViolation,
     VulnerabilityPattern::AllowanceRace,
@@ -635,7 +644,7 @@ pub const R1_PATTERNS: &[VulnerabilityPattern; 49] = &[
     VulnerabilityPattern::ForcedAssetVsStrictEquality,
 ];
 
-pub const R2_PATTERNS: &[VulnerabilityPattern; 24] = &[
+pub const R2_PATTERNS: &[VulnerabilityPattern; 26] = &[
     // ============================================
     // SEMANTIC PATTERNS (Hard for LLMs)
     // ============================================
@@ -651,6 +660,7 @@ pub const R2_PATTERNS: &[VulnerabilityPattern; 24] = &[
     VulnerabilityPattern::UnincentivizedMaintenanceOrKeeperlessProgress, // Requires incentive analysis
     VulnerabilityPattern::FirstOrLastMoverAdvantage, // Requires bank-run / timing race reasoning
     VulnerabilityPattern::CheapGriefingOrDosProfit,  // Requires griefing cost vs profit analysis
+    VulnerabilityPattern::MinimumLivenessEvictionGriefing, // Requires eviction risk vs liveness/cancel analysis
     VulnerabilityPattern::QueueOrderDependentMevExtraction, // Requires order-dependent MEV analysis
     VulnerabilityPattern::FixedPotRewardRaceOrGasAuction, // Requires gas-auction incentive analysis
     VulnerabilityPattern::RewardCheckpointFreeRiderOrLateJoiner, // Requires reward fairness over time analysis
@@ -668,9 +678,10 @@ pub const R2_PATTERNS: &[VulnerabilityPattern; 24] = &[
     VulnerabilityPattern::PermitFrontRun, // Requires multi-step attack sequencing
     // Multicall (requires cross-path analysis)
     VulnerabilityPattern::MulticallCrossPathReentrancy, // Requires understanding multicall interactions
-    // NEW MEGAPOT PATTERNS (all require deep semantic understanding)
+    // Deep semantic patterns added for phase/lifecycle and external dependency analysis.
     VulnerabilityPattern::ArbitraryExternalCall, // Requires multi-step attack chain + custody analysis
     VulnerabilityPattern::GlobalParamMidFlowManipulation, // Requires temporal state analysis
+    VulnerabilityPattern::LifecycleOperationLimitBypass, // Requires create/update path parity analysis
     VulnerabilityPattern::GovernanceFrontrunDoS, // Requires game theory + frontrunning analysis
     VulnerabilityPattern::ExternalProtocolKeyCollision, // Requires external protocol knowledge
     VulnerabilityPattern::EmergencyModeStateStuck, // Requires state machine analysis

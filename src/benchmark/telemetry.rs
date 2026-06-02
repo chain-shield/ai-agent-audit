@@ -10,6 +10,7 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::{
+    cli_args::parse::BenchmarkConfig,
     config::{
         ACTOR_RUNS, DISCOVERY_PROVIDER, INVARIANT_RUNS, MAX_PATTERN_GENERAL, MAX_PATTERN_LIBRARY,
         MAX_PATTERN_NICHE, MAX_PATTERN_RELEVANT_FREQUENT, MAX_PATTERN_RUN_FREQUENT,
@@ -22,9 +23,10 @@ use crate::{
 
 const ENABLE_ENV: &str = "AI_AGENT_AUDIT_BENCHMARK_TELEMETRY";
 const DIR_ENV: &str = "AI_AGENT_AUDIT_BENCHMARK_DIR";
-const RUN_ID_ENV: &str = "AI_AGENT_AUDIT_BENCHMARK_RUN_ID";
+pub const RUN_ID_ENV: &str = "AI_AGENT_AUDIT_BENCHMARK_RUN_ID";
 
 static RUN_ID: OnceLock<String> = OnceLock::new();
+static BENCHMARK_CONFIG: OnceLock<BenchmarkConfig> = OnceLock::new();
 
 #[derive(Serialize)]
 struct TelemetryEnvelope<'a, T: Serialize + ?Sized> {
@@ -37,29 +39,36 @@ struct TelemetryEnvelope<'a, T: Serialize + ?Sized> {
     payload: &'a T,
 }
 
+pub fn configure(config: BenchmarkConfig) {
+    if BENCHMARK_CONFIG.set(config).is_err() {
+        log::warn!("Benchmark telemetry config was already initialized; keeping the first config");
+    }
+}
+
 pub fn enabled() -> bool {
-    env::var(ENABLE_ENV)
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    let env_value = env::var(ENABLE_ENV).ok();
+    enabled_from_sources(BENCHMARK_CONFIG.get(), env_value.as_deref())
 }
 
 pub fn run_id() -> &'static str {
     RUN_ID
         .get_or_init(|| {
-            env::var(RUN_ID_ENV).unwrap_or_else(|_| Utc::now().format("%Y%m%dT%H%M%SZ").to_string())
+            BENCHMARK_CONFIG
+                .get()
+                .and_then(|config| non_empty_string(config.run_id.as_deref()))
+                .or_else(|| env::var(RUN_ID_ENV).ok().and_then(non_empty_string_value))
+                .unwrap_or_else(|| Utc::now().format("%Y%m%dT%H%M%SZ").to_string())
         })
         .as_str()
 }
 
 pub fn run_dir(repo: &RepoPaths) -> PathBuf {
-    let root = env::var(DIR_ENV)
+    let root = BENCHMARK_CONFIG
+        .get()
+        .and_then(|config| non_empty_string(config.output_dir.as_deref()))
         .map(PathBuf::from)
-        .unwrap_or_else(|_| app_data_dir().join("benchmark-runs"));
+        .or_else(|| env::var(DIR_ENV).ok().map(PathBuf::from))
+        .unwrap_or_else(|| app_data_dir().join("benchmark-runs"));
 
     root.join(sanitize_path_segment(&repo.project_id))
         .join(run_id())
@@ -213,5 +222,66 @@ fn sanitize_path_segment(value: &str) -> String {
         "benchmark-run".to_string()
     } else {
         sanitized.to_string()
+    }
+}
+
+fn non_empty_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn non_empty_string_value(value: String) -> Option<String> {
+    non_empty_string(Some(value.as_str()))
+}
+
+fn enabled_from_sources(config: Option<&BenchmarkConfig>, env_value: Option<&str>) -> bool {
+    if let Some(enabled) = config.and_then(|config| config.enabled) {
+        return enabled;
+    }
+
+    env_value
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enabled_from_sources_lets_explicit_yaml_override_env() {
+        let explicit_false = BenchmarkConfig {
+            enabled: Some(false),
+            run_id: None,
+            output_dir: None,
+        };
+        let explicit_true = BenchmarkConfig {
+            enabled: Some(true),
+            run_id: None,
+            output_dir: None,
+        };
+
+        assert!(!enabled_from_sources(Some(&explicit_false), Some("true")));
+        assert!(enabled_from_sources(Some(&explicit_true), Some("off")));
+    }
+
+    #[test]
+    fn enabled_from_sources_uses_env_when_yaml_enabled_is_unset() {
+        let partial_config = BenchmarkConfig {
+            enabled: None,
+            run_id: Some("example-run".to_string()),
+            output_dir: Some("benchmarks/example/runs".to_string()),
+        };
+
+        assert!(enabled_from_sources(Some(&partial_config), Some("1")));
+        assert!(!enabled_from_sources(Some(&partial_config), Some("0")));
+        assert!(!enabled_from_sources(Some(&partial_config), None));
     }
 }
