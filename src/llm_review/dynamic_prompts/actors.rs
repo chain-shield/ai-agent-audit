@@ -18,8 +18,8 @@ pub fn generate_actors_prompt() -> String {
 
     format!(
         r#"
-            Your task: Identify ALL actors who can interact with or influence the target contract, 
-            including adversarial actors who may exploit edge cases, race conditions, or unintended 
+            Your task: Identify ALL actors who can interact with or influence the target contract,
+            including adversarial actors who may exploit edge cases, race conditions, or unintended
             interactions.
 
             ## SYSTEMATIC ACTOR DISCOVERY PROCESS
@@ -80,6 +80,9 @@ pub fn generate_actors_prompt() -> String {
             - What can they do directly?
             - What can they do by combining multiple actions?
             - What happens if they're malicious or compromised?
+            - What normal maintenance/configuration updates can they make while user flows are active?
+            - Can they amend, update, move, cancel/repost, rollover, or migrate state to achieve the same effect as a create/post/enter action while bypassing the create path's limits?
+            - Can they place short-lived or immediately cancellable state that evicts or displaces longer-lived third-party state with little sustained risk?
             - What happens if they're removed but retain some access?
 
             ---
@@ -156,6 +159,8 @@ pub fn generate_actors_prompt() -> String {
             - [ ] Actors who can submit concurrent transactions
             - [ ] Actors who can exploit check-then-act patterns
             - [ ] Actors who can manipulate state between check and use
+            - [ ] Actors who can use update/amend/move paths to bypass limits enforced on create/post paths
+            - [ ] Actors who can use short liveness, expiry, or immediate cancellation to evict other users' state
 
             **Callback/Hook Actors**:
             - [ ] Contracts receiving before/after execution hooks
@@ -176,6 +181,8 @@ pub fn generate_actors_prompt() -> String {
             - [ ] Actors who can DoS at low cost
             - [ ] Actors who can block others' operations
             - [ ] Actors who profit from causing failures
+            - [ ] Actors who can leave only sub-unit dust or residual state that reverts atomic/all-or-nothing flows
+            - [ ] Actors who can cheaply displace active liquidity, queue entries, bids, or claims and later recover capital
 
         ## Deliverables
 
@@ -197,6 +204,7 @@ pub fn generate_actors_prompt() -> String {
 
         **NOTE**: Admin roles are assumed trusted actors unless specified other in scope.
         For this analysis, trusted actors CANNOT act maliciously.
+        Still include ordinary maintenance capabilities for trusted roles when those capabilities may unintentionally affect active/pending user flows; later validation must frame these as routine active-flow isolation issues, not malicious-admin attacks.
 "#,
     )
 }
@@ -206,7 +214,7 @@ pub fn get_actor_list_json() -> String {
         r#"
 
         ## OUTPUT REQUIREMENTS
-        
+
         - STRICT JSON ONLY (no markdown, no comments):
 
         {{
@@ -267,9 +275,9 @@ pub fn generate_all_actors_verify_prompt(actors: &Actors) -> String {
 
     format!(
         r#"
-        {json} 
+        {json}
 
-        ## Your task: decide if EACH reported actor is valid? 
+        ## Your task: decide if EACH reported actor is valid?
 
         You should return `"true"` for `is_actor_valid` if actor is valid, role, description, and capabilities all check out.
         Otherwise return `"false"`.
@@ -282,7 +290,7 @@ pub fn generate_all_actors_verify_prompt(actors: &Actors) -> String {
         *is actor valid*: true | false
 
         ## actors TO VERIFY
-        {report} 
+        {report}
 
         "#,
         json = verify_json,
@@ -296,14 +304,14 @@ pub fn get_post_all_actors_verify_json() -> String {
     format!(
         r#"
 
-        ## OUTPUT REQUIREMENTS 
+        ## OUTPUT REQUIREMENTS
 
         *Please respond with ONLY valid JSON in the following exact format:*
 
         {json}
 
-        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
-        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON.
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure
         they match up correctly.
     "#
     )

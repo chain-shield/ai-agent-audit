@@ -1,0 +1,61 @@
+{
+  "benchmark": "2025-07-gte-clob",
+  "results": [
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-1-SamePriceTailCancelBricksLimitPoC.t.sol",
+      "finding_id": "M-1",
+      "notes": "Attacker cancels only its own tail order and corrupts shared best-bid pointers, making the victim head order unreachable.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path test/c4-poc/M-1-SamePriceTailCancelBricksLimitPoC.t.sol --match-test submissionValidity",
+      "title": "Broken same-price order links let a maker cancel the tail order and brick the best price level",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-4-ExpiredTopOfBookCleanupPoC.t.sol",
+      "finding_id": "M-4",
+      "notes": "Uses raised maxLimitsPerTx as Forge one-transaction harness compression. Real CLOB calls show the taker fill clears every expired head before live liquidity.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-contract ExpiredTopOfBookCleanupPoC --match-test submissionValidity -vvv",
+      "title": "Expired top-of-book orders require unbounded cleanup before any matching can proceed",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-5-BitwiseZeroCostLimitCrossPoC.t.sol",
+      "finding_id": "M-5",
+      "notes": "Marketable limit buy reverts on bitwise ZeroCostTrade while equivalent fill succeeds.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path test/c4-poc/M-5-BitwiseZeroCostLimitCrossPoC.t.sol --match-test submissionValidity -vvv",
+      "title": "Bitwise zero-cost check reverts valid crossing limit trades with nonzero base and quote amounts",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-23-ZeroQuoteDustBlocksBookPoC.t.sol",
+      "finding_id": "M-23",
+      "notes": "Rerun passed. Valid partial fill leaves zero quote ask dust at head. Victim buy reverts ZeroCostTrade and rollback keeps dust plus later ask in book.",
+      "status": "Verified PoC",
+      "test_command": "cd /Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob && forge test --match-path test/c4-poc/M-23-ZeroQuoteDustBlocksBookPoC.t.sol --match-test submissionValidity -vvv",
+      "title": "Zero-quote dust orders can permanently block one side of a CLOB market",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-25-PriceLevelCapEvictionPoC.t.sol",
+      "finding_id": "M-25",
+      "notes": "R5 PoC passed; non-exempt account grows bid price levels from cap 2 to 4 after one-order eviction leaves worst limit indexed.",
+      "status": "Verified PoC",
+      "test_command": "forge test --match-path test/c4-poc/M-25-PriceLevelCapEvictionPoC.t.sol --match-test testMultiOrderWorstLimitLetsBookExceedSideCap",
+      "title": "Non-competitive eviction can bypass maxNumLimitsPerSide and allow unbounded price-level growth",
+      "verification_result": "passed and proves vulnerability"
+    },
+    {
+      "final_poc_test_path": "/Users/apmfree/Desktop/Audit/2025-07-gte-clob-23ee9e/2025-07-gte-clob/test/c4-poc/M-59-SamePriceOrderFloodingPoC.t.sol",
+      "finding_id": "M-59",
+      "notes": "R5 PoC passed. It builds 1200 valid same-price maker orders, shows full fill exceeds 30M gas, restores state, then shows a 30M gas capped fill fails. Whitelist is setup compression for public multi-transaction buildup.",
+      "status": "Verified PoC",
+      "test_command": "forge test --offline --match-path test/c4-poc/M-59-SamePriceOrderFloodingPoC.t.sol --match-test submissionValidity",
+      "title": "Unlimited orders per price level can make CLOB matching and settlement exceed block gas",
+      "verification_result": "passed and proves vulnerability"
+    }
+  ],
+  "source_candidates": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/submission-candidates/v2/2025-07-gte-clob-gte-clob-clean-r1r2-10-inv3-actor2-001.md",
+  "source_poc_run": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/poc-runs/v2/2025-07-gte-clob-gte-clob-clean-r1r2-10-inv3-actor2-001.md"
+}

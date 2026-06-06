@@ -48,6 +48,9 @@ async fn main() -> Result<()> {
     // parse command line args
     // Cli struct contains all info we need to execute audit
     let cli = parse::Cli::parse_args()?;
+    if let Some(benchmark) = cli.benchmark.clone() {
+        ai_agent_audit::benchmark::telemetry::configure(benchmark);
+    }
 
     // Clone repository in the local audit workspace and build with Foundry/Hardhat
     let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli).await?;
@@ -131,13 +134,37 @@ async fn main() -> Result<()> {
     let audit_report_path = save_file::save_audit_report("audit-report.md", &audit_report, &repo)?;
     competition_reports::generate_and_save_pro_reports(&security_findings, &repo)?;
     let validation_supervision_mode = cli.validation_supervision_mode();
+    let validation_run_id_env =
+        std::env::var(ai_agent_audit::benchmark::telemetry::RUN_ID_ENV).ok();
+    let validation_run_id = three_shot_config::normalized_run_id_from_sources(
+        cli.benchmark
+            .as_ref()
+            .and_then(|benchmark| benchmark.run_id.as_deref()),
+        validation_run_id_env.as_deref(),
+        if ai_agent_audit::benchmark::telemetry::enabled() {
+            Some(ai_agent_audit::benchmark::telemetry::run_id())
+        } else {
+            None
+        },
+    );
     if validation_supervision_mode == ValidationSupervisionMode::Gui {
-        validation_supervision::refuse_existing_non_terminal_job_for_repo(&repo)?;
+        validation_supervision::refuse_existing_non_terminal_job_for_repo(
+            &repo,
+            &validation_run_id,
+            cli.validation_supervision_overwrite,
+        )?;
     }
-    let three_shot_config_path =
-        three_shot_config::write_protocol_config(&repo, &audit_report_path)?;
+    let three_shot_config_path = three_shot_config::write_protocol_config(
+        &repo,
+        &audit_report_path,
+        Some(&validation_run_id),
+    )?;
     if validation_supervision_mode == ValidationSupervisionMode::Gui {
-        let job = validation_supervision::write_gui_job(&repo, &three_shot_config_path)?;
+        let job = validation_supervision::write_gui_job(
+            &repo,
+            &three_shot_config_path,
+            cli.validation_supervision_overwrite,
+        )?;
         info!(
             "Codex GUI validation supervision job ready: manifest={}, supervisor_prompt={}, status={}",
             job.manifest_path.display(),

@@ -52,6 +52,9 @@ LOSS_STAGE_PRIORITY = [
     ("poc_created", "poc_verification_loss"),
     ("three_shot_submission", "poc_creation_loss"),
     ("three_shot_r3", "three_shot_canonicalization_or_v12_loss"),
+    ("three_shot_scope_excluded", "three_shot_scope_screen_loss"),
+    ("three_shot_token_excluded", "three_shot_token_screen_loss"),
+    ("three_shot_r3_rejected", "three_shot_validation_loss"),
     ("rust_final", "three_shot_validation_loss"),
     ("rust_post_verification", "rust_final_report_omission"),
     ("rust_dedup_kept", "rust_verification_loss"),
@@ -309,6 +312,7 @@ def load_accepted_references(competition_dir: Path) -> list[ReferenceFinding]:
                     source_url=row.get("source_url", ""),
                 )
             )
+        augment_accepted_references_with_primary_submissions(references, competition_dir)
         return references
 
     accepted_dir = competition_dir / "ground_truth" / "accepted"
@@ -329,7 +333,43 @@ def load_accepted_references(competition_dir: Path) -> list[ReferenceFinding]:
                 path=str(path),
             )
         )
+    augment_accepted_references_with_primary_submissions(references, competition_dir)
     return references
+
+
+def augment_accepted_references_with_primary_submissions(references: list[ReferenceFinding], competition_dir: Path) -> None:
+    path = competition_dir / "submissions" / "primaries.jsonl"
+    if not references or not path.exists():
+        return
+
+    for row in read_jsonl(path):
+        if row.get("status") != "accepted":
+            continue
+        if row.get("final_severity") not in {"High", "Medium"}:
+            continue
+        title = compact_text(row.get("title") or row.get("raw_row", {}).get("title", ""))
+        if not title:
+            continue
+        title_vec = vector(title, limit=80)
+        best_ref = max(references, key=lambda reference: cosine(title_vec, vector(reference.title, limit=80)))
+        best_score = cosine(title_vec, vector(best_ref.title, limit=80))
+        if best_score < 0.55:
+            continue
+
+        raw_detail_file = row.get("raw_detail_text_file")
+        local_raw = competition_dir.parent.parent / raw_detail_file if raw_detail_file else Path()
+        evidence_parts = [
+            f"Accepted primary submission: {row.get('submission_id', '')}",
+            title,
+            row.get("warden_comment", ""),
+            row.get("judge_comment", ""),
+            row.get("sponsor_comment", ""),
+        ]
+        if local_raw.exists():
+            evidence_parts.append(local_raw.read_text(errors="replace"))
+        evidence = "\n".join(compact_text(part) for part in evidence_parts if part)
+        if evidence and evidence not in best_ref.text:
+            best_ref.text += "\n\n## Accepted Primary Submission Evidence\n" + evidence
 
 
 def load_rejected_references(competition_dir: Path) -> list[ReferenceFinding]:
@@ -366,6 +406,30 @@ def load_rejected_references(competition_dir: Path) -> list[ReferenceFinding]:
             )
         )
     return references
+
+
+def competition_adjudication_profile(competition_dir: Path) -> dict[str, Any]:
+    rows = read_jsonl(competition_dir / "submissions" / "primaries.jsonl")
+    status_counts = Counter(compact_text(row.get("status") or "unknown").lower() or "unknown" for row in rows)
+    severity_counts = Counter(compact_text(row.get("final_severity") or row.get("claimed_severity") or "unknown") or "unknown" for row in rows)
+    rejection_counts: Counter[str] = Counter()
+    for row in rows:
+        if row.get("status") == "accepted":
+            rejection_counts["accepted"] += 1
+        else:
+            rejection_counts[compact_text(row.get("rejection_reason_category") or "unknown")] += 1
+    accepted = status_counts.get("accepted", 0)
+    total = len(rows)
+    rejected_or_non_accepted = total - accepted
+    return {
+        "primary_submission_total": total,
+        "accepted_primary_total": accepted,
+        "non_accepted_primary_total": rejected_or_non_accepted,
+        "primary_acceptance_rate": accepted / total if total else None,
+        "status_counts": dict(sorted(status_counts.items())),
+        "final_or_claimed_severity_counts": dict(sorted(severity_counts.items())),
+        "rejection_category_counts": dict(sorted(rejection_counts.items())),
+    }
 
 
 def normalize_source_path(raw: str) -> str:
@@ -419,7 +483,8 @@ def load_context_index(run_dir: Path) -> dict[str, Any]:
 
 
 def context_coverage(reference: ReferenceFinding, context_index: dict[str, Any]) -> dict[str, Any]:
-    source_paths = extract_source_paths(f"{reference.source_url}\n{reference.text}")
+    final_report_text = reference.text.split("## Accepted Primary Submission Evidence", 1)[0]
+    source_paths = extract_source_paths(f"{reference.source_url}\n{final_report_text}")
     included_files = set(context_index.get("included_files", []))
     present = [path for path in source_paths if source_path_present(path, included_files)]
     missing = [path for path in source_paths if path not in present]
@@ -507,6 +572,32 @@ def block_field(block: str, label: str) -> str:
     return ""
 
 
+def normalize_decision(value: str) -> str:
+    return compact_text(value).strip().lower()
+
+
+def normalize_finding_severity(value: str) -> str:
+    text = compact_text(value).strip().lower()
+    if text.startswith("high"):
+        return "High"
+    if text.startswith("medium"):
+        return "Medium"
+    if text.startswith("low"):
+        return "Low"
+    if text.startswith("qa"):
+        return "QA"
+    return text.title() if text else ""
+
+
+def rejected_three_shot_stage(block: str) -> str:
+    evidence = block_field(block, "Code Evidence").lower()
+    if "stage 1" in evidence or "scope / known-issue" in evidence:
+        return "three_shot_scope_excluded"
+    if "stage 2" in evidence or "unsupported-token" in evidence:
+        return "three_shot_token_excluded"
+    return "three_shot_r3_rejected"
+
+
 def load_three_shot_candidates(
     candidates: dict[str, Candidate],
     benchmark: str,
@@ -521,15 +612,23 @@ def load_three_shot_candidates(
     ]:
         for finding_id, (source_id, block) in raw_finding_blocks(path).items():
             source_by_finding[finding_id] = source_id
+            decision = block_field(block, "Decision")
+            severity = block_field(block, "Severity Assessment")
+            effective_stage = stage
+            if stage == "three_shot_r3" and (
+                normalize_decision(decision) != "valid"
+                or normalize_finding_severity(severity) not in {"High", "Medium"}
+            ):
+                effective_stage = rejected_three_shot_stage(block)
             payload = {
                 "id": finding_id,
                 "source_id": source_id,
                 "title": block_field(block, "Finding Title"),
-                "severity": block_field(block, "Severity Assessment"),
-                "status": block_field(block, "Decision"),
+                "severity": severity,
+                "status": decision,
                 "description": block,
             }
-            upsert_candidate(candidates, finding_id, stage, payload, source_id=source_id)
+            upsert_candidate(candidates, finding_id, effective_stage, payload, source_id=source_id)
 
     for stage, path in [
         ("poc_created", THREE_SHOT_ROOT / "poc-runs" / prompt_version / f"{benchmark}-{run_id}.json"),
@@ -755,9 +854,11 @@ def score_run(args: argparse.Namespace) -> dict[str, Any]:
     report_ready_tp_roots = accepted_matches_by_stage.get("report_ready", set())
     final_tp_roots = judge_tp_roots or report_ready_tp_roots or accepted_matches_by_stage.get("three_shot_submission", set())
     final_candidates_count = len(final_stage_candidates)
-    final_precision = len(final_tp_roots) / final_candidates_count if final_candidates_count else None
+    final_tp_candidates_count = len(accepted_by_candidate)
+    final_precision = final_tp_candidates_count / final_candidates_count if final_candidates_count else None
     judge_candidates_count = sum(1 for candidate in candidates if "judge_accepted" in candidate.stages or "judge_rejected" in candidate.stages)
-    judge_precision = len(judge_tp_roots) / judge_candidates_count if judge_candidates_count else None
+    judge_tp_candidates_count = sum(1 for candidate in candidates if "judge_accepted" in candidate.stages)
+    judge_precision = judge_tp_candidates_count / judge_candidates_count if judge_candidates_count else None
 
     loss_counts = Counter(row["loss_stage"] for row in accepted_root_rows)
     duplicate_final_groups = defaultdict(list)
@@ -780,6 +881,7 @@ def score_run(args: argparse.Namespace) -> dict[str, Any]:
             "accepted_hm_total": len(accepted_refs),
             "rejected_primary_total": len(rejected_refs),
         },
+        "adjudication_profile": competition_adjudication_profile(competition_dir),
         "candidate_counts": {
             "all_unique_candidates": len(candidates),
             **{stage: sum(1 for candidate in candidates if stage in candidate.stages) for stage in STAGE_ORDER},
@@ -794,7 +896,9 @@ def score_run(args: argparse.Namespace) -> dict[str, Any]:
             "accepted_hm_judge_recall": stage_recalls.get("judge_accepted", 0.0),
             "accepted_hm_report_ready_recall": stage_recalls.get("report_ready", 0.0),
             "accepted_hm_rust_final_recall": stage_recalls.get("rust_final", 0.0),
+            "final_stage_true_positive_candidates": final_tp_candidates_count,
             "final_precision": final_precision,
+            "judge_true_positive_candidates": judge_tp_candidates_count,
             "judge_precision": judge_precision,
             "false_positive_count": len(false_positive_rows),
             "matched_rejected_fp_count": sum(1 for row in false_positive_rows if row["classification"] == "matched_rejected_primary"),
@@ -835,11 +939,18 @@ def render_score_markdown(payload: dict[str, Any]) -> str:
         f"- Accepted H/M ground truth roots: `{accepted_total}`",
         f"- Rejected primary references: `{truth['rejected_primary_total']}`",
         "",
+        "## Contest Adjudication Profile",
+        "",
+        f"- Primary submissions captured: `{payload.get('adjudication_profile', {}).get('primary_submission_total', 0)}`",
+        f"- Accepted primaries: `{payload.get('adjudication_profile', {}).get('accepted_primary_total', 0)}` (`{format_pct(payload.get('adjudication_profile', {}).get('primary_acceptance_rate'))}`)",
+        f"- Non-accepted primaries: `{payload.get('adjudication_profile', {}).get('non_accepted_primary_total', 0)}`",
+        "",
         "## Summary Metrics",
         "",
         f"- Rust final accepted-root recall: `{format_pct(metrics['accepted_hm_rust_final_recall'])}`",
         f"- Report-ready accepted-root recall: `{format_pct(metrics['accepted_hm_report_ready_recall'])}`",
         f"- Judge-accepted end-to-end recall: `{format_pct(metrics['accepted_hm_judge_recall'])}`",
+        f"- Final-stage TP candidates: `{metrics.get('final_stage_true_positive_candidates', 0)} / {payload['candidate_counts']['final_stage_candidates']}`",
         f"- Final-stage precision: `{format_pct(metrics['final_precision'])}`",
         f"- Judge-stage precision: `{format_pct(metrics['judge_precision'])}`",
         f"- Final-stage false positives: `{metrics['false_positive_count']}`",
@@ -1010,6 +1121,10 @@ def analysis_focus(row: dict[str, Any], coverage: dict[str, Any]) -> str:
     matched_stages = set(row.get("matched_stages", []))
     if loss_stage == "survived_end_to_end":
         return "retained"
+    if loss_stage == "three_shot_scope_screen_loss":
+        return "validation_scope_false_reject"
+    if loss_stage == "three_shot_token_screen_loss":
+        return "validation_token_false_reject"
     if coverage.get("status") in {"referenced_files_absent", "some_referenced_files_missing"} and "discovery_raw" not in matched_stages:
         return "context_or_scope_gap"
     if "discovery_raw" not in matched_stages:
@@ -1350,6 +1465,23 @@ def archive_evidence(args: argparse.Namespace) -> dict[str, Any]:
 
     audit_docs_dir = REPO_ROOT / "audit-docs" / slug
     copy_evidence_path(audit_docs_dir, out_dir, "generated_audit_context", entries, seen)
+
+    benchmark_docs_dir = REPO_ROOT / "benchmarks" / f"code4rena-{slug}"
+    for source in [
+        benchmark_docs_dir / "manifest.yaml",
+        benchmark_docs_dir / "VALIDATION_PIPELINE_ANALYSIS.md",
+        REPO_ROOT / "benchmarks" / "README.md",
+        REPO_ROOT / "PERFORMANCE_DEEP_DIVE_PROPOSAL.md",
+    ]:
+        copy_evidence_path(source, out_dir, "benchmark_methodology", entries, seen)
+
+    for source in [
+        THREE_SHOT_ROOT / "README.md",
+        THREE_SHOT_ROOT / "prompts",
+        THREE_SHOT_ROOT / "v12-checklist.md",
+        THREE_SHOT_ROOT / f"{slug}-config.yaml",
+    ]:
+        copy_evidence_path(source, out_dir, "validation_methodology", entries, seen)
 
     comparisons_dir = REPO_ROOT / "benchmarks" / f"code4rena-{slug}" / "comparisons"
     copy_evidence_path(comparisons_dir, out_dir, "cross_run_comparisons", entries, seen)

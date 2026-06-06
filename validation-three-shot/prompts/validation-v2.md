@@ -141,6 +141,12 @@ Then ask whether the safeguard actually blocks the described exploit path.
 
 Do not downgrade merely because a safeguard exists by name. Downgrade or reject only when the safeguard constrains the exact harmful state transition.
 
+For lifecycle systems, explicitly compare equivalent operations across phases:
+- If create/post/enter enforces an anti-spam, anti-DoS, cap, counter, or placement limit, check whether amend/update/move/rollover/cancel-repost can create the same effective state without that same guard.
+- If an update path removes and reinserts state into a queue, book, bucket, epoch, or cap-protected set, treat it as create-equivalent for limit enforcement.
+- If an all-or-nothing, exact-output, or fill-or-kill flow uses rounded fills, lot sizes, minimum units, or step sizes, verify that the revert condition ignores harmless residual dust below the minimum executable unit when docs or code semantics require it.
+- If a new entry can evict or displace existing third-party state, check whether the new entry has minimum liveness, cancellation delay, bond, or execution-risk exposure. Short-lived or immediately cancellable state that evicts durable state can be H/M when it materially harms a core queue/book/auction/cap.
+
 ## Gate 5: Exploitability And Likelihood
 
 For H/M, require a realistic path under current code, but do not require certainty or a public mempool race if the protocol flow naturally exposes the state.
@@ -158,6 +164,9 @@ Usually H/M-compatible:
 - stale-state windows where a normal keeper / admin / user action finalizes the harmful state
 - missing postcondition checks after external protocols or asynchronous flows
 - accounting divergence that compounds or blocks core flows
+- update/amend/move paths that bypass create-path limits and let ordinary users inflate or churn shared state beyond intended anti-DoS bounds
+- FOK/exact-output/all-or-nothing paths that revert on unexecutable residual dust created by normal rounding or upstream route outputs
+- short-lived or immediately cancellable entries that evict/displace other users' live state with little sustained risk
 
 Usually Low / QA or Invalid:
 - requires privileged role compromise
@@ -209,8 +218,13 @@ Reject or downgrade if the issue only exists because a delegated actor uses that
 Do not reject if:
 - a trusted role acts according to spec and the code still permits a harmful state
 - a normal role-triggered workflow exposes a permissionless exploit path
+- an ordinary user, LP, trader, or keeper can move live state so that an otherwise legitimate governance/admin update reverts, is delayed, or cannot be applied until the attacker-controlled state changes
 - the bug is missing validation, missing postcondition checks, stale accounting, or unsafe sequencing in a normal privileged workflow
 - the delegated actor exceeds the capability actually granted or harms parties who did not grant that authority
+
+Configuration-only is narrower than state-manipulation:
+- Reject when the only issue is a trusted role choosing an explicitly unsupported or unsafe parameter.
+- Do not reject when a permissionless actor uses normal in-scope actions to make a safe or risk-reducing parameter update impossible, even if the setter correctly rejects values below current utilization after the actor's state change.
 
 User error is not H/M unless the protocol is supposed to protect users from that exact mistake and the code failure creates material loss beyond ordinary misuse.
 

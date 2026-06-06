@@ -59,24 +59,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    // let custom_scoped_contracts = Some(vec![
-    //     "GovernorOLAS",
-    //     "GovernorTimelockControl",
-    //     "BridgeMessenger",
-    //     "VerifyBridgedData",
-    //     "GuardCM",
-    //     "ServiceManager",
-    //     "StakingBase",
-    //     "RecoveryModule",
-    //     "ServiceManagerProxy",
-    //     "SafeMultisigWithRecoveryModule",
-    //     "Tokenomics",
-    //     "LiquidityManagerCore",
-    //     "BuyBackBurner",
-    //     "DefaultTargetDispenserL2",
-    //     "LiquidityManagerProxy",
-    // ]);
-    let custom_scoped_contracts: Option<Vec<String>> = None;
+    let custom_scoped_contracts = Some(vec!["CLOB"]);
+    // let custom_scoped_contracts: Option<Vec<String>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -99,7 +83,7 @@ pub async fn review_codebase_for_security_issues_v2(
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
         if let Some(scoped_contracts) = &custom_scoped_contracts
-            && !scoped_contracts.contains(&contract)
+            && !scoped_contracts.contains(&contract.as_ref())
         {
             info!("contract {} is NOT in custom scope", contract);
             continue;
@@ -346,7 +330,7 @@ pub async fn generate_ai_agents(
 	    ## Rules
 
 	    - Only report exploits **directly tied** to the provided list of security vulnerability patterns, **not** unrelated issues.
-	    - Only analyze code **actually present** in the codebase. 
+	    - Only analyze code **actually present** in the codebase.
 	    - Prefer exploits accessible to **unprivileged EOAs**; if an exploit requires a trusted role, make that clear via the `"privilege"` field (as specified in the JSON instructions).
 	    - Focus on **present-state** bugs in the current code. Ignore one-time deployment/upgrade windows unless the same condition can be recreated or abused permissionlessly later.
 	    - A valid finding must be:
@@ -355,13 +339,14 @@ pub async fn generate_ai_agents(
 	    - And clearly Valid finding according to the rubric.
 	    - If nothing meets these criteria, return `{{"findings":[]}}`.
 
-	    ### Semantic / multi-step hunting checklist (apply to EACH critical flow): 
-	    1. Identify state vars + who can change them between txs. 
-	    2. Mark snapshot vs live reads (values cached vs reread later). 
-	    3. Enumerate cross-contract edges (external calls, hooks, callbacks, token/oracle/governance modules). 
-	    4. For randomness/entropy: test “repeat/correlate/control inputs” scenarios. 
-	    5. Incentives/griefing: who profits from delay/failure/DoS? 
-	    6. Synthesize 2+ attack sequences (3–6 steps) before concluding “no issue”.
+	    ### Semantic / multi-step hunting checklist (apply to EACH critical flow):
+	    1. Identify state vars + who can change them between txs.
+	    2. Mark snapshot vs live reads (values cached vs reread later).
+	    3. Enumerate cross-contract edges (external calls, hooks, callbacks, token/oracle/governance modules).
+	    4. For randomness/entropy: test “repeat/correlate/control inputs” scenarios.
+	    5. Incentives/griefing: who profits from delay/failure/DoS?
+	    6. For required progress paths, check whether valid state/config bounds can make settlement/finalization/callbacks exceed gas.
+	    7. Synthesize 2+ attack sequences (3–6 steps) before concluding “no issue”.
 
 	    ## Example: Incentives / Game Theory (Governance / Griefing DoS)
 
@@ -397,15 +382,28 @@ pub async fn generate_ai_agents(
 
 	    ## Example: Semantic (Snapshot vs Live Read / Mid-Flow Parameter Change)
 
-	    **Pattern:** value is read twice across calls/txs; attacker changes it in between.
+	    **Pattern:** value is read twice across calls/txs; a normal updater/admin/MEV path changes it in between.
 
 	    **Exploit hypothesis:**
 
 	    1. User starts flow that assumes `feeRate` / `oraclePrice` / `config` stays constant.
-	    2. Before finalization, attacker/admin/MEV changes config or price.
+	    2. Before finalization, a config update intended for future operations changes config or price.
 	    3. Final step rereads “live” value and applies it inconsistently → user underpays / over-withdraws / bypasses checks.
 
 	    **Mitigation:** snapshot the value once and reuse, or enforce bounds/time validity.
+
+	    ## Example: Critical Progress Gas / Complexity
+
+	    **Pattern:** required progress path has work that grows faster than the visible batch/config parameter.
+
+	    **Exploit hypothesis:**
+
+	    1. Protocol requires `settle()` / `finalize()` / callback execution for users to receive value or for the next round to start.
+	    2. The path loops over valid state/config and calls an expensive helper inside the loop.
+	    3. Work repeats allocations/combinations/sorts or otherwise grows superlinearly.
+	    4. At valid high bounds, the required transition exceeds block/callback gas and user value or liveness is stuck.
+
+	    **Mitigation:** precompute/cache, bound config by measured worst-case gas, batch settlement, or move heavy work out of the required callback/finalizer.
 
 	    ## Example: Probabilistic (Same Seed / Correlated “Randomness”)
 
