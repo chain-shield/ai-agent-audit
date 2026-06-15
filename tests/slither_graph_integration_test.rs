@@ -8,11 +8,6 @@ use std::process::Command;
 fn graph_workspace_root() -> Option<PathBuf> {
     std::env::var_os("AI_AGENT_AUDIT_GRAPH_WORKSPACE")
         .map(PathBuf::from)
-        .or_else(|| {
-            Some(PathBuf::from(
-                "/Users/apmfree/Desktop/Audit/thegraph-023b7fdc8558",
-            ))
-        })
         .filter(|path| path.exists())
 }
 

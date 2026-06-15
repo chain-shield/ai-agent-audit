@@ -10,8 +10,9 @@ This repository is being released as a GitHub-first public beta. It is meant to 
 - Solidity and EVM-focused.
 - Repository source, docs, and derived context are sent to third-party LLM providers you configure.
 - The current default audit pipeline uses ChatGPT/Codex OAuth for OpenAI access and runs the active review flow on `gpt-5.5`. Deduplication helpers use `gpt-5.4` with low reasoning.
+- Codex is the recommended standard path because long audit runs are roughly 25x more cost-effective through a Codex/ChatGPT subscription than direct per-token API billing.
 - Startup performs a one-time ChatGPT sign-in if needed and reuses the cached session on later runs until the token expires.
-- `OPENAI_API_KEY` remains legacy-only and is not used by the default OpenAI path.
+- `OPENAI_API_KEY` is supported as a secondary fallback for Rust OpenAI calls by setting `AI_AGENT_AUDIT_OPENAI_BACKEND=api`.
 - `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_AI_API_KEY`, and `DEEPSEEK_API_KEY` are still supported by the agent layer, but they are not required by the default review path.
 - Discovery-style runs can be switched back to Gemini with env config if you want to use Google AI for patterns, actors, and invariants while keeping verification/reporting on OpenAI/Codex.
 - PoC-related config fields exist, but automatic PoC generation is currently disabled in the public beta.
@@ -63,14 +64,17 @@ cp .env.example .env
 
 ```bash
 RUST_LOG=info
-# OPENAI_API_KEY is not required for the default ChatGPT/Codex OAuth path.
-# Optional provider keys:
+AI_AGENT_AUDIT_OPENAI_BACKEND=codex
+# Codex is the recommended default for cost. Optional Rust API fallback:
+# AI_AGENT_AUDIT_OPENAI_BACKEND=api
+# OPENAI_API_KEY=your_openai_api_key
+# Optional non-OpenAI provider keys:
 # ANTHROPIC_API_KEY=...
 # GEMINI_API_KEY=...
 # DEEPSEEK_API_KEY=...
 ```
 
-4. The first OpenAI-backed run will prompt you to sign in with ChatGPT if there is no cached Codex session yet. After that, the session is reused automatically until expiry.
+4. The first Codex-backed run will prompt you to sign in with ChatGPT if there is no cached Codex session yet. After that, the session is reused automatically until expiry. If you set `AI_AGENT_AUDIT_OPENAI_BACKEND=api`, Rust OpenAI calls use `OPENAI_API_KEY` instead and do not require Codex sign-in.
 
 5. Copy the example config and point it at a Solidity repository.
 
@@ -112,7 +116,7 @@ export GITHUB_TOKEN=...
 
 ## Configuration
 
-`--config <file>` loads YAML, and explicit CLI flags override YAML values. The current example file lives at [examples/audit-config.example.yaml](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/examples/audit-config.example.yaml:1).
+`--config <file>` loads YAML, and explicit CLI flags override YAML values. The current example file lives at [examples/audit-config.example.yaml](examples/audit-config.example.yaml).
 
 ### Supported `audit_type` Values
 
@@ -175,7 +179,8 @@ The generator copies `scope.txt` from the cloned repo when present. If no `scope
 | Variable | Required | Notes |
 | --- | --- | --- |
 | ChatGPT/Codex sign-in | Yes for the default pipeline | Performed interactively once at startup when needed, then cached locally until expiry. |
-| `OPENAI_API_KEY` | Legacy only | Not used by the default OpenAI path. |
+| `AI_AGENT_AUDIT_OPENAI_BACKEND` | No | `codex` by default. Set to `api` to use direct OpenAI API billing. |
+| `OPENAI_API_KEY` | Only for API fallback | Required when `AI_AGENT_AUDIT_OPENAI_BACKEND=api`. Not used by the default Codex path. |
 | `GEMINI_API_KEY` | No | Supported by the agent layer, not required by the default path. |
 | `GOOGLE_AI_API_KEY` | Legacy alias | Accepted as a fallback for Gemini. |
 | `ANTHROPIC_API_KEY` | No | Supported by the agent layer, not required by the default path. |
@@ -183,11 +188,12 @@ The generator copies `scope.txt` from the cloned repo when present. If no `scope
 | `GITHUB_TOKEN` | No | Used for private GitHub repo cloning. |
 | `AI_AGENT_AUDIT_DATA_DIR` | No | Overrides the local cache directory. Defaults to `.ai-agent-audit`. |
 | `AI_AGENT_AUDIT_WORKSPACE_ROOT` | No | Overrides where target repos are cloned and built. Defaults to `~/Desktop/Audit`. |
+| `AI_AGENT_AUDIT_WORKER_LAUNCHER` | No | Codex-compatible validation worker launcher. Defaults to `codex` on PATH and overrides YAML launcher values. |
 | `RUST_LOG` | No | Standard Rust log level, defaults to `info`. |
 
-The shipped template is [`.env.example`](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/.env.example:1).
+The shipped template is [`.env.example`](.env.example).
 
-Discovery provider/model defaults now live in [src/config.rs](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/src/config.rs:35). Edit `DISCOVERY_PROVIDER`, `GEMINI_DISCOVERY_MODEL`, and `DISCOVERY_GEMINI_THINKING_LEVEL` there if you want to switch discovery between OpenAI and Gemini.
+Discovery provider/model defaults now live in [src/config.rs](src/config.rs). Edit `DISCOVERY_PROVIDER`, `GEMINI_DISCOVERY_MODEL`, and `DISCOVERY_GEMINI_THINKING_LEVEL` there if you want to switch discovery between OpenAI and Gemini.
 
 ## How The Pipeline Works
 
@@ -203,7 +209,7 @@ Discovery provider/model defaults now live in [src/config.rs](/Users/apmfree/Des
 
 6. Codeblock generation. It slices the codebase into contextual per-contract codeblocks using call graph depth and token-budget settings.
 
-7. AI review. Verification, deduplication, summaries, and report-writing stay on the OpenAI/Codex path. Discovery-style phases (patterns, actors, invariants) use the provider configured in [src/config.rs](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/src/config.rs:35). Findings are aggregated across contracts and deduplicated at the end.
+7. AI review. Verification, deduplication, summaries, and report-writing use the configured OpenAI backend: Codex by default, or direct API when `AI_AGENT_AUDIT_OPENAI_BACKEND=api`. Discovery-style phases (patterns, actors, invariants) use the provider configured in [src/config.rs](src/config.rs). Findings are aggregated across contracts and deduplicated at the end.
 
 8. Report export and local persistence. The tool writes Markdown outputs, records findings in local SQLite databases, and keeps cached repo metadata for later runs.
 
@@ -233,6 +239,32 @@ By default, the tool stores local state under `.ai-agent-audit/`:
 
 Set `AI_AGENT_AUDIT_DATA_DIR` if you want those files elsewhere.
 
+## Validation Workflow
+
+The Rust pipeline performs discovery and initial verification, then emits a `validation-three-shot` config/job for deeper validation, PoC generation, and report creation.
+
+Codex-supervised mode is the strongest path for high-stakes work because fresh Codex workers can inspect files, create PoCs, and repair reports round by round:
+
+```bash
+python3 scripts/three_shot_round.py prepare-scope --config validation-three-shot/config.yaml --write-prompt /tmp/three-shot-r1.md
+```
+
+For users who want the validation phase to run immediately instead of being monitored by a GUI supervisor:
+
+```bash
+cp validation-three-shot/config.yaml validation-three-shot/my-run.yaml
+# edit benchmark, run_id, paths.source_root, paths.audit_root, and paths.audit_report
+python3 scripts/three_shot_round.py run --config validation-three-shot/my-run.yaml
+```
+
+For a cheaper validation-only pass before PoCs and report review:
+
+```bash
+python3 scripts/three_shot_round.py run --config validation-three-shot/my-run.yaml --skip-poc
+```
+
+The validation runner uses the Codex CLI by default. These prompts require an agent worker with local file read/write and test execution, so a raw `OPENAI_API_KEY` alone cannot run the PoC/report validation workflow. Set `AI_AGENT_AUDIT_WORKER_LAUNCHER` or `workers.default.launcher` if your Codex-compatible binary or wrapper has a different name; the env var wins for one-off runs.
+
 ## Analysis Coverage
 
 The analysis system combines several sources of context:
@@ -248,7 +280,7 @@ The exact prompts and pattern catalogs continue to evolve, so the README intenti
 
 - This project sends code and documentation to external AI providers. Do not use it on repositories you are not allowed to share with those providers.
 - The tool is designed for defensive review support. It can miss real issues and it can produce false positives.
-- The current default path depends on a valid cached ChatGPT/Codex session for OpenAI work.
+- The default Rust OpenAI path depends on a valid cached ChatGPT/Codex session. API fallback for Rust OpenAI calls requires `AI_AGENT_AUDIT_OPENAI_BACKEND=api` and `OPENAI_API_KEY`; deep validation workers still require a Codex-compatible agent launcher.
 - `audit_type` affects severity, rubric behavior, context gathering, and validation profile selection. `Code4renaBounty` disables V12-specific validation stages and uses a stricter Critical/High submit/no-submit flow.
 - Runnable PoC generation and verification now live in the separate `validation-three-shot` workflow, not the main audit pipeline.
 - If the target repo does not build cleanly on the local machine, analysis quality will degrade or the run may fail.
@@ -259,7 +291,14 @@ The exact prompts and pattern catalogs continue to evolve, so the README intenti
 
 ### Missing API Keys
 
-If startup cannot authenticate OpenAI access, rerun the tool and complete the ChatGPT/Codex sign-in prompt. The default path does not require `OPENAI_API_KEY`.
+If Codex startup cannot authenticate OpenAI access, rerun the tool and complete the ChatGPT/Codex sign-in prompt. The default path does not require `OPENAI_API_KEY`.
+
+If you do not have Codex access and want to run the Rust audit path with direct API billing, set:
+
+```bash
+AI_AGENT_AUDIT_OPENAI_BACKEND=api
+OPENAI_API_KEY=your_openai_api_key
+```
 
 ### Build System Not Detected
 
@@ -309,7 +348,7 @@ Public CI currently runs:
 - `cargo check --tests`
 - `bash scripts/run_ci_tests.sh`
 
-That hermetic test runner is defined in [scripts/run_ci_tests.sh](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/scripts/run_ci_tests.sh:1) and wired through [`.github/workflows/ci.yml`](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/.github/workflows/ci.yml:1).
+That hermetic test runner is defined in [scripts/run_ci_tests.sh](scripts/run_ci_tests.sh) and wired through [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 For local development:
 
@@ -325,8 +364,8 @@ Manual or live-provider diagnostics are kept behind ignored tests:
 cargo test -- --ignored
 ```
 
-See [CONTRIBUTING.md](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/CONTRIBUTING.md:1) for contribution expectations and [SECURITY.md](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/SECURITY.md:1) for private vulnerability reporting.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](/Users/apmfree/Desktop/CHAIN%20SHIELD/ai-agent-audit/LICENSE:1).
+This project is licensed under the MIT License. See [LICENSE](LICENSE).

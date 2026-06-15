@@ -16,8 +16,11 @@ async fn test_clfactory_codeblock_generation() {
     // Initialize logger to see debug output
     let _ = env_logger::builder().is_test(true).try_init();
 
-    // Path to the actual Hybra Finance repository
-    let repo_root = PathBuf::from("/Users/apmfree/Desktop/Audit/2025-10-hybra-finance");
+    let Some(repo_root) = std::env::var_os("AI_AGENT_AUDIT_CLFACTORY_TEST_REPO").map(PathBuf::from)
+    else {
+        println!("Skipping test - set AI_AGENT_AUDIT_CLFACTORY_TEST_REPO to the local Hybra repo");
+        return;
+    };
 
     if !repo_root.exists() {
         println!(

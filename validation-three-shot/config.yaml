@@ -41,10 +41,11 @@ context_docs:
   - "{{THREE_SHOT_ROOT}}/v12-checklist.md"
 
 workers:
-  # All spawned workers should use the minimal Codex launcher to avoid loading
-  # plugin-provided MCP servers into every parallel worker process.
+  # Public default: use the Codex CLI on PATH. AI_AGENT_AUDIT_WORKER_LAUNCHER
+  # overrides this value for one-off runs; internal operators can also edit this
+  # to a Codex-compatible wrapper such as codex-minimal-worker.
   default:
-    launcher: /Users/apmfree/codex-minimal-worker
+    launcher: codex
   r1:
     model: gpt-5.5
     reasoning_effort: xhigh
@@ -101,4 +102,5 @@ rounds:
   r6_poc_verification: true
   r7_c4_report_generation: true
   r8_c4_report_review: true
-  scoring: true
+  # Enable only when paths.truth_file points at a local benchmark truth artifact.
+  scoring: false

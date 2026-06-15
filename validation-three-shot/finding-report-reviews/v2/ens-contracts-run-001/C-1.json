@@ -1,8 +1,0 @@
-{
-  "benchmark": "ens-contracts",
-  "finding_id": "C-1",
-  "status": "Fixed And Ready",
-  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ens-contracts-run-001/C-1-Expired-ENS-names-can-receive-hidden-ERC721-approv.md",
-  "review_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/ens-contracts-run-001/C-1-Expired-ENS-names-can-receive-hidden-ERC721-approv.md",
-  "notes": "Patched the report to clarify that renewal uses the normal authorized registrar path and that the PoC is local-only/non-broadcasting. Verified scope, exact Critical Immunefi NFT theft row, unprivileged attacker path after prior ordinary ERC721 operator approval, report PoC matching the verified PoC file, portable Save as/Run instructions, and passing PoC test via bun run test test/ExpiredApprovalRenewalTheftPoC.test.ts from the ENS repo root."
-}

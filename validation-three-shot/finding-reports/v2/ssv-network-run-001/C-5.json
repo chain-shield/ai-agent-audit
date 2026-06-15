@@ -1,7 +1,0 @@
-{
-  "benchmark": "ssv-network",
-  "finding_id": "C-5",
-  "status": "Report Created",
-  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ssv-network-run-001/C-5-Premature-ETH-cluster-liquidation-due-to-inconsist.md",
-  "notes": "Created submission-ready Critical Immunefi report for C-5. The local mainnet-fork PoC was rerun successfully and demonstrates third-party liquidation receiving remaining ETH while the separately rounded fee runway remains covered."
-}

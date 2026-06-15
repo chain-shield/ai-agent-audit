@@ -1,8 +1,0 @@
-{
-  "benchmark": "thegraph",
-  "finding_id": "H-115",
-  "status": "Report Created",
-  "gist_url": "https://gist.github.com/apmfree78/bb1bed1fac56107883e8308ff2dd6c5c",
-  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/thegraph-run-001/H-115-RAV-signatures-omit-payment-parameters-allowing-da.md",
-  "notes": "Created Immunefi submission-ready Critical report. Verified local Arbitrum fork PoC command passed and demonstrates a valid RAV signature excluding dataServiceCut/receiverDestination while 20,000,000 GRT is collected from PaymentsEscrow with zero provider payout. Created and linked a secret Gist PoC bundle."
-}

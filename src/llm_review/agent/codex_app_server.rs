@@ -81,7 +81,7 @@ impl CodexAgentConfig {
     {
         let mut schema = serde_json::to_value(schema_for!(T))
             .context("failed to serialize structured Codex output schema")?;
-        sanitize_schema_for_codex(&mut schema);
+        sanitize_schema_for_openai_structured_output(&mut schema);
         self.prompt_with_schema(prompt, Some(schema))
     }
 
@@ -1287,7 +1287,7 @@ fn extract_reset_at(response: &Value) -> Option<u64> {
     choose_earliest_future_reset(reset_candidates)
 }
 
-fn sanitize_schema_for_codex(schema: &mut Value) {
+pub(crate) fn sanitize_schema_for_openai_structured_output(schema: &mut Value) {
     match schema {
         Value::Object(map) => {
             map.remove("$schema");
@@ -1344,7 +1344,7 @@ fn sanitize_schema_for_codex(schema: &mut Value) {
                         if !existing_required.contains(property_name) {
                             make_schema_nullable(property_schema);
                         }
-                        sanitize_schema_for_codex(property_schema);
+                        sanitize_schema_for_openai_structured_output(property_schema);
                     }
 
                     map.insert(
@@ -1359,28 +1359,28 @@ fn sanitize_schema_for_codex(schema: &mut Value) {
             for key in ["properties", "$defs", "definitions", "patternProperties"] {
                 if let Some(Value::Object(children)) = map.get_mut(key) {
                     for child in children.values_mut() {
-                        sanitize_schema_for_codex(child);
+                        sanitize_schema_for_openai_structured_output(child);
                     }
                 }
             }
 
             for key in ["items", "additionalProperties", "contains"] {
                 if let Some(value) = map.get_mut(key) {
-                    sanitize_schema_for_codex(value);
+                    sanitize_schema_for_openai_structured_output(value);
                 }
             }
 
             for key in ["anyOf", "allOf", "oneOf", "prefixItems"] {
                 if let Some(Value::Array(values)) = map.get_mut(key) {
                     for value in values {
-                        sanitize_schema_for_codex(value);
+                        sanitize_schema_for_openai_structured_output(value);
                     }
                 }
             }
         }
         Value::Array(values) => {
             for value in values {
-                sanitize_schema_for_codex(value);
+                sanitize_schema_for_openai_structured_output(value);
             }
         }
         _ => {}
@@ -1599,11 +1599,11 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_schema_for_codex_requires_optional_fields_and_marks_them_nullable() {
+    fn test_sanitize_schema_for_openai_requires_optional_fields_and_marks_them_nullable() {
         let mut schema =
             serde_json::to_value(schema_for!(NestedCollection)).expect("schema should serialize");
 
-        sanitize_schema_for_codex(&mut schema);
+        sanitize_schema_for_openai_structured_output(&mut schema);
 
         let root = schema
             .as_object()

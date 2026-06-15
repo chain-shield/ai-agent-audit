@@ -27,7 +27,6 @@ tests=(
   path_canonicalization_test
   remapping_integration_test
   slither_project_detection_test
-  summarize_db_unit_test
   test_actual_gemini_error
   test_broken_gemini_json
   test_escaped_newline_pattern

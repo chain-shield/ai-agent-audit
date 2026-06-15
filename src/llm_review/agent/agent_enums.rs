@@ -37,9 +37,17 @@ pub struct AgentMetadata {
     pub dynamic_context_enabled: bool,
 }
 
+pub struct DirectOpenaiExtractionConfig {
+    pub model: openai::responses_api::ResponsesCompletionModel,
+    pub preamble: String,
+    pub context: Option<String>,
+    pub additional_params: Option<serde_json::Value>,
+}
+
 pub enum OpenaiAgentBackend {
     Direct {
         agent: Agent<openai::responses_api::ResponsesCompletionModel>,
+        extraction: DirectOpenaiExtractionConfig,
     },
     Codex {
         config: CodexAgentConfig,
@@ -131,7 +139,7 @@ impl AIAgent {
         let out = match self {
             AIAgent::Anthropic { agent, .. } => agent.prompt(prompt).await?,
             AIAgent::Openai { backend, .. } => match backend {
-                OpenaiAgentBackend::Direct { agent } => agent.prompt(prompt).await?,
+                OpenaiAgentBackend::Direct { agent, .. } => agent.prompt(prompt).await?,
                 OpenaiAgentBackend::Codex { config } => {
                     let config = config.clone();
                     let prompt = prompt.to_string();
@@ -154,8 +162,24 @@ impl AIAgent {
                 Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
             }
             AIAgent::Openai { backend, metadata } => match backend {
-                OpenaiAgentBackend::Direct { agent } => {
-                    Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
+                OpenaiAgentBackend::Direct { extraction, .. } => {
+                    let mut builder = rig::agent::AgentBuilderSimple::new(extraction.model.clone())
+                        .preamble(&extraction.preamble)
+                        .temperature(metadata.temperature);
+
+                    if let Some(context) = extraction.context.as_deref() {
+                        builder = builder.context(context);
+                    }
+
+                    builder = builder.additional_params(openai_structured_text_params::<T>(
+                        extraction.additional_params.clone(),
+                    ));
+
+                    let structured_agent = builder.build();
+                    Ok(
+                        agent_extract_with_retry::<_, T>(&structured_agent, prompt, metadata)
+                            .await?,
+                    )
                 }
                 OpenaiAgentBackend::Codex { config } => {
                     Ok(Self::extract_with_retry_codex(config, prompt, metadata).await?)
@@ -287,5 +311,60 @@ impl AIAgent {
 
         <T as crate::llm_review::findings::findings::FromLLMJson>::parse_from_llm_response(&raw)
             .map_err(|err| anyhow::anyhow!("failed to parse Codex structured response: {err}"))
+    }
+}
+
+fn openai_structured_text_params<T>(
+    additional_params: Option<serde_json::Value>,
+) -> serde_json::Value
+where
+    T: JsonSchema,
+{
+    let schema_name = structured_schema_name::<T>();
+    let mut schema =
+        serde_json::to_value(schemars::schema_for!(T)).expect("schema should serialize to JSON");
+    crate::llm_review::agent::codex_app_server::sanitize_schema_for_openai_structured_output(
+        &mut schema,
+    );
+    let mut params = match additional_params {
+        Some(serde_json::Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+
+    params.insert(
+        "text".to_string(),
+        serde_json::json!({
+            "format": {
+                "type": "json_schema",
+                "name": schema_name,
+                "schema": schema,
+                "strict": true
+            }
+        }),
+    );
+
+    serde_json::Value::Object(params)
+}
+
+fn structured_schema_name<T>() -> String {
+    let raw_name = std::any::type_name::<T>()
+        .rsplit("::")
+        .next()
+        .unwrap_or("response");
+    let mut name = raw_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    name.truncate(64);
+    if name.is_empty() {
+        "response".to_string()
+    } else {
+        name
     }
 }

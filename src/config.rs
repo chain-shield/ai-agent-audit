@@ -37,6 +37,7 @@ pub const OPENAI_MODEL: &str = "gpt-5.5";
 pub const OPENAI_REASONING_EFFORT: &str = "high";
 pub const OPENAI_DEDUP_MODEL: &str = "gpt-5.4";
 pub const OPENAI_DEDUP_REASONING_EFFORT: &str = "low";
+pub const OPENAI_BACKEND: &str = "codex";
 pub const DISCOVERY_PROVIDER: &str = "openai";
 pub const GEMINI_DISCOVERY_MODEL: &str = "gemini-3.1-pro-preview";
 pub const DISCOVERY_GEMINI_THINKING_LEVEL: &str = "high";
@@ -46,8 +47,8 @@ pub const SKIP_INVARIANT_RUNS: bool = false;
 // SKIP or RUN MAIN PATTERN RUNS
 pub const SKIP_ACTOR_PATTERN_RUNS: bool = false;
 // RUNS R1 (basic) and R2 (complex) patterns
-pub const R1_RUNS: usize = 10; // default: 10 , testing: 5
-pub const R2_RUNS: usize = 10; // default: 10 , testing: 5
+pub const R1_RUNS: usize = 10; // canary/testing runs may reduce this locally
+pub const R2_RUNS: usize = 10; // canary/testing runs may reduce this locally
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
@@ -148,6 +149,9 @@ pub struct AuditConfig {
     /// OpenAI API key for GPT models
     pub openai_api_key: Option<String>,
 
+    /// OpenAI backend selector: `codex` by default, or `api` for OPENAI_API_KEY.
+    pub openai_backend: String,
+
     /// Anthropic API key for Claude models
     pub anthropic_api_key: Option<String>,
 
@@ -199,6 +203,7 @@ impl Default for AuditConfig {
             token_budget: TOKEN_BUDGET,
             runs: PATTERN_DISCOVERY_RUNS,
             openai_api_key: None,
+            openai_backend: OPENAI_BACKEND.to_string(),
             anthropic_api_key: None,
             gemini_ai_api_key: None,
             deepseek_api_key: None,
@@ -225,7 +230,8 @@ impl AuditConfig {
     /// * `Result<AuditConfig>` - Configuration loaded from environment
     ///
     /// # Environment Variables
-    /// * `OPENAI_API_KEY` - Legacy OpenAI API key (optional, not used by the default Codex path)
+    /// * `OPENAI_API_KEY` - OpenAI API key for `AI_AGENT_AUDIT_OPENAI_BACKEND=api`
+    /// * `AI_AGENT_AUDIT_OPENAI_BACKEND` - `codex` (default) or `api`
     /// * `ANTHROPIC_API_KEY` - Anthropic API key (optional)
     /// * `GEMINI_API_KEY` - Gemini AI API key (optional)
     /// * `GOOGLE_AI_API_KEY` - Legacy Gemini env var alias (optional)
@@ -236,6 +242,8 @@ impl AuditConfig {
 
         // Load API keys (optional)
         config.openai_api_key = env::var("OPENAI_API_KEY").ok();
+        config.openai_backend =
+            env::var("AI_AGENT_AUDIT_OPENAI_BACKEND").unwrap_or(config.openai_backend);
         config.anthropic_api_key = env::var("ANTHROPIC_API_KEY").ok();
         config.gemini_ai_api_key = env::var("GEMINI_API_KEY")
             .or_else(|_| env::var("GOOGLE_AI_API_KEY"))
@@ -252,15 +260,39 @@ impl AuditConfig {
     /// Validates the configuration and returns any errors found.
     pub fn validate(&self) -> Result<()> {
         // Stronger API key validation: reject placeholders and obviously invalid keys
-        // for active API-key based providers. OPENAI_API_KEY is legacy-only, so an
-        // invalid leftover value should not block the default OAuth startup path.
+        // for active API-key based providers. OPENAI_API_KEY is only required when
+        // the user opts into the API backend; the default Codex path uses ChatGPT auth.
         use crate::utils::env_security::is_placeholder_api_key;
+        let openai_backend = self.openai_backend.to_ascii_lowercase();
+        if !matches!(openai_backend.as_str(), "codex" | "api") {
+            return Err(AuditError::configuration(
+                "AI_AGENT_AUDIT_OPENAI_BACKEND",
+                format!(
+                    "Unsupported OpenAI backend '{}'. Valid options: codex, api",
+                    self.openai_backend
+                ),
+            ));
+        }
+
         if let Some(k) = &self.openai_api_key {
             if is_placeholder_api_key(k) || !k.starts_with("sk-") {
-                log::warn!(
-                    "Ignoring legacy OPENAI_API_KEY because it does not look like a real API key; default OpenAI path uses ChatGPT/Codex OAuth."
-                );
+                if openai_backend == "api" {
+                    return Err(AuditError::configuration(
+                        "OPENAI_API_KEY",
+                        "AI_AGENT_AUDIT_OPENAI_BACKEND=api requires a real OpenAI API key",
+                    ));
+                } else {
+                    log::warn!(
+                        "Ignoring OPENAI_API_KEY because it does not look like a real API key; default OpenAI path uses ChatGPT/Codex OAuth."
+                    );
+                }
             }
+        }
+        if openai_backend == "api" && !self.has_openai_key() {
+            return Err(AuditError::configuration(
+                "OPENAI_API_KEY",
+                "AI_AGENT_AUDIT_OPENAI_BACKEND=api requires OPENAI_API_KEY",
+            ));
         }
         if let Some(k) = &self.anthropic_api_key
             && is_placeholder_api_key(k)
@@ -327,6 +359,16 @@ impl AuditConfig {
             .is_some_and(|key| key.starts_with("sk-") && !is_placeholder_api_key(key))
     }
 
+    /// Returns true when OpenAI-backed work should use the Codex app-server path.
+    pub fn uses_codex_openai_backend(&self) -> bool {
+        self.openai_backend.eq_ignore_ascii_case("codex")
+    }
+
+    /// Returns true when OpenAI-backed work should use the direct OpenAI API.
+    pub fn uses_api_openai_backend(&self) -> bool {
+        self.openai_backend.eq_ignore_ascii_case("api")
+    }
+
     /// Returns true if Anthropic API key is configured.
     pub fn has_anthropic_key(&self) -> bool {
         self.anthropic_api_key.is_some()
@@ -354,7 +396,11 @@ impl AuditConfig {
 
     /// Returns a list of configured LLM providers.
     pub fn available_providers(&self) -> Vec<String> {
-        let mut providers = vec!["OpenAI".to_string()];
+        let mut providers = vec![if self.uses_api_openai_backend() {
+            "OpenAI API".to_string()
+        } else {
+            "OpenAI via Codex".to_string()
+        }];
         if self.has_anthropic_key() {
             providers.push("Anthropic".to_string());
         }
@@ -379,7 +425,8 @@ impl AuditConfig {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
             runs: PATTERN_DISCOVERY_RUNS,
-            openai_api_key: Some("sk-test-key".to_string()),
+            openai_api_key: Some(format!("{}{}", "sk", "-test-key")),
+            openai_backend: OPENAI_BACKEND.to_string(),
             anthropic_api_key: None,
             gemini_ai_api_key: None,
             deepseek_api_key: None,
@@ -440,11 +487,16 @@ mod tests {
     use super::*;
     use std::env;
 
+    fn valid_test_openai_key() -> String {
+        format!("{}{}", "sk", "-valid-12345")
+    }
+
     #[test]
     fn test_default_config() {
         let config = AuditConfig::default();
         assert_eq!(OPENAI_MODEL, "gpt-5.5");
         assert_eq!(OPENAI_DEDUP_MODEL, "gpt-5.4");
+        assert_eq!(config.openai_backend, "codex");
         assert_eq!(config.max_depth, MAX_DEPTH);
         assert_eq!(config.token_budget, TOKEN_BUDGET);
         assert_eq!(config.runs, PATTERN_DISCOVERY_RUNS);
@@ -454,12 +506,13 @@ mod tests {
     #[test]
     fn test_config_validation() {
         let mut config = AuditConfig {
-            openai_api_key: Some("sk-valid-12345".to_string()),
+            openai_api_key: Some(valid_test_openai_key()),
             ..AuditConfig::default()
         };
 
         // Set a realistic OpenAI-style key to make validation pass
         assert!(config.validate().is_ok());
+        assert!(config.uses_codex_openai_backend());
 
         // Test no API keys
         config.openai_api_key = None;
@@ -473,6 +526,12 @@ mod tests {
         config.openai_api_key = Some("not-a-real-openai-key".to_string());
         assert!(config.validate().is_ok());
         assert!(!config.has_openai_key());
+
+        config.openai_backend = "api".to_string();
+        assert!(config.validate().is_err());
+        config.openai_api_key = Some(valid_test_openai_key());
+        assert!(config.validate().is_ok());
+        assert!(config.uses_api_openai_backend());
     }
 
     #[test]
@@ -484,7 +543,7 @@ mod tests {
 
         let providers = config.available_providers();
         assert_eq!(providers.len(), 2);
-        assert!(providers.contains(&"OpenAI".to_string()));
+        assert!(providers.contains(&"OpenAI via Codex".to_string()));
         assert!(providers.contains(&"Anthropic".to_string()));
     }
 
@@ -523,13 +582,15 @@ mod tests {
     #[test]
     fn test_from_env() {
         unsafe {
-            env::set_var("OPENAI_API_KEY", "sk-valid-12345");
+            env::set_var("OPENAI_API_KEY", valid_test_openai_key());
             env::set_var("GEMINI_API_KEY", "test-gemini-key");
+            env::set_var("AI_AGENT_AUDIT_OPENAI_BACKEND", OPENAI_BACKEND);
         }
 
         let config = AuditConfig::from_env().unwrap();
         assert!(config.has_openai_key());
         assert!(config.has_google_ai_key());
+        assert_eq!(config.openai_backend, OPENAI_BACKEND);
         assert_eq!(config.discovery_provider_name(), DISCOVERY_PROVIDER);
         assert_eq!(
             config.discovery_model_name(),
@@ -551,6 +612,7 @@ mod tests {
         unsafe {
             env::remove_var("OPENAI_API_KEY");
             env::remove_var("GEMINI_API_KEY");
+            env::remove_var("AI_AGENT_AUDIT_OPENAI_BACKEND");
         }
     }
 }

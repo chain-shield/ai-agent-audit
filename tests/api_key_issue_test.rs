@@ -45,10 +45,7 @@ async fn test_api_key_loading_issue() {
         return;
     }
     assert!(api_key.starts_with("sk-"), "API key should start with sk-");
-    println!(
-        "✅ Environment API key verified: {}...",
-        &api_key[..api_key.len().min(15)]
-    );
+    println!("✅ Environment API key verified: [redacted]");
 
     // Initialize runtime once (dotenv, logger, config, clients)
     ensure_runtime_initialized();

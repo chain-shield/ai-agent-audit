@@ -20,7 +20,7 @@ fn ssv_repo_root() -> PathBuf {
                 .map(PathBuf::from)
                 .map(|home| home.join("Desktop/Audit/ssv-network-9bb7b2"))
         })
-        .unwrap_or_else(|| PathBuf::from("/Users/apmfree/Desktop/Audit/ssv-network-9bb7b2"))
+        .unwrap_or_else(|| PathBuf::from("ssv-network-9bb7b2"))
 }
 
 fn slither_available() -> bool {

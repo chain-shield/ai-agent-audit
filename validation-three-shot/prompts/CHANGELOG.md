@@ -67,7 +67,12 @@
 
 - Added `{{WORKER_LAUNCHER}}` to R1-R8 prompt headers.
 - Updated controller worker payloads to emit `worker_launcher`, `worker_spawn_command_template`, and exact `worker_spawn_command` values when prompts are written to disk.
-- Default launcher is `/Users/apmfree/codex-minimal-worker` so parallel workers do not load plugin MCP servers.
+- Default launcher used a local minimal-worker wrapper so parallel workers did not load plugin MCP servers.
+
+## Public launcher update on 2026-06-06
+
+- Public configs now default to `codex` on PATH.
+- Internal users can keep a minimal wrapper by setting `AI_AGENT_AUDIT_WORKER_LAUNCHER` or `workers.default.launcher`.
 
 ## Reset on 2026-04-25
 

@@ -1,8 +1,0 @@
-{
-  "benchmark": "ssv-network",
-  "finding_id": "C-5",
-  "status": "Fixed And Ready",
-  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ssv-network-run-001/C-5-Premature-ETH-cluster-liquidation-due-to-inconsist.md",
-  "review_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/ssv-network-run-001/C-5-Premature-ETH-cluster-liquidation-due-to-inconsist.md",
-  "notes": "Edited the report to clarify the in-scope SSVNetwork entry point, unprivileged attacker requirement, local fork oracle setup, and PoC safety. Verified the report PoC against /Users/apmfree/Desktop/Audit/ssv-network-9bb7b2/ssv-network/test/forked/v2.0.0/C-5-premature-liquidation-rounding.poc.test.ts. PoC command: set -a; . \"/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/.env\"; set +a; NO_GAS_ENFORCE=true npx hardhat test test/forked/v2.0.0/C-5-premature-liquidation-rounding.poc.test.ts. Result: passed."
-}

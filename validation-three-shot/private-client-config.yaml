@@ -38,8 +38,9 @@ private_client:
   judge_simulation: true
 
 workers:
+  # AI_AGENT_AUDIT_WORKER_LAUNCHER overrides this value for one-off runs.
   default:
-    launcher: /Users/apmfree/codex-minimal-worker
+    launcher: codex
   r1:
     model: gpt-5.5
     reasoning_effort: xhigh

@@ -176,8 +176,9 @@ fn client_finding_schema_uses_client_severity_set() {
     assert!(schema.contains("High"));
     assert!(schema.contains("Medium"));
     assert!(schema.contains("Low"));
+    assert!(schema.contains("Critical"));
+    assert!(schema.contains("QA"));
     assert!(schema.contains("Info"));
-    assert!(!schema.contains("Critical"));
     assert!(!schema.contains("Invalid"));
 }
 

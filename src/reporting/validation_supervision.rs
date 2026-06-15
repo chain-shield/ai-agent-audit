@@ -335,7 +335,7 @@ You are the visible Codex GUI supervisor for one AI Agent Audit validation job.
    - every configured `context_docs` entry resolves, including glob entries and placeholders
    - `scripts/three_shot_round.py` exists
    - prompt templates for the configured validation profile exist
-   - `/Users/apmfree/codex-minimal-worker` exists and is executable
+   - the configured worker launcher from `workers.default.launcher` exists and is executable
 4. Check for stale completed artifacts for this same benchmark, prompt version, and run id. Stop and ask before overwriting completed outputs.
 5. If preflight passes, claim the job by updating `manifest.status` to `running`, then run R1-R9 through `scripts/three_shot_round.py`.
 6. Use only the `worker_spawn_command` emitted by each `prepare-* --write-prompt` command for production workers.

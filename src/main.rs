@@ -42,14 +42,18 @@ async fn main() -> Result<()> {
     // Initialize API-key-backed LLM clients
     init_llm_clients()?;
 
-    // Verify and cache ChatGPT/Codex OAuth once at startup for the default OpenAI path
-    ensure_codex_chatgpt_auth()?;
-
     // parse command line args
     // Cli struct contains all info we need to execute audit
     let cli = parse::Cli::parse_args()?;
     if let Some(benchmark) = cli.benchmark.clone() {
         ai_agent_audit::benchmark::telemetry::configure(benchmark);
+    }
+
+    // Verify and cache ChatGPT/Codex OAuth once at startup for the default
+    // OpenAI path. Users who opt into the API backend are authenticated by
+    // OPENAI_API_KEY instead.
+    if audit_config().uses_codex_openai_backend() {
+        ensure_codex_chatgpt_auth()?;
     }
 
     // Clone repository in the local audit workspace and build with Foundry/Hardhat

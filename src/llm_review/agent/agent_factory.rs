@@ -1,4 +1,6 @@
-use super::agent_enums::{AIAgent, AgentMetadata, OpenaiAgentBackend};
+use super::agent_enums::{
+    AIAgent, AgentMetadata, DirectOpenaiExtractionConfig, OpenaiAgentBackend,
+};
 /// AI Agent Factory for centralized agent creation across LLM providers.
 ///
 /// This module provides a unified interface for creating AI agents from different
@@ -15,6 +17,7 @@ use rig::{
         anthropic::{self, CLAUDE_3_7_SONNET},
         deepseek::{self, DEEPSEEK_CHAT},
         gemini::{self},
+        openai::{self},
     },
 };
 use serde_json::json;
@@ -72,7 +75,13 @@ impl LlmProvider {
     /// Returns the environment variable name for the API key.
     pub fn api_key_env_var(&self) -> &'static str {
         match self {
-            LlmProvider::OpenAI => "CODEX_CHATGPT_AUTH",
+            LlmProvider::OpenAI => {
+                if audit_config().uses_api_openai_backend() {
+                    "OPENAI_API_KEY"
+                } else {
+                    "CODEX_CHATGPT_AUTH"
+                }
+            }
             LlmProvider::Anthropic => "ANTHROPIC_API_KEY",
             LlmProvider::Gemini => "GEMINI_API_KEY",
             LlmProvider::DeepSeek => "DEEPSEEK_API_KEY",
@@ -82,7 +91,9 @@ impl LlmProvider {
     /// Checks if this provider is available based on environment variables.
     pub fn is_available(&self) -> bool {
         match self {
-            LlmProvider::OpenAI => true,
+            LlmProvider::OpenAI => {
+                audit_config().uses_codex_openai_backend() || audit_config().has_openai_key()
+            }
             _ => std::env::var(self.api_key_env_var()).is_ok(),
         }
     }
@@ -434,6 +445,7 @@ impl AgentConfig {
 
 /// Singleton clients for LLM providers
 static CODEX_AUTH_VERIFIED: OnceLock<()> = OnceLock::new();
+static OPENAI_CLIENT: OnceLock<openai::Client> = OnceLock::new();
 static ANTHROPIC_CLIENT: OnceLock<anthropic::Client> = OnceLock::new();
 static GEMINI_CLIENT: OnceLock<gemini::Client> = OnceLock::new();
 static DEEPSEEK_CLIENT: OnceLock<deepseek::Client> = OnceLock::new();
@@ -444,6 +456,22 @@ static DEEPSEEK_CLIENT: OnceLock<deepseek::Client> = OnceLock::new();
 /// still initialize Anthropic/Gemini/DeepSeek without being blocked on ChatGPT
 /// sign-in.
 pub fn init_llm_clients() -> Result<()> {
+    // Initialize direct OpenAI client only when explicitly selected. The default
+    // OpenAI backend is Codex/ChatGPT auth because it is much more cost-effective
+    // for the intended long-running audit workload.
+    if audit_config().uses_api_openai_backend() && OPENAI_CLIENT.get().is_none() {
+        if !audit_config().has_openai_key() {
+            return Err(AuditError::configuration(
+                "OPENAI_API_KEY",
+                "AI_AGENT_AUDIT_OPENAI_BACKEND=api requires OPENAI_API_KEY",
+            ));
+        }
+        let client = openai::Client::from_env();
+        OPENAI_CLIENT.set(client).map_err(|_| {
+            AuditError::configuration("openai_client", "OpenAI client already initialized")
+        })?;
+    }
+
     // Initialize Anthropic client if API key is available
     if audit_config().has_anthropic_key() && ANTHROPIC_CLIENT.get().is_none() {
         let client = anthropic::Client::from_env();
@@ -471,6 +499,25 @@ pub fn init_llm_clients() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Returns the direct OpenAI API client instance.
+fn openai_client() -> Result<&'static openai::Client> {
+    if !audit_config().has_openai_key() {
+        return Err(AuditError::configuration(
+            "openai_client",
+            "OPENAI_API_KEY is required when AI_AGENT_AUDIT_OPENAI_BACKEND=api",
+        ));
+    }
+
+    OPENAI_CLIENT.get_or_init(|| {
+        log::info!("Lazy-initializing direct OpenAI API client...");
+        openai::Client::from_env()
+    });
+
+    OPENAI_CLIENT.get().ok_or_else(|| {
+        AuditError::configuration("openai_client", "OpenAI client could not be initialized")
+    })
 }
 
 /// Verifies that the cached ChatGPT/Codex OAuth session is ready for OpenAI work.
@@ -530,13 +577,82 @@ fn deepseek_client() -> Result<&'static deepseek::Client> {
     })
 }
 
+fn openai_api_additional_params(
+    config: &AgentConfig,
+    model: &str,
+) -> Result<openai::responses_api::AdditionalParameters> {
+    use openai::responses_api::{OpenAIServiceTier, Reasoning, ReasoningEffort};
+
+    let service_tier = match config.openai_config.service_tier.as_deref() {
+        Some("default") | None => Some(OpenAIServiceTier::Default),
+        Some("flex") => Some(OpenAIServiceTier::Flex),
+        Some("fast") => {
+            return Err(AuditError::configuration(
+                "openai_service_tier",
+                "`fast` is only supported by the Codex backend; use `default` or `flex` with the OpenAI API backend",
+            ));
+        }
+        Some(other) => {
+            return Err(AuditError::configuration(
+                "openai_service_tier",
+                format!("Unsupported OpenAI API service tier: {other}"),
+            ));
+        }
+    };
+
+    let reasoning = if openai_api_model_supports_reasoning(model) {
+        let reasoning_effort = match config.openai_config.reasoning_effort.as_deref() {
+            Some("none") => ReasoningEffort::None,
+            Some("minimal") => ReasoningEffort::Minimal,
+            Some("low") => ReasoningEffort::Low,
+            Some("medium") | None => ReasoningEffort::Medium,
+            Some("high") => ReasoningEffort::High,
+            Some("xhigh") => {
+                log::warn!(
+                    "Mapping OpenAI API reasoning effort xhigh to high; xhigh is a Codex-only setting"
+                );
+                ReasoningEffort::High
+            }
+            Some(other) => {
+                return Err(AuditError::configuration(
+                    "openai_reasoning_effort",
+                    format!("Unsupported OpenAI API reasoning effort: {other}"),
+                ));
+            }
+        };
+        Some(Reasoning::new().with_effort(reasoning_effort))
+    } else {
+        log::debug!(
+            "Omitting OpenAI API reasoning params for non-reasoning model {}",
+            model
+        );
+        None
+    };
+
+    Ok(openai::responses_api::AdditionalParameters {
+        service_tier,
+        reasoning,
+        store: Some(false),
+        ..Default::default()
+    })
+}
+
+fn openai_api_model_supports_reasoning(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("gpt-5")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+}
+
 /// Factory for creating AI agents across different providers.
 pub struct AgentFactory;
 
 impl AgentFactory {
     /// Creates an OpenAI agent with the specified configuration.
     ///
-    /// OpenAI-backed agents run through Codex app-server using cached ChatGPT auth.
+    /// OpenAI-backed agents use Codex app-server by default. Set
+    /// `AI_AGENT_AUDIT_OPENAI_BACKEND=api` to use OPENAI_API_KEY directly.
     pub fn create_openai_agent(config: &AgentConfig) -> Result<AIAgent> {
         let model = if config.model == "default" {
             DEFAULT_OPENAI_MODEL
@@ -550,6 +666,10 @@ impl AgentFactory {
         }
         if let Some(ref effort) = config.openai_config.reasoning_effort {
             OpenAIConfig::validate_reasoning_effort(effort)?;
+        }
+
+        if audit_config().uses_api_openai_backend() {
+            return Self::create_openai_api_agent(config, model);
         }
 
         let service_tier = match config.openai_config.service_tier.as_deref() {
@@ -584,6 +704,45 @@ impl AgentFactory {
                     reasoning_effort: config.openai_config.reasoning_effort.clone(),
                     service_tier,
                     tool_profile: config.codex_tool_profile,
+                },
+            },
+            metadata,
+        })
+    }
+
+    fn create_openai_api_agent(config: &AgentConfig, model: &str) -> Result<AIAgent> {
+        let client = openai_client()?;
+        let completion_model = client.completion_model(model);
+        let mut builder = AgentBuilderSimple::new(completion_model.clone())
+            .preamble(&config.preamble)
+            .temperature(config.temperature);
+
+        if let Some(context) = &config.context {
+            builder = builder.context(context);
+        }
+
+        let additional_params = openai_api_additional_params(config, model)?;
+        let additional_params = serde_json::to_value(additional_params)?;
+        builder = builder.additional_params(additional_params.clone());
+
+        let metadata = AgentMetadata {
+            model: model.to_string(),
+            temperature: config.temperature,
+            service_tier: config.openai_config.service_tier.clone(),
+            reasoning_effort: config.openai_config.reasoning_effort.clone(),
+            file_picker_enabled: config.enable_file_picker,
+            file_retrieval_enabled: config.enable_file_retrieval,
+            dynamic_context_enabled: config.enable_dynamic_context,
+        };
+
+        Ok(AIAgent::Openai {
+            backend: OpenaiAgentBackend::Direct {
+                agent: builder.build(),
+                extraction: DirectOpenaiExtractionConfig {
+                    model: completion_model,
+                    preamble: config.preamble.clone(),
+                    context: config.context.clone(),
+                    additional_params: Some(additional_params),
                 },
             },
             metadata,
@@ -946,6 +1105,53 @@ mod tests {
             config.codex_tool_profile,
             codex_app_server::CodexToolProfile::AuditContextEscalation
         );
+    }
+
+    #[test]
+    fn test_openai_api_additional_params_maps_codex_xhigh_to_api_high() {
+        use crate::config::init_config;
+
+        let _ = init_config();
+
+        let config = AgentConfig::new(None)
+            .with_openai_service_tier("flex")
+            .with_openai_reasoning_effort("xhigh");
+
+        let params = openai_api_additional_params(&config, "gpt-5.5").unwrap();
+        let json = serde_json::to_value(params).unwrap();
+
+        assert_eq!(json["service_tier"], "flex");
+        assert_eq!(json["reasoning"]["effort"], "high");
+        assert_eq!(json["store"], false);
+    }
+
+    #[test]
+    fn test_openai_api_additional_params_rejects_codex_fast_tier() {
+        use crate::config::init_config;
+
+        let _ = init_config();
+
+        let config = AgentConfig::new(None)
+            .with_openai_service_tier("fast")
+            .with_openai_reasoning_effort("high");
+
+        assert!(openai_api_additional_params(&config, "gpt-5.5").is_err());
+    }
+
+    #[test]
+    fn test_openai_api_additional_params_omits_reasoning_for_chat_models() {
+        use crate::config::init_config;
+
+        let _ = init_config();
+
+        let config = AgentConfig::new(None).with_openai_reasoning_effort("high");
+
+        let params = openai_api_additional_params(&config, "gpt-4o").unwrap();
+        let json = serde_json::to_value(params).unwrap();
+
+        assert_eq!(json["service_tier"], "default");
+        assert!(json.get("reasoning").is_none());
+        assert_eq!(json["store"], false);
     }
 
     #[test]

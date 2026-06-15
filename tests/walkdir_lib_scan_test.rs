@@ -7,10 +7,11 @@ use walkdir::WalkDir;
 #[test]
 #[ignore = "diagnostic test for a prepared local repository"]
 fn test_walkdir_scans_lib_folders_in_local_repo() {
-    // Path to your local repo copy
-    let local_repo = PathBuf::from(
-        "/Users/apmfree/Desktop/Audit/2025-09-summer-fi-governance-v2-chainshieldai/summer-earn-protocol",
-    );
+    let Some(local_repo) = std::env::var_os("AI_AGENT_AUDIT_WALKDIR_TEST_REPO").map(PathBuf::from)
+    else {
+        println!("Skipping test - set AI_AGENT_AUDIT_WALKDIR_TEST_REPO to a local repo copy");
+        return;
+    };
 
     // Skip test if path doesn't exist
     if !local_repo.exists() {

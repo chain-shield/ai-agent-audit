@@ -1,9 +1,0 @@
-{
-  "benchmark": "thegraph",
-  "finding_id": "H-31",
-  "status": "Ready",
-  "gist_url": "https://gist.github.com/apmfree78/514d2703ba090889e33ff67e91855ded",
-  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/thegraph-run-001/H-31-Unsigned-receiverDestination-lets-the-data-service.md",
-  "review_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-report-reviews/v2/thegraph-run-001/H-31-Unsigned-receiverDestination-lets-the-data-service.md",
-  "notes": "Report is submission-ready with no edits. Severity matches the Critical Immunefi direct-theft row, affected assets are in scope, the attacker path is unprivileged, the Proof of Code is explicitly anchored to graphprotocol-contracts/packages/horizon and matches the verified test byte-for-byte, the secret Gist PoC bundle was validated against the local PoC file, and the Arbitrum fork PoC passed with 1 test passing and 0 failures."
-}

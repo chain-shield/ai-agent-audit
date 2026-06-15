@@ -23,12 +23,16 @@ import json
 import os
 import re
 import shlex
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TRUTH_ROOT = Path("/Users/apmfree/.ai-agent-audit-validation-truth")
+TRUTH_ROOT = Path(
+    os.environ.get("AI_AGENT_AUDIT_VALIDATION_TRUTH_ROOT", "~/.ai-agent-audit-validation-truth")
+).expanduser()
 APPEND_ANCHOR = "<!-- APPEND FINDING BLOCKS ABOVE THIS LINE -->"
 FINDING_ID_PATTERN = r"(?:C|H|M|L|QA|I)-\d+"
 REPORT_FINDING_RE = re.compile(rf"^## \[({FINDING_ID_PATTERN})\]\. (.+)$")
@@ -71,7 +75,7 @@ JUDGE_WORKER_MODEL = "gpt-5.5"
 JUDGE_WORKER_REASONING = "xhigh"
 SCORING_WORKER_MODEL = "gpt-5.4"
 SCORING_WORKER_REASONING = "xhigh"
-DEFAULT_WORKER_LAUNCHER = "/Users/apmfree/codex-minimal-worker"
+DEFAULT_WORKER_LAUNCHER = os.environ.get("AI_AGENT_AUDIT_WORKER_LAUNCHER", "codex")
 SCREEN_ANCHOR = "<!-- APPEND SCREEN ROWS ABOVE THIS LINE -->"
 
 
@@ -107,14 +111,18 @@ def truth_path(benchmark: str) -> Path:
     configured = config_path_value(["paths", "truth_file"])
     if configured:
         return resolve_configured_path(configured)
-    return TRUTH_ROOT / f"{benchmark}.md"
+    raise SystemExit(
+        "Scoring requires paths.truth_file in the validation config; no public default truth file is bundled."
+    )
 
 
 def truth_key_path(benchmark: str) -> Path:
     configured = config_path_value(["paths", "truth_file"])
     if configured:
         return resolve_configured_path(configured)
-    return REPO_ROOT / "APPROVED_FINDINGS_KEY.md"
+    raise SystemExit(
+        "Scoring requires paths.truth_file in the validation config; no public default truth file is bundled."
+    )
 
 
 def read_text(path: Path) -> str:
@@ -672,11 +680,22 @@ def worker_reasoning(config: dict[str, object], worker: str, default: str) -> st
 
 
 def worker_launcher(config: dict[str, object], worker: str) -> str:
+    env_launcher = os.environ.get("AI_AGENT_AUDIT_WORKER_LAUNCHER")
+    if env_launcher:
+        return env_launcher
     return nested_get(
         config,
         ["workers", worker, "launcher"],
         nested_get(config, ["workers", "default", "launcher"], DEFAULT_WORKER_LAUNCHER),
     )
+
+
+def is_codex_launcher(launcher: str) -> bool:
+    try:
+        first_arg = shlex.split(launcher)[0]
+    except (IndexError, ValueError):
+        first_arg = launcher
+    return "codex" in Path(first_arg).name
 
 
 def worker_payload(config: dict[str, object], worker: str, default_model: str, default_reasoning: str) -> dict[str, str | bool]:
@@ -692,11 +711,12 @@ def worker_payload(config: dict[str, object], worker: str, default_model: str, d
             f"-m {shlex.quote(model)} -c model_reasoning_effort={shlex.quote(reasoning)} "
             "--dangerously-bypass-approvals-and-sandbox - < <worker_prompt_path>"
         ),
-        "requires_minimal_codex_worker": True,
+        "requires_filesystem_agent_worker": True,
+        "requires_minimal_codex_worker": is_codex_launcher(launcher),
         "worker_launch_note": (
-            "Launch this unit with worker_launcher. Minimal workers keep plugins and MCP servers "
-            "disabled for memory safety, but still have normal local file access and native Codex "
-            "web search for source-URL verification."
+            "Launch this unit with worker_spawn_command. Validation workers must be able to read "
+            "and edit local files and run tests. The default Codex launcher provides that agentic "
+            "filesystem/tool access; a raw OpenAI API key alone is not enough for these worker prompts."
         ),
     }
 
@@ -3817,8 +3837,6 @@ def cmd_score_prompt(args: argparse.Namespace) -> None:
             "TRUTH_PATH": truth_path(args.benchmark),
             "REPORT": report_path(args.benchmark),
             "SOURCE_ROOT": benchmark_source_root(args.benchmark),
-            "C4_APPROVED_FINDINGS": REPO_ROOT / "C4_APPROVED_FINDINGS.md",
-            "APPROVED_FINDINGS_KEY": truth_key_path(args.benchmark),
         },
         config,
     )
@@ -3842,6 +3860,206 @@ def cmd_score_local(args: argparse.Namespace) -> None:
     print(json.dumps(score_three_shot(args.prompt_version, args.benchmark, args.run_id), indent=2, sort_keys=True))
 
 
+def controller_args(args: argparse.Namespace, command: str, extra: list[str] | None = None) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        command,
+        "--config",
+        str(args.config),
+        "--prompt-version",
+        args.prompt_version,
+        "--benchmark",
+        args.benchmark,
+        "--run-id",
+        args.run_id,
+    ]
+    if extra:
+        cmd.extend(extra)
+    return cmd
+
+
+def run_controller_json(args: argparse.Namespace, command: str, extra: list[str] | None = None) -> dict[str, object]:
+    result = subprocess.run(
+        controller_args(args, command, extra),
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        raise SystemExit(result.returncode)
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{command} did not emit JSON: {exc}\n{result.stdout}") from exc
+
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return payload
+
+
+def run_controller_plain(args: argparse.Namespace, command: str, extra: list[str] | None = None) -> None:
+    subprocess.run(controller_args(args, command, extra), cwd=REPO_ROOT, check=True)
+
+
+def run_prepared_worker(payload: dict[str, object], dry_run: bool) -> bool:
+    worker_type = str(payload.get("worker_type", ""))
+    if worker_type == "none":
+        print(json.dumps({"worker_type": worker_type, "skipped": True, "reason": payload.get("reason") or payload.get("summary")}, indent=2, sort_keys=True))
+        return False
+
+    command = payload.get("worker_spawn_command")
+    if not isinstance(command, str) or not command.strip():
+        raise SystemExit(f"Prepared worker payload is missing worker_spawn_command for {worker_type}")
+
+    if dry_run:
+        print(json.dumps({
+            "worker_type": worker_type,
+            "dry_run": True,
+            "prepared_only": True,
+            "worker_spawn_command": command,
+            "note": "Dry-run stops after preparing this worker because later controller steps require worker-written artifacts.",
+        }, indent=2, sort_keys=True))
+        return False
+
+    subprocess.run(command, cwd=REPO_ROOT, shell=True, executable="/bin/bash", check=True)
+    return True
+
+
+def run_worker_stage(
+    args: argparse.Namespace,
+    command: str,
+    prompt_dir: Path,
+    counter: int,
+    extra: list[str] | None = None,
+) -> tuple[dict[str, object], int, bool]:
+    prompt_path = prompt_dir / f"{counter:03}-{command}.md"
+    payload = run_controller_json(args, command, [*(extra or []), "--write-prompt", str(prompt_path)])
+    ran = run_prepared_worker(payload, args.dry_run)
+    return payload, counter + 1, ran
+
+
+def run_worker_units_until_done(
+    args: argparse.Namespace,
+    command: str,
+    prompt_dir: Path,
+    counter: int,
+) -> int:
+    units = 0
+    while True:
+        if units >= args.max_worker_units:
+            raise SystemExit(f"Stopped after {args.max_worker_units} {command} units; increase --max-worker-units to continue.")
+        payload, counter, ran = run_worker_stage(args, command, prompt_dir, counter)
+        if not ran:
+            phase = str(payload.get("phase", "complete"))
+            if phase not in {"complete", "none"} and payload.get("worker_type") == "none":
+                raise SystemExit(f"{command} is blocked: {payload.get('summary') or payload.get('reason')}")
+            return counter
+        units += 1
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    config = resolve_run_args(args)
+    prompt_dir = (
+        REPO_ROOT
+        / ".ai-agent-audit"
+        / "validation-prompts"
+        / f"{args.benchmark}-{args.run_id}"
+    )
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    counter = 1
+
+    print(json.dumps({
+        "mode": "codex-immediate",
+        "benchmark": args.benchmark,
+        "run_id": args.run_id,
+        "prompt_version": args.prompt_version,
+        "prompt_dir": str(prompt_dir),
+        "dry_run": args.dry_run,
+    }, indent=2, sort_keys=True))
+
+    _, counter, ran = run_worker_stage(args, "prepare-scope", prompt_dir, counter)
+    if not ran:
+        return
+    _, counter, ran = run_worker_stage(args, "prepare-token", prompt_dir, counter)
+    if not ran:
+        return
+    _, counter, ran = run_worker_stage(args, "prepare-final", prompt_dir, counter)
+    if not ran:
+        return
+    run_controller_plain(args, "assemble")
+
+    if args.stop_after == "r3":
+        return
+
+    if round_enabled(config, "r3a_feasibility_gate", False) and feasibility_gate_enabled(config):
+        _, counter, ran = run_worker_stage(args, "prepare-feasibility", prompt_dir, counter)
+        if ran:
+            run_controller_plain(args, "apply-feasibility")
+
+    if round_enabled(config, "r4_canonicalization", True):
+        _, counter, ran = run_worker_stage(args, "prepare-dedup", prompt_dir, counter)
+        if ran:
+            run_controller_plain(args, "apply-dedup")
+
+    if args.stop_after == "r4":
+        return
+
+    if round_enabled(config, "r4a_v12_sweep", True) and not is_bounty_profile(config):
+        _, counter, ran = run_worker_stage(args, "prepare-v12-sweep", prompt_dir, counter)
+        if ran:
+            run_controller_plain(args, "apply-v12-sweep")
+
+    if args.stop_after == "r4a":
+        return
+
+    if args.skip_poc:
+        print(json.dumps({"skipped": True, "phase": "poc_and_reports", "reason": "--skip-poc was set"}, indent=2, sort_keys=True))
+        return
+
+    if round_enabled(config, "r5_poc_generation", True):
+        counter = run_worker_units_until_done(args, "prepare-poc", prompt_dir, counter)
+        run_controller_plain(args, "assemble-poc")
+
+    if round_enabled(config, "r6_poc_verification", True):
+        counter = run_worker_units_until_done(args, "prepare-poc-review", prompt_dir, counter)
+        run_controller_plain(args, "assemble-poc-review")
+
+    if args.stop_after == "r6":
+        return
+
+    if args.skip_reports:
+        print(json.dumps({"skipped": True, "phase": "reports", "reason": "--skip-reports was set"}, indent=2, sort_keys=True))
+        return
+
+    if round_enabled(config, "r7_c4_report_generation", True):
+        counter = run_worker_units_until_done(args, "prepare-report", prompt_dir, counter)
+
+    if round_enabled(config, "r8_c4_report_review", True):
+        counter = run_worker_units_until_done(args, "prepare-report-review", prompt_dir, counter)
+
+    if args.stop_after == "r8":
+        return
+
+    if args.include_judge:
+        counter = run_worker_units_until_done(args, "prepare-judge", prompt_dir, counter)
+
+    if args.include_scoring and round_enabled(config, "scoring", False):
+        _, counter, _ = run_worker_stage(args, "score-prompt", prompt_dir, counter)
+
+    print(json.dumps({
+        "status": "complete",
+        "benchmark": args.benchmark,
+        "run_id": args.run_id,
+        "prompt_dir": str(prompt_dir),
+    }, indent=2, sort_keys=True))
+
+
 def add_run_args(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="YAML config path.")
     subparser.add_argument("--prompt-version", default=None)
@@ -3852,6 +4070,17 @@ def add_run_args(subparser: argparse.ArgumentParser) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare, assemble, and score three-shot validation experiments.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_cmd = subparsers.add_parser("run", help="Run configured validation rounds immediately with sequential Codex workers.")
+    add_run_args(run_cmd)
+    run_cmd.add_argument("--dry-run", action="store_true", help="Prepare the next runnable worker prompt/command, then stop before dependent assemble/apply steps.")
+    run_cmd.add_argument("--skip-poc", action="store_true", help="Stop after validation/canonicalization and skip PoC/report rounds.")
+    run_cmd.add_argument("--skip-reports", action="store_true", help="Run PoC rounds but skip report creation/review.")
+    run_cmd.add_argument("--include-judge", action="store_true", help="Also run round 9 judge simulations.")
+    run_cmd.add_argument("--include-scoring", action="store_true", help="Also run the scoring worker when configured.")
+    run_cmd.add_argument("--max-worker-units", type=int, default=200, help="Safety cap for per-finding worker units.")
+    run_cmd.add_argument("--stop-after", choices=["r3", "r4", "r4a", "r6", "r8"], default=None)
+    run_cmd.set_defaults(func=cmd_run)
 
     prepare_scope = subparsers.add_parser("prepare-scope", help="Initialize stage 1 scope screening and emit the worker prompt.")
     add_run_args(prepare_scope)

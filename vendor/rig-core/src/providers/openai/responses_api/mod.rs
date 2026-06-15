@@ -86,7 +86,8 @@ pub struct InputItem {
     /// The role of an input item/message.
     /// Input messages should be Some(Role::User), and output messages should be Some(Role::Assistant).
     /// Everything else should be None.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
+    #[serde(skip_serializing)]
     role: Option<Role>,
     /// The input content itself.
     #[serde(flatten)]
@@ -1483,5 +1484,28 @@ impl FromStr for UserContent {
         Ok(UserContent::InputText {
             text: s.to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_item_message_serializes_role_once() {
+        let item = InputItem {
+            role: Some(Role::User),
+            input: InputContent::Message(Message::User {
+                content: OneOrMany::one(UserContent::InputText {
+                    text: "hello".to_string(),
+                }),
+                name: None,
+            }),
+        };
+
+        let json = serde_json::to_string(&item).expect("input item should serialize");
+        assert_eq!(json.matches("\"role\"").count(), 1, "{json}");
+        assert!(json.contains("\"type\":\"message\""), "{json}");
+        assert!(json.contains("\"role\":\"user\""), "{json}");
     }
 }

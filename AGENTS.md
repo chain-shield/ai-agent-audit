@@ -56,10 +56,14 @@ cargo doc --open
 ## Configuration
 
 ### Environment Variables
-Required environment variables (create `.env` file):
+Default environment variables (create `.env` file):
 ```bash
-# Required
-OPENAI_API_KEY=your_openai_api_key
+# Default OpenAI path: Codex/ChatGPT OAuth, no API key required
+AI_AGENT_AUDIT_OPENAI_BACKEND=codex
+
+# Optional fallback for Rust OpenAI calls
+# AI_AGENT_AUDIT_OPENAI_BACKEND=api
+# OPENAI_API_KEY=your_openai_api_key
 
 # Optional LLM Providers
 ANTHROPIC_API_KEY=your_anthropic_api_key

@@ -7,14 +7,11 @@ Your task:
 2. Read the benchmark truth file at {{TRUTH_PATH}}
 3. Read the benchmark report at {{REPORT}}
 4. Use benchmark source context from {{SOURCE_ROOT}} only when needed to resolve ambiguity
-5. Read these canonical truth artifacts:
-   - {{C4_APPROVED_FINDINGS}}
-   - {{APPROVED_FINDINGS_KEY}}
-6. Write a scored result report to {{RESULT_PATH}}
+5. Write a scored result report to {{RESULT_PATH}}
 
 Scoring rubric:
 - score the primary KPI layer on `H-` / `M-` rows only
-- truth-positive = rows marked `Valid` in `APPROVED_FINDINGS_KEY.md`
+- truth-positive = rows marked `Valid` in the configured benchmark truth file
 - run-positive = rows marked `Decision=Valid` with `Severity Assessment=High` or `Medium`
 - run-side `Valid` rows scored as `Low / QA` or `Low / Unclear`, plus `Invalid` rows, count as negatives
 - `Needs Review` remains an abstention bucket outside `TP` / `FP` / `TN` / `FN`

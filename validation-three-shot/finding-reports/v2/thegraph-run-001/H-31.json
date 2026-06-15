@@ -1,8 +1,0 @@
-{
-  "benchmark": "thegraph",
-  "finding_id": "H-31",
-  "status": "Report Created",
-  "gist_url": "https://gist.github.com/apmfree78/514d2703ba090889e33ff67e91855ded",
-  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/thegraph-run-001/H-31-Unsigned-receiverDestination-lets-the-data-service.md",
-  "notes": "Created Critical Immunefi submission report for unsigned receiverDestination in GraphTallyCollector. Verified local Arbitrum fork PoC passed at block 460062146 and demonstrates 19,800,000 GRT redirected to attacker destination with provider balance and stake unchanged. Created and linked a secret Gist PoC bundle."
-}

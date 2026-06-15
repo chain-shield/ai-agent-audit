@@ -1,7 +1,0 @@
-{
-  "benchmark": "ens-contracts",
-  "finding_id": "C-3",
-  "status": "Report Created",
-  "report_path": "/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit/validation-three-shot/finding-reports/v2/ens-contracts-run-002/C-3-Expired-eth-name-re-registration-without-resolver.md",
-  "notes": "Created submission-ready Immunefi report for C-3. The report preserves the verified local mainnet fork PoC in substance, maps the impact to the Critical smart contract NFT representation alteration row, and the verified PoC command passed during R7 using MAINNET_RPC_URL from the local environment."
-}

@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::llm_review::agent::agent_enums::{
-    AIAgent, AIExtractor, AgentMetadata, OpenaiAgentBackend,
+    AIAgent, AIExtractor, AgentMetadata, DirectOpenaiExtractionConfig, OpenaiAgentBackend,
 };
 
 pub fn build_anthropic_agent(
@@ -89,12 +89,24 @@ pub fn build_openai_agent(
         Some(added_context) => AIAgent::Openai {
             backend: OpenaiAgentBackend::Direct {
                 agent: builder.context(added_context).build(),
+                extraction: DirectOpenaiExtractionConfig {
+                    model: client.completion_model(model),
+                    preamble: preamble.to_string(),
+                    context: Some(added_context.to_string()),
+                    additional_params: None,
+                },
             },
             metadata,
         },
         None => AIAgent::Openai {
             backend: OpenaiAgentBackend::Direct {
                 agent: builder.build(),
+                extraction: DirectOpenaiExtractionConfig {
+                    model: client.completion_model(model),
+                    preamble: preamble.to_string(),
+                    context: None,
+                    additional_params: None,
+                },
             },
             metadata,
         },

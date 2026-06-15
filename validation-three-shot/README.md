@@ -44,7 +44,7 @@ For `validation_profile: private-client`, the controller uses client-remediation
 
 Recommended worker split:
 
-- all R1-R9 workers must be launched with the configured minimal Codex worker launcher, currently `/Users/apmfree/codex-minimal-worker`, so plugin MCP servers are not loaded into every parallel worker while normal local file access and native Codex web search remain available. Web search here means the native `--search` flag only; it must not re-enable browser, GitHub, or other MCP servers.
+- all R1-R9 workers are designed for Codex CLI workers. The public default launcher is `codex`; internal operators can set `AI_AGENT_AUDIT_WORKER_LAUNCHER` or `workers.default.launcher` to a minimal wrapper when they want a stricter worker environment. The env var overrides YAML for one-off runs.
 - round 1 scope worker: `gpt-5.5` with `xhigh`
 - round 2 token worker: `gpt-5.5` with `xhigh`
 - round 3 final validation worker: `gpt-5.5` with `xhigh`
@@ -59,7 +59,7 @@ Recommended worker split:
 - PoC workers must produce submission-ready artifacts: filenames include finding IDs for traceability, Solidity names avoid pipeline IDs and use descriptive vulnerability names, comments tersely explain setup/trigger/proof, and each final finding preferably gets one standalone PoC file. Existing template files are read-only seeds: workers copy, rename, and edit the copied finding-specific file rather than touching the template.
 - Report workers must produce ultra-concise submission-ready reports: one fresh worker per finding, about 200-300 words excluding code, two primary sections plus proof of concept, and `Need Further Review` when not submission-ready.
 
-Each validation round should be run by a separate spawned minimal Codex worker with cleared context. For R5-R9, each individual finding/report must get its own fresh minimal worker and isolated prompt/output files. Minimal workers are expected to read the local files listed in their prompt and may use native web search to verify cited public source URLs.
+Each validation round should be run by a separate spawned minimal Codex worker with cleared context. For R5-R9, each individual finding/report must get its own fresh minimal worker and isolated prompt/output files. Minimal workers are expected to read the local files listed in their prompt and may use native web search to verify cited public source URLs. A raw OpenAI API key is not enough for this workflow because the prompts require local file edits and test execution.
 
 Configuration:
 
@@ -69,15 +69,15 @@ Configuration:
 - `paths.source_root` is the full path to the contest source/workspace bundle. It is not assumed to live under `~/Desktop/Audit/<benchmark>`.
 - `paths.audit_root` is the full path to this tool's output folder for the benchmark. If `paths.audit_report` is omitted, the workflow reads `report/audit-report.md` under `paths.audit_root`.
 - `paths.audit_report` is the full path to the AI audit results file containing `## [H-1]. Title` style finding headings. It is not assumed to live under this repository.
-- Optional `paths.truth_file` can be configured for local benchmark scoring when a truth artifact is available.
+- Optional `paths.truth_file` can be configured for local benchmark scoring when a truth artifact is available. Public templates keep `rounds.scoring: false` until that file is set.
 - `context_docs` is the authoritative YAML list of files every three-shot worker must read. It supports exact paths and glob patterns, including `{{SOURCE_ROOT}}` and `{{THREE_SHOT_ROOT}}` placeholders.
 - The reusable V12 duplicate decision checklist is stored at `validation-three-shot/v12-checklist.md`; include it in `context_docs`.
 - The reusable Code4rena bounty criteria summary is stored at `validation-three-shot/code4rena-bounty-criteria.md`; include it in `context_docs` for `validation_profile: code4rena-bounty`.
 - Immunefi bounty configs must include the generated per-protocol files under `audit-docs/<protocol>/`, especially `<protocol>-immunefi-bounty-rules.md` and `<protocol>-immunefi-severity-rubric.md`.
 - Benchmark prior findings can be a standalone `v12-findings.md` entry or embedded in a `*-scope.md` file. If embedded, omit the standalone `v12-findings.md` entry from `context_docs`.
 - `prompt_version` is the reusable prompt/artifact namespace. Keep `v2` for the current production prompts unless intentionally testing a new prompt version.
-- Worker model, reasoning, and launcher settings also live there. Keep `workers.default.launcher` pointed at the minimal Codex worker launcher unless intentionally debugging a single worker.
-- Each `prepare-*` command emits `worker_launcher`, `requires_minimal_codex_worker`, `worker_spawn_command_template`, and, when `--write-prompt` is used, an exact `worker_spawn_command`; use those fields instead of the desktop `spawn_agent` path for production fanout.
+- Worker model, reasoning, and launcher settings also live there. Keep `workers.default.launcher` pointed at `codex` or another Codex-compatible worker launcher unless intentionally debugging a single worker. `AI_AGENT_AUDIT_WORKER_LAUNCHER` overrides YAML launcher values for one-off runs.
+- Each `prepare-*` command emits `worker_launcher`, `requires_filesystem_agent_worker`, `worker_spawn_command_template`, and, when `--write-prompt` is used, an exact `worker_spawn_command`; use those fields instead of the desktop `spawn_agent` path for production fanout.
 - CLI flags still work as one-off overrides.
 - Live worker prompts live in profile subfolders under `validation-three-shot/prompts/`.
 - The old top-level `validation-prompts/` directory and old `validation-three-shot/validation-prompts/` directory are not required by this workflow.
@@ -138,6 +138,20 @@ Benchmark docs emphasized by this workflow via `context_docs`:
 - shared `validation-three-shot/v12-checklist.md`
 
 Recommended workflow:
+
+```bash
+cp validation-three-shot/config.yaml validation-three-shot/my-run.yaml
+# edit benchmark, run_id, paths.source_root, paths.audit_root, and paths.audit_report
+python3 scripts/three_shot_round.py run --config validation-three-shot/my-run.yaml
+```
+
+The `run` command executes the configured rounds immediately with sequential Codex workers. For a cheaper validation-only pass before PoC/report work:
+
+```bash
+python3 scripts/three_shot_round.py run --config validation-three-shot/my-run.yaml --skip-poc
+```
+
+Manual/supervised workflow:
 
 ```bash
 python3 scripts/three_shot_round.py prepare-scope --write-prompt /tmp/three-shot-r1.md
