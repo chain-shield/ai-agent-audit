@@ -1,19 +1,17 @@
-# AI Agent Audit v2.0
+# AI Agent Audit
 
 ## Overview
-AI Agent Audit is the first of its kind open source tools that: 
+AI Agent Audit is a Rust command-line tool for AI-assisted security review of Solidity repositories.
 
-- automatically discovers security vulnerability in solidity EVM-based codebases
-- dedupes, validates, and creates runnable PoC for each valid High / Medium vulnerability found 
-- creates professional audit reports for each valid finding
+- discovers security vulnerabilities in Solidity and EVM-based codebases
+- deduplicates and validates findings
+- generated runnable PoC for each validated High/Medium finding
+- create professional audit report for each validated finding in markdown
 
-I used this tool to compete in Code4rena (I am not a security researcher), and the results are promising: https://code4rena.com/@saraswati
+I used this tool to compete in Code4rena competitions and the results were encouraging:
+https://code4rena.com/@saraswati
 
-It performed on par with a human security researcher, and even achieved the distinction of SR Warden, which only ~1% of security researcher attain.
-
-This tool is a Rust command-line tool for AI-assisted security review of Solidity repositories. It clones and builds a target repo in a local audit workspace, extracts semantic data with Slither, generates per-contract code slices, runs LLM-based discovery and verification passes, and writes Markdown audit reports.
-
-This repository is being released as a GitHub-first public beta. It is meant to accelerate expert review, not replace manual auditing.
+The repository is in public beta. It is meant to accelerate expert review, not replace manual auditing.
 
 ## Status
 
@@ -21,12 +19,12 @@ This repository is being released as a GitHub-first public beta. It is meant to 
 - Solidity and EVM-focused.
 - Repository source, docs, and derived context are sent to third-party LLM providers you configure.
 - The current default audit pipeline uses ChatGPT/Codex OAuth for OpenAI access and runs the active review flow on `gpt-5.5`. Deduplication helpers use `gpt-5.4` with low reasoning.
-- Codex is the recommended standard path because long audit runs are roughly 25x more cost-effective through a Codex/ChatGPT subscription than direct per-token API billing.
+- Codex is the recommended default path for the current validation workflow and operating model.
 - Startup performs a one-time ChatGPT sign-in if needed and reuses the cached session on later runs until the token expires.
 - `OPENAI_API_KEY` is supported as a secondary fallback for Rust OpenAI calls by setting `AI_AGENT_AUDIT_OPENAI_BACKEND=api`.
 - `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_AI_API_KEY`, and `DEEPSEEK_API_KEY` are still supported by the agent layer, but they are not required by the default review path.
-- Discovery-style runs can be switched back to Gemini with env config if you want to use Google AI for patterns, actors, and invariants while keeping verification/reporting on OpenAI/Codex.
-- PoC-related config fields exist, but automatic PoC generation is currently disabled in the public beta.
+- Discovery-style runs can be switched to Gemini by changing the defaults in [src/config.rs](src/config.rs) if you want to use Google AI for patterns, actors, and invariants while keeping verification/reporting on OpenAI/Codex.
+- PoC generation and PoC verification are supported through `validation-three-shot`, which is the primary validation workflow.
 
 ## What It Does
 
@@ -49,11 +47,11 @@ This project is not a hosted service, not a generic SAST scanner for every langu
 
 ## Requirements
 
-- Rust stable toolchain.
-- Git.
-- Slither.
-- Foundry (`forge`) for Foundry repositories.
-- Node.js plus `npm`/`npx`, Yarn, or pnpm for Hardhat repositories.
+- Rust stable toolchain. Install from [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install).
+- Git. Install from [git-scm.com/downloads](https://git-scm.com/downloads).
+- Slither. Install from [github.com/crytic/slither](https://github.com/crytic/slither).
+- Foundry (`forge`) for Foundry repositories. Install from [book.getfoundry.sh/getting-started/installation](https://book.getfoundry.sh/getting-started/installation).
+- Node.js 18+ plus `npm`/`npx`, Yarn, pnpm, or Bun for JavaScript/Hardhat repositories. Install Node.js from [nodejs.org](https://nodejs.org/). Install Bun from [bun.sh](https://bun.sh/) if the target repo uses `bun.lock` / `bun.lockb`.
 - Optional `GITHUB_TOKEN` for private GitHub repositories.
 
 ## Quickstart
@@ -117,6 +115,8 @@ cargo run --release -- https://github.com/example/protocol.git --audit-type Clie
 
 For repos that keep contracts under `contracts/` instead of `src/`, set `code_folders` accordingly.
 
+The main Rust run produces the initial audit artifacts and, by default, emits a ready-to-run `validation-three-shot` job. That validation workflow is where deeper filtering, PoC generation, PoC verification, and report hardening happen.
+
 ## Private Repositories
 
 If the target repository is private, set `GITHUB_TOKEN` before running the tool. The clone path uses that token for GitHub HTTPS URLs.
@@ -133,18 +133,57 @@ export GITHUB_TOKEN=...
 
 - `Code4rena`
 - `Code4renaBounty`
+- `ImmunefiBugBounty`
 - `Sherlock`
 - `Cantina`
 - `Client`
 
-Use `Client` for internal or client-style audits. Use the contest values when you want severity handling and report language aligned more closely with those platforms. Use `Code4renaBounty` for C4 bug bounty programs where only currently exploitable Critical/High issues with runnable PoCs should become submission candidates.
+Use `Client` for internal or client-style audits. Use the contest values when you want severity handling and report language aligned more closely with those platforms. Use `Code4renaBounty` for C4 bug bounty programs where only currently exploitable Critical/High issues with runnable PoCs should become submission candidates. Use `ImmunefiBugBounty` when the run should derive repo/docs/scope from an Immunefi program page and validate against Immunefi-style impact rules.
+
+### Derived-Input Workflows
+
+- `immunefi_bounty` / `--immunefi-bounty`
+  Derives repo, docs, and scope from an Immunefi bounty page. This is the standard entrypoint for `ImmunefiBugBounty`.
+- `code4rena_bounty` / `--code4rena-bounty`
+  Derives repo, docs, and scope from a Code4rena bounty page. This is the standard entrypoint for `Code4renaBounty` when you want the tool to gather bounty context for you.
+- `code4rena_contest_repo` / `--code4rena-contest-repo`
+  Adds Code4rena contest context and V12 lookup support from a contest GitHub repo URL.
+- `code4rena_contest_url` / `--code4rena-contest-url`
+  Alias for `code4rena_contest_repo`. Provide only one of the two.
+
+Example configs:
+
+```yaml
+# Immunefi-derived run
+audit_type: "ImmunefiBugBounty"
+immunefi_bounty: "https://immunefi.com/bug-bounty/example/information/"
+```
+
+```yaml
+# Code4rena bounty-derived run
+audit_type: "Code4renaBounty"
+code4rena_bounty: "https://code4rena.com/bounties/example"
+```
+
+```yaml
+# Code4rena contest run with extra contest context
+repo: "https://github.com/example/protocol.git"
+audit_type: "Code4rena"
+code4rena_contest_repo: "https://github.com/code-423n4/2026-01-example"
+```
 
 ### YAML And CLI Fields
+
+For enum-like values, YAML uses the Rust-style names such as `Code4renaBounty`, `ImmunefiBugBounty`, and `HardhatYarn`. CLI flags use the actual `--help` spellings, such as `hardhat-yarn` for `--builder`.
 
 | YAML key / CLI flag | Purpose |
 | --- | --- |
 | `repo` / positional `repo` | Required HTTP(S) Git repository URL. |
 | `config` / `--config` | Load a YAML config file. |
+| `immunefi_bounty` / `--immunefi-bounty` | Immunefi program URL used to derive repo, docs, and scope. |
+| `code4rena_bounty` / `--code4rena-bounty` | Code4rena bounty URL used to derive repo, docs, and scope. |
+| `code4rena_contest_repo` / `--code4rena-contest-repo` | Code4rena contest GitHub repo URL used to derive contest docs, scope, and V12 context. |
+| `code4rena_contest_url` / `--code4rena-contest-url` | Alias for `code4rena_contest_repo`; do not set both. |
 | `subfolder` / `--subfolder` | Analyze a subdirectory inside the cloned repo, useful for monorepos. |
 | `code_folders` / `--code-folders` | Source roots to scan for contracts. Defaults to `["src"]`. |
 | `audit_scope` / `--audit-scope` | Local Markdown file containing scope notes or reviewer guidance. |
@@ -156,8 +195,10 @@ Use `Client` for internal or client-style audits. Use the contest values when yo
 | `validation_supervision` / `--validation-supervision` | Emit a Codex GUI three-shot validation job after report export. Defaults to `gui`; set `off` to disable. |
 | `validation_supervision_overwrite` / `--validation-supervision-overwrite` | Replace an existing non-terminal GUI validation job with the same run id. Defaults to `false`; use only for intentional reruns. |
 | `context` | YAML-only block for generated audit scope/docs context. Defaults to `README.md`, `audit-docs`, `force_regenerate: true`, and 5000 tokens per generated Markdown file. |
-| `audit_type` / `--audit-type` | One of `Code4rena`, `Code4renaBounty`, `Sherlock`, `Cantina`, `Client`. |
-| `builder` / `--builder` | One of `Foundry`, `Hardhat`, `HardhatYarn`, `Custom`, `Auto`. Default is `Auto`. |
+| `poc` | YAML-only block for PoC runtime preferences, including fork policy and network-to-RPC-env mappings used when generated context includes PoC guidance. |
+| `benchmark` | YAML-only block for benchmark telemetry and stable `run_id` configuration. |
+| `audit_type` / `--audit-type` | One of `Code4rena`, `Code4renaBounty`, `ImmunefiBugBounty`, `Sherlock`, `Cantina`, `Client`. |
+| `builder` / `--builder` | YAML: `Foundry`, `Hardhat`, `HardhatYarn`, `Custom`, `Auto`. CLI: `foundry`, `hardhat`, `hardhat-yarn`, `custom`, `auto`. Default is `Auto` / `auto`. |
 | `build_cmd` / `--build-cmd` | Required when `builder: "Custom"` is used. |
 | `via_ir` / `--via-ir` | Adds `--via-ir` to the Foundry build command. |
 | `force_rebuild` / `--force-rebuild` | Re-clone and rebuild even if a cached workspace already exists. |
@@ -178,12 +219,27 @@ Minimal generated-context config:
 context:
   files:
     - README.md
+  urls: []
+  v12_url: "auto"
   output_dir: "audit-docs"
   force_regenerate: true
   max_tokens_per_file: 5000
 ```
 
 The generator copies `scope.txt` from the cloned repo when present. If no `scope.txt` exists, it extracts in-scope Solidity paths from entry context files. By default the only entry file is `README.md`; `context.files` can add or replace entry files. Links found in those entry files are treated as second-level candidates and fetched only when they look relevant to scope, known issues, protocol documentation, prior audits, or Code4rena V12 reports. For `Code4renaBounty`, the generator also fetches Code4rena's bounty guide and bounty criteria, preserves global bounty out-of-scope rules, and can map contract-name-only scope tables to local Solidity definitions. Fetched second-level pages do not emit more links. If generated `scope.md` or `docs.md` exceeds `max_tokens_per_file`, Codex summarizes it down to the limit; the generator refuses to silently truncate final Markdown.
+
+Optional PoC config:
+
+```yaml
+poc:
+  allow_fork: true
+  prefer_fork: true
+  rpc_env:
+    ethereum-mainnet: "MAINNET_RPC_URL"
+    base-mainnet: "BASE_RPC_URL"
+```
+
+The `poc` block is YAML-only. It mainly affects generated PoC runtime guidance for workflows that need explicit network and fork assumptions, such as Immunefi bounty validation.
 
 ### Environment Variables
 
@@ -197,6 +253,7 @@ The generator copies `scope.txt` from the cloned repo when present. If no `scope
 | `ANTHROPIC_API_KEY` | No | Supported by the agent layer, not required by the default path. |
 | `DEEPSEEK_API_KEY` | No | Supported by the agent layer, not required by the default path. |
 | `GITHUB_TOKEN` | No | Used for private GitHub repo cloning. |
+| `AI_AGENT_AUDIT_VALIDATION_SUPERVISION` | No | Overrides validation job emission mode. Supported values: `gui` or `off`. |
 | `AI_AGENT_AUDIT_DATA_DIR` | No | Overrides the local cache directory. Defaults to `.ai-agent-audit`. |
 | `AI_AGENT_AUDIT_WORKSPACE_ROOT` | No | Overrides where target repos are cloned and built. Defaults to `~/Desktop/Audit`. |
 | `AI_AGENT_AUDIT_WORKER_LAUNCHER` | No | Codex-compatible validation worker launcher. Defaults to `codex` on PATH and overrides YAML launcher values. |
@@ -222,7 +279,7 @@ Discovery provider/model defaults now live in [src/config.rs](src/config.rs). Ed
 
 7. AI review. Verification, deduplication, summaries, and report-writing use the configured OpenAI backend: Codex by default, or direct API when `AI_AGENT_AUDIT_OPENAI_BACKEND=api`. Discovery-style phases (patterns, actors, invariants) use the provider configured in [src/config.rs](src/config.rs). Findings are aggregated across contracts and deduplicated at the end.
 
-8. Report export and local persistence. The tool writes Markdown outputs, records findings in local SQLite databases, and keeps cached repo metadata for later runs.
+8. Report export and local persistence. The tool writes Markdown outputs, records findings in local SQLite databases, and keeps cached repo metadata for later runs. By default it also emits a `validation-three-shot` job, which is the primary path for deeper validation, PoC generation, PoC verification, and final report polish.
 
 ## Outputs And Local State
 
@@ -252,7 +309,7 @@ Set `AI_AGENT_AUDIT_DATA_DIR` if you want those files elsewhere.
 
 ## Validation Workflow
 
-The Rust pipeline performs discovery and initial verification, then emits a `validation-three-shot` config/job for deeper validation, PoC generation, and report creation.
+The Rust pipeline performs discovery and initial verification, then emits a `validation-three-shot` config/job for deeper validation, PoC generation, PoC verification, and report creation.
 
 Codex-supervised mode is the strongest path for high-stakes work because fresh Codex workers can inspect files, create PoCs, and repair reports round by round:
 
@@ -283,7 +340,7 @@ The analysis system combines several sources of context:
 - Pattern libraries covering access control, reentrancy, accounting and invariant drift, oracle and AMM behavior, governance and timelocks, upgradeability, bridging, token standards, marketplace flows, and more.
 - Invariant analysis across arithmetic, balance, permission, temporal, referential, and state-machine categories.
 - Actor-oriented prompt context for threat modeling each reviewed contract.
-- Contest-aware severity handling for `Code4rena`, `Sherlock`, and `Cantina`, bounty-specific Critical/High handling for `Code4renaBounty`, plus a more open-ended `Client` mode.
+- Contest-aware severity handling for `Code4rena`, `Sherlock`, and `Cantina`, bounty-specific handling for `Code4renaBounty` and `ImmunefiBugBounty`, plus a more open-ended `Client` mode.
 
 The exact prompts and pattern catalogs continue to evolve, so the README intentionally describes this at the capability level instead of freezing brittle counts.
 
@@ -292,10 +349,10 @@ The exact prompts and pattern catalogs continue to evolve, so the README intenti
 - This project sends code and documentation to external AI providers. Do not use it on repositories you are not allowed to share with those providers.
 - The tool is designed for defensive review support. It can miss real issues and it can produce false positives.
 - The default Rust OpenAI path depends on a valid cached ChatGPT/Codex session. API fallback for Rust OpenAI calls requires `AI_AGENT_AUDIT_OPENAI_BACKEND=api` and `OPENAI_API_KEY`; deep validation workers still require a Codex-compatible agent launcher.
-- `audit_type` affects severity, rubric behavior, context gathering, and validation profile selection. `Code4renaBounty` disables V12-specific validation stages and uses a stricter Critical/High submit/no-submit flow.
-- Runnable PoC generation and verification now live in the separate `validation-three-shot` workflow, not the main audit pipeline.
+- `audit_type` affects severity, rubric behavior, context gathering, and validation profile selection. `Code4renaBounty` disables V12-specific validation stages and uses a stricter Critical/High submit/no-submit flow. `ImmunefiBugBounty` uses Immunefi-style scope and impact handling.
+- Runnable PoC generation and verification are supported through the separate `validation-three-shot` workflow. The main Rust audit pipeline stops after initial artifact generation and job emission.
 - If the target repo does not build cleanly on the local machine, analysis quality will degrade or the run may fail.
-- Automatic build commands do not install package dependencies. Because execution is host-local rather than Docker-isolated, run `npm install`, `yarn install`, `pnpm install`, or `forge install` yourself only when you trust the target repo, or provide an explicit `build_cmd`.
+- Automatic Hardhat/JavaScript build commands may install missing dependencies locally, but they do so with lifecycle scripts disabled, such as `npm ci --ignore-scripts`, `yarn install --ignore-scripts`, `pnpm install --frozen-lockfile --ignore-scripts`, or `bun install --frozen-lockfile --ignore-scripts`. Foundry dependency installation via `forge install` is not run automatically. Because execution is host-local rather than Docker-isolated, only audit repositories you trust, or provide an explicit `build_cmd`.
 - If Slither cannot extract semantic data, the tool falls back to a reduced analysis path with less Slither-derived context.
 
 ## Troubleshooting
@@ -317,7 +374,7 @@ If the build output shows `No build system detected`, the target repo likely doe
 
 ### Missing Runtime Dependencies
 
-The Docker execution path has been removed. If `git`, `slither`, `forge`, `node`, `npm`, `npx`, `yarn`, or `pnpm` is required and missing or incompatible, startup/build/static-analysis will fail with an install note for the missing command. Node-based builds require Node.js 18 or newer. Modern Foundry/solc projects require Slither 0.11.5 or newer.
+The Docker execution path has been removed. If `git`, `slither`, `forge`, `node`, `npm`, `npx`, `yarn`, `pnpm`, or `bun` is required and missing or incompatible, startup/build/static-analysis will fail with an install note for the missing command. Node-based builds require Node.js 18 or newer. Modern Foundry/solc projects require Slither 0.11.5 or newer.
 
 ### Wrong Source Folder
 
