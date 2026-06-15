@@ -1,6 +1,17 @@
-# AI Agent Audit
+# AI Agent Audit v2.0
 
-AI Agent Audit is a Rust command-line tool for AI-assisted security review of Solidity repositories. It clones and builds a target repo in a local audit workspace, extracts semantic data with Slither, generates per-contract code slices, runs LLM-based discovery and verification passes, and writes Markdown audit reports.
+## Overview
+AI Agent Audit is the first of its kind open source tools that: 
+
+- automatically discovers security vulnerability in solidity EVM-based codebases
+- dedupes, validates, and creates runnable PoC for each valid High / Medium vulnerability found 
+- creates professional audit reports for each valid finding
+
+I used this tool to compete in Code4rena (I am not a security researcher), and the results are promising: https://code4rena.com/@saraswati
+
+It performed on par with a human security researcher, and even achieved the distinction of SR Warden, which only ~1% of security researcher attain.
+
+This tool is a Rust command-line tool for AI-assisted security review of Solidity repositories. It clones and builds a target repo in a local audit workspace, extracts semantic data with Slither, generates per-contract code slices, runs LLM-based discovery and verification passes, and writes Markdown audit reports.
 
 This repository is being released as a GitHub-first public beta. It is meant to accelerate expert review, not replace manual auditing.
 
