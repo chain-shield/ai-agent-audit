@@ -36,7 +36,7 @@ const DEFAULT_OPENAI_MODEL: &str = OPENAI_MODEL;
 const VALID_SERVICE_TIERS: &[&str] = &["default", "flex", "fast"];
 
 /// Valid OpenAI reasoning effort levels
-/// GPT-5.4 supports these reasoning effort levels in Codex/app-server.
+/// Supported reasoning effort levels used by the configured OpenAI models.
 const VALID_REASONING_EFFORTS: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh"];
 
 /// Valid Gemini thinking levels (for Gemini 3 Pro models)
@@ -640,6 +640,7 @@ fn openai_api_additional_params(
 fn openai_api_model_supports_reasoning(model: &str) -> bool {
     let model = model.to_ascii_lowercase();
     model.starts_with("gpt-5")
+        || model.starts_with("gpt-6")
         || model.starts_with("o1")
         || model.starts_with("o3")
         || model.starts_with("o4")
@@ -1122,6 +1123,21 @@ mod tests {
 
         assert_eq!(json["service_tier"], "flex");
         assert_eq!(json["reasoning"]["effort"], "high");
+        assert_eq!(json["store"], false);
+    }
+
+    #[test]
+    fn test_openai_api_additional_params_includes_reasoning_for_gpt_6() {
+        use crate::config::init_config;
+
+        let _ = init_config();
+
+        let config = AgentConfig::new(None).with_openai_reasoning_effort("medium");
+
+        let params = openai_api_additional_params(&config, "gpt-6-luna").unwrap();
+        let json = serde_json::to_value(params).unwrap();
+
+        assert_eq!(json["reasoning"]["effort"], "medium");
         assert_eq!(json["store"], false);
     }
 

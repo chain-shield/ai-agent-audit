@@ -33,10 +33,10 @@ pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
 pub const INVARIANT_DISCOVERY_RUNS: usize = 5; // old value 5
 pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
-pub const OPENAI_MODEL: &str = "gpt-5.5";
+pub const OPENAI_MODEL: &str = "gpt-6-sol";
 pub const OPENAI_REASONING_EFFORT: &str = "high";
-pub const OPENAI_DEDUP_MODEL: &str = "gpt-5.4";
-pub const OPENAI_DEDUP_REASONING_EFFORT: &str = "low";
+pub const OPENAI_DEDUP_MODEL: &str = "gpt-6-luna";
+pub const OPENAI_DEDUP_REASONING_EFFORT: &str = "medium";
 pub const OPENAI_BACKEND: &str = "codex";
 pub const DISCOVERY_PROVIDER: &str = "openai";
 pub const GEMINI_DISCOVERY_MODEL: &str = "gemini-3.1-pro-preview";
@@ -494,8 +494,9 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AuditConfig::default();
-        assert_eq!(OPENAI_MODEL, "gpt-5.5");
-        assert_eq!(OPENAI_DEDUP_MODEL, "gpt-5.4");
+        assert_eq!(OPENAI_MODEL, "gpt-6-sol");
+        assert_eq!(OPENAI_DEDUP_MODEL, "gpt-6-luna");
+        assert_eq!(OPENAI_DEDUP_REASONING_EFFORT, "medium");
         assert_eq!(config.openai_backend, "codex");
         assert_eq!(config.max_depth, MAX_DEPTH);
         assert_eq!(config.token_budget, TOKEN_BUDGET);
