@@ -43,81 +43,48 @@ impl ValidateLegitAnalysis {
             info!("id: {}\n", self.id());
             info!("title: {}\n", self.finding_title);
 
-            if self.does_bug_really_not_exist.is_some() {
-                info!(
-                    "does_bug_really_not_exist: {}\n",
-                    self.does_bug_really_not_exist.unwrap()
-                );
+            if let Some(value) = self.does_bug_really_not_exist {
+                info!("does_bug_really_not_exist: {}\n", value);
             }
 
-            if self.is_really_out_of_scope.is_some() {
-                info!(
-                    "is_really_out_of_scope: {}\n",
-                    self.is_really_out_of_scope.unwrap()
-                );
+            if let Some(value) = self.is_really_out_of_scope {
+                info!("is_really_out_of_scope: {}\n", value);
             }
 
-            if self.is_really_user_error_or_mistake.is_some() {
-                info!(
-                    "is_really_user_error_or_mistake: {}\n",
-                    self.is_really_user_error_or_mistake.unwrap()
-                );
+            if let Some(value) = self.is_really_user_error_or_mistake {
+                info!("is_really_user_error_or_mistake: {}\n", value);
             }
 
-            if self.is_really_governance_risk.is_some() {
-                info!(
-                    "is_really_governance_risk: {}\n",
-                    self.is_really_governance_risk.unwrap()
-                );
+            if let Some(value) = self.is_really_governance_risk {
+                info!("is_really_governance_risk: {}\n", value);
             }
 
-            if self.is_really_future_speculation.is_some() {
-                info!(
-                    "is_really_future_speculation: {}\n",
-                    self.is_really_future_speculation.unwrap()
-                );
+            if let Some(value) = self.is_really_future_speculation {
+                info!("is_really_future_speculation: {}\n", value);
             }
 
-            if self.is_really_non_standard_token.is_some() {
-                info!(
-                    "is_really_non_standard_token: {}\n",
-                    self.is_really_non_standard_token.unwrap()
-                );
+            if let Some(value) = self.is_really_non_standard_token {
+                info!("is_really_non_standard_token: {}\n", value);
             }
 
-            if self.is_really_low_impact.is_some() {
-                info!(
-                    "is_really_low_impact: {}\n",
-                    self.is_really_low_impact.unwrap()
-                );
+            if let Some(value) = self.is_really_low_impact {
+                info!("is_really_low_impact: {}\n", value);
             }
 
-            if self.is_really_low_likelihood.is_some() {
-                info!(
-                    "is_really_low_likelihood: {}\n",
-                    self.is_really_low_likelihood.unwrap()
-                );
+            if let Some(value) = self.is_really_low_likelihood {
+                info!("is_really_low_likelihood: {}\n", value);
             }
 
-            if self.is_there_really_safeguard_against_it.is_some() {
-                info!(
-                    "is_there_really_safeguard_against_it: {}\n",
-                    self.is_there_really_safeguard_against_it.unwrap()
-                );
+            if let Some(value) = self.is_there_really_safeguard_against_it {
+                info!("is_there_really_safeguard_against_it: {}\n", value);
             }
 
-            if self.is_bug_really_by_design.is_some() {
-                info!(
-                    "is_bug_really_by_design: {}\n",
-                    self.is_bug_really_by_design.unwrap()
-                );
+            if let Some(value) = self.is_bug_really_by_design {
+                info!("is_bug_really_by_design: {}\n", value);
             }
 
-            if self.is_really_not_exploitable.is_some() {
-                info!(
-                    "is_really_not_exploitable: {}\n",
-                    self.is_really_not_exploitable.unwrap()
-                );
+            if let Some(value) = self.is_really_not_exploitable {
+                info!("is_really_not_exploitable: {}\n", value);
             }
 
             info!(

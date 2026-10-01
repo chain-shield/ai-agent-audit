@@ -213,11 +213,10 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
     }
 
     fn generate_verify_json() -> String {
-        format!(
-            r#"
-    {{
+        r#"
+    {
         "findings": [
-            {{
+            {
                 "finding_id": "'id' field from finding",
                 "finding_title": "'title' field from finding",
                 "does_bug_exist": true | false,
@@ -229,11 +228,11 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
                 "requires_privileged_or_compromised_actor": true | false,
                 "future_speculation": true | false,
                 "justification": "Please provide justification for your choices (under 400 words)."
-            }}
+            }
         ]
-    }}
+    }
 "#
-        )
+        .to_string()
     }
 }
 
@@ -255,6 +254,18 @@ mod tests {
             future_speculation: false,
             justification: "looks plausible".to_string(),
         }
+    }
+
+    #[test]
+    fn all_round_json_template_deserializes_after_boolean_choices_are_resolved() {
+        let template = AllRoundLegitAnalysis::generate_verify_json();
+        let response: VerifyAllRound =
+            serde_json::from_str(&template.replace("true | false", "false")).unwrap();
+
+        assert_eq!(response.findings.len(), 1);
+        assert_eq!(response.findings[0].finding_id, "'id' field from finding");
+        assert!(!response.findings[0].does_bug_exist);
+        assert!(!response.findings[0].future_speculation);
     }
 
     #[test]

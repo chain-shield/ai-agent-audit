@@ -33,7 +33,10 @@ const CODEX_SHUTDOWN_POLL_ATTEMPTS: usize = 10;
 const CODEX_SHUTDOWN_POLL_INTERVAL_MS: u64 = 50;
 const CODEX_DISABLE_PLUGINS_FEATURE: &str = "plugins";
 #[cfg(target_os = "macos")]
-const PLATFORM_CODEX_FALLBACKS: &[&str] = &["/Applications/Codex.app/Contents/Resources/codex"];
+const PLATFORM_CODEX_FALLBACKS: &[&str] = &[
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+];
 #[cfg(not(target_os = "macos"))]
 const PLATFORM_CODEX_FALLBACKS: &[&str] = &[];
 
@@ -1063,13 +1066,13 @@ fn configure_codex_process_group(command: &mut Command) {
 
 fn terminate_codex_process_tree(child: &mut Child) {
     #[cfg(unix)]
-    if let Some(process_group_id) = i32::try_from(child.id()).ok() {
-        if process_group_is_alive(process_group_id) {
-            send_process_group_signal(process_group_id, libc::SIGTERM);
-            if !wait_for_process_group_exit(process_group_id, child) {
-                send_process_group_signal(process_group_id, libc::SIGKILL);
-                let _ = wait_for_process_group_exit(process_group_id, child);
-            }
+    if let Ok(process_group_id) = i32::try_from(child.id())
+        && process_group_is_alive(process_group_id)
+    {
+        send_process_group_signal(process_group_id, libc::SIGTERM);
+        if !wait_for_process_group_exit(process_group_id, child) {
+            send_process_group_signal(process_group_id, libc::SIGKILL);
+            let _ = wait_for_process_group_exit(process_group_id, child);
         }
     }
 
@@ -1388,45 +1391,42 @@ pub(crate) fn sanitize_schema_for_openai_structured_output(schema: &mut Value) {
 }
 
 fn make_schema_nullable(schema: &mut Value) {
-    match schema {
-        Value::Object(map) => {
-            if let Some(value) = map.get_mut("type") {
-                match value {
-                    Value::String(ty) => {
-                        if ty != "null" {
-                            *value = Value::Array(vec![
-                                Value::String(ty.clone()),
-                                Value::String("null".to_string()),
-                            ]);
-                        }
+    if let Value::Object(map) = schema {
+        if let Some(value) = map.get_mut("type") {
+            match value {
+                Value::String(ty) => {
+                    if ty != "null" {
+                        *value = Value::Array(vec![
+                            Value::String(ty.clone()),
+                            Value::String("null".to_string()),
+                        ]);
                     }
-                    Value::Array(types) => {
-                        let has_null = types.iter().any(|ty| ty.as_str() == Some("null"));
-                        if !has_null {
-                            types.push(Value::String("null".to_string()));
-                        }
+                }
+                Value::Array(types) => {
+                    let has_null = types.iter().any(|ty| ty.as_str() == Some("null"));
+                    if !has_null {
+                        types.push(Value::String("null".to_string()));
                     }
-                    _ => {}
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        for union_key in ["anyOf", "oneOf"] {
+            if let Some(Value::Array(variants)) = map.get_mut(union_key) {
+                let has_null = variants.iter().any(|variant| {
+                    variant
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .is_some_and(|ty| ty == "null")
+                });
+                if !has_null {
+                    variants.push(json!({ "type": "null" }));
                 }
                 return;
             }
-
-            for union_key in ["anyOf", "oneOf"] {
-                if let Some(Value::Array(variants)) = map.get_mut(union_key) {
-                    let has_null = variants.iter().any(|variant| {
-                        variant
-                            .get("type")
-                            .and_then(Value::as_str)
-                            .is_some_and(|ty| ty == "null")
-                    });
-                    if !has_null {
-                        variants.push(json!({ "type": "null" }));
-                    }
-                    return;
-                }
-            }
         }
-        _ => {}
     }
 
     let original = schema.clone();
@@ -1454,10 +1454,10 @@ fn collect_snapshot_reset(snapshot: &Value, reset_candidates: &mut Vec<u64>) {
             .and_then(Value::as_u64)
             .unwrap_or_default();
         let reset_at = window.get("resetsAt").and_then(Value::as_u64);
-        if used_percent >= 100 {
-            if let Some(reset_at) = reset_at {
-                reset_candidates.push(reset_at);
-            }
+        if used_percent >= 100
+            && let Some(reset_at) = reset_at
+        {
+            reset_candidates.push(reset_at);
         }
     }
 
@@ -1577,6 +1577,18 @@ fn open_browser_best_effort(url: &str) {
 mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn chatgpt_bundled_codex_is_first_platform_fallback() {
+        assert_eq!(
+            PLATFORM_CODEX_FALLBACKS,
+            &[
+                "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+                "/Applications/Codex.app/Contents/Resources/codex",
+            ]
+        );
+    }
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
     enum NestedRole {

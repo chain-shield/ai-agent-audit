@@ -738,7 +738,7 @@ impl AgentFactory {
 
         Ok(AIAgent::Openai {
             backend: OpenaiAgentBackend::Direct {
-                agent: builder.build(),
+                agent: Box::new(builder.build()),
                 extraction: DirectOpenaiExtractionConfig {
                     model: completion_model,
                     preamble: config.preamble.clone(),
@@ -1132,13 +1132,14 @@ mod tests {
 
         let _ = init_config();
 
-        let config = AgentConfig::new(None).with_openai_reasoning_effort("medium");
+        for (model, effort) in [("gpt-6-luna", "medium"), ("gpt-6.1-sol", "high")] {
+            let config = AgentConfig::new(None).with_openai_reasoning_effort(effort);
+            let params = openai_api_additional_params(&config, model).unwrap();
+            let json = serde_json::to_value(params).unwrap();
 
-        let params = openai_api_additional_params(&config, "gpt-6-luna").unwrap();
-        let json = serde_json::to_value(params).unwrap();
-
-        assert_eq!(json["reasoning"]["effort"], "medium");
-        assert_eq!(json["store"], false);
+            assert_eq!(json["reasoning"]["effort"], effort);
+            assert_eq!(json["store"], false);
+        }
     }
 
     #[test]

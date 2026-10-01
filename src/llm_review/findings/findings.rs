@@ -597,10 +597,10 @@ fn extract_balanced_json_objects(response: &str) -> Vec<&str> {
             '}' if !in_string => {
                 if depth > 0 {
                     depth -= 1;
-                    if depth == 0 {
-                        if let Some(start_idx) = start.take() {
-                            objects.push(&response[start_idx..idx + 1]);
-                        }
+                    if depth == 0
+                        && let Some(start_idx) = start.take()
+                    {
+                        objects.push(&response[start_idx..idx + 1]);
                     }
                 }
             }

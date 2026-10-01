@@ -59,8 +59,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    let custom_scoped_contracts = Some(vec!["CLOB"]);
-    // let custom_scoped_contracts: Option<Vec<String>> = None;
+    // let custom_scoped_contracts = Some(vec!["CLOB"]);
+    let custom_scoped_contracts: Option<Vec<String>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -83,7 +83,7 @@ pub async fn review_codebase_for_security_issues_v2(
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
         if let Some(scoped_contracts) = &custom_scoped_contracts
-            && !scoped_contracts.contains(&contract.as_ref())
+            && !scoped_contracts.contains(&contract)
         {
             info!("contract {} is NOT in custom scope", contract);
             continue;

@@ -83,6 +83,10 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "gpt-5-mini" => 0.25,
             "gpt-5.1" => 1.25,
             "gpt-5.2" => 1.75,
+            // Standard API rates for uncached, short-context GPT-6 text tokens.
+            "gpt-6-sol" => 2.00,
+            "gpt-6.1-sol" => 2.00,
+            "gpt-6-luna" => 0.10,
             "o3" => 2.00,
 
             // Anthropic models
@@ -119,6 +123,9 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "gpt-5-mini" => 2.00,
             "gpt-5.1" => 25.00,
             "gpt-5.2" => 30.00,
+            "gpt-6-sol" => 10.00,
+            "gpt-6.1-sol" => 10.00,
+            "gpt-6-luna" => 0.50,
             "o3" => 8.00,
 
             // Anthropic models
@@ -268,6 +275,37 @@ mod tests {
     use super::*;
 
     static COST_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    #[test]
+    fn test_gpt_6_models_use_standard_api_estimate_rates() {
+        for (model, input_rate, output_rate) in [
+            ("gpt-6-sol", 2.00, 10.00),
+            ("gpt-6.1-sol", 2.00, 10.00),
+            ("gpt-6-luna", 0.10, 0.50),
+        ] {
+            assert_eq!(
+                get_cost_per_million_tokens_by_model(model, TokenType::Input),
+                input_rate
+            );
+            assert_eq!(
+                get_cost_per_million_tokens_by_model(model, TokenType::Output),
+                output_rate
+            );
+        }
+
+        assert_eq!(
+            get_cost_per_million_tokens_by_model(" GPT-6-LUNA ", TokenType::Input),
+            0.10
+        );
+        assert_eq!(
+            get_cost_per_million_tokens_by_model(" GPT-6.1-SOL ", TokenType::Input),
+            2.00
+        );
+        assert_eq!(
+            get_cost_per_million_tokens_by_model(" GPT-6.1-SOL ", TokenType::Output),
+            10.00
+        );
+    }
 
     #[test]
     fn test_gpt_5_5_model_uses_expected_cost_rates() {

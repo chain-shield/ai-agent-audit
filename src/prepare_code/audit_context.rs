@@ -312,8 +312,8 @@ struct BountyArtifactPaths {
 
 #[derive(Debug, Clone)]
 enum FetchedBounty {
-    Code4rena(Code4renaBountyData),
-    Immunefi(ImmunefiBountyData),
+    Code4rena(Box<Code4renaBountyData>),
+    Immunefi(Box<ImmunefiBountyData>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -819,7 +819,7 @@ async fn fetch_and_write_bounty_artifacts(
                 artifacts.bounty_rules_md.display(),
                 artifacts.severity_rubric_md.display()
             );
-            Ok(FetchedBounty::Code4rena(bounty))
+            Ok(FetchedBounty::Code4rena(Box::new(bounty)))
         }
         BountyPlatform::Immunefi => {
             // Immunefi has separate tabs plus PoC runtime constraints. Keep
@@ -887,7 +887,7 @@ async fn fetch_and_write_bounty_artifacts(
                 artifacts.severity_rubric_md.display(),
                 poc_runtime_md.display()
             );
-            Ok(FetchedBounty::Immunefi(bounty))
+            Ok(FetchedBounty::Immunefi(Box::new(bounty)))
         }
     }
 }
@@ -3029,9 +3029,7 @@ fn github_raw_url(url: &str) -> Option<String> {
         return None;
     }
     let clean = url.split('#').next().unwrap_or(url);
-    let Some(after_host) = clean.split("github.com/").nth(1) else {
-        return None;
-    };
+    let after_host = clean.split("github.com/").nth(1)?;
     let parts = after_host.splitn(5, '/').collect::<Vec<_>>();
     if parts.len() < 5 || !matches!(parts[2], "blob" | "raw") {
         return None;
@@ -4001,9 +3999,15 @@ async fn resolve_external_contract_scope(
     // bounded Codex worker one structured chance to resolve remaining assets.
     // Any unresolved explorer-linked asset causes bounty scope generation to
     // fail closed later in `generate_scope_txt`.
-    let mut resolution = ExternalContractScopeResolution::default();
-    resolution.assets =
-        external_contract_scope_assets_for_audit(cli, sources, code4rena_bounty, immunefi_bounty);
+    let mut resolution = ExternalContractScopeResolution {
+        assets: external_contract_scope_assets_for_audit(
+            cli,
+            sources,
+            code4rena_bounty,
+            immunefi_bounty,
+        ),
+        ..Default::default()
+    };
     // Deployment/wiki pages are a second structured source for bounty scope.
     // They are platform-specific at the edge, but both resolve into the same
     // explorer asset model before local Solidity matching begins.
@@ -4674,7 +4678,7 @@ fn contract_address_from_url(url: &str) -> Option<String> {
 fn clean_external_contract_url(raw: &str) -> String {
     normalize_extracted_url(raw)
         .trim()
-        .trim_end_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | '`' | '\'' | '"'))
+        .trim_end_matches(['.', ',', ';', ':', '`', '\'', '"'])
         .to_string()
 }
 
@@ -4909,6 +4913,7 @@ fn external_contract_metadata_from_html(url: &str, html: &str) -> ExternalContra
 
     let text = html_to_text(html);
     let lines = text.lines().collect::<Vec<_>>();
+    let address_re = Regex::new(r#"(?i)0x[a-f0-9]{40}"#).unwrap();
     for (index, line) in lines.iter().enumerate() {
         let lower = line.to_ascii_lowercase();
         if lower.contains("contract name") {
@@ -4925,10 +4930,7 @@ fn external_contract_metadata_from_html(url: &str, html: &str) -> ExternalContra
         }
         if lower.contains("implementation") {
             for candidate_line in lines.iter().skip(index).take(3) {
-                for address in Regex::new(r#"(?i)0x[a-f0-9]{40}"#)
-                    .unwrap()
-                    .find_iter(candidate_line)
-                {
+                for address in address_re.find_iter(candidate_line) {
                     implementation_addresses.insert(address.as_str().to_string());
                 }
             }
@@ -5786,9 +5788,7 @@ fn path_has_any_component(relative: &str, components: &[&str]) -> bool {
         .trim_start_matches('/')
         .replace('\\', "/")
         .to_ascii_lowercase();
-    normalized
-        .split('/')
-        .any(|part| components.iter().any(|component| part == *component))
+    normalized.split('/').any(|part| components.contains(&part))
 }
 
 fn fallback_scope_from_code_folders(cli: &Cli, protocol_root: &Path) -> Vec<ScopeFileEntry> {
@@ -7739,6 +7739,25 @@ Reference deployment: https://basescan.org/address/{address}
         assert!(metadata.contract_names.contains(&"Unitroller".to_string()));
         assert_eq!(metadata.source_files, vec!["Unitroller.sol"]);
         assert_eq!(metadata.implementation_addresses, vec![implementation]);
+    }
+
+    #[test]
+    fn scanner_metadata_parser_collects_multiple_implementations_only_near_labels() {
+        let first = "0x1111111111111111111111111111111111111111";
+        let second = "0x2222222222222222222222222222222222222222";
+        let unrelated = "0x3333333333333333333333333333333333333333";
+        let html = format!(
+            "<div>Implementation: {first}</div>\n\
+             <div>separator</div>\n<div>separator</div>\n\
+             <div>unrelated owner: {unrelated}</div>\n\
+             <div>IMPLEMENTATION:</div>\n<div>{second}</div>\n\
+             <div>Implementation: {first}</div>"
+        );
+
+        let metadata =
+            external_contract_metadata_from_html("https://etherscan.io/address/x", &html);
+
+        assert_eq!(metadata.implementation_addresses, vec![first, second]);
     }
 
     #[test]

@@ -33,7 +33,7 @@ pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
 pub const INVARIANT_DISCOVERY_RUNS: usize = 5; // old value 5
 pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
-pub const OPENAI_MODEL: &str = "gpt-6-sol";
+pub const OPENAI_MODEL: &str = "gpt-6.1-sol";
 pub const OPENAI_REASONING_EFFORT: &str = "high";
 pub const OPENAI_DEDUP_MODEL: &str = "gpt-6-luna";
 pub const OPENAI_DEDUP_REASONING_EFFORT: &str = "medium";
@@ -47,8 +47,8 @@ pub const SKIP_INVARIANT_RUNS: bool = false;
 // SKIP or RUN MAIN PATTERN RUNS
 pub const SKIP_ACTOR_PATTERN_RUNS: bool = false;
 // RUNS R1 (basic) and R2 (complex) patterns
-pub const R1_RUNS: usize = 10; // canary/testing runs may reduce this locally
-pub const R2_RUNS: usize = 10; // canary/testing runs may reduce this locally
+pub const R1_RUNS: usize = 1; // canary/testing runs may reduce this locally; default 10
+pub const R2_RUNS: usize = 1; // canary/testing runs may reduce this locally; default 10
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
@@ -60,7 +60,7 @@ pub const MAX_PATTERN_RUN_TOP: usize = 3; // 2 for large protocol, default: 3
 pub const MAX_PATTERN_RUN_RARE: usize = 3; // 2 for large protocol, default: 3
 pub const MAX_PATTERN_RUN_MOST: usize = 3; // 0 for large protocol, default: 3
 pub const MAX_PATTERN_RUN_FREQUENT: usize = 3; // 2 for large protocol, default: 3
-pub const MAX_PATTERN_RELEVANT_FREQUENT: usize = 20; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RELEVANT_FREQUENT: usize = 3; // 2 for large protocol, default: 3
 pub const MAX_PATTERN_LIBRARY: usize = 3;
 pub const MAX_PATTERN_NICHE: usize = 4; // 3 for large protocol, default: 4
 pub const MAX_PATTERN_GENERAL: usize = 4; // 2 for large protocol, default: 4
@@ -274,18 +274,18 @@ impl AuditConfig {
             ));
         }
 
-        if let Some(k) = &self.openai_api_key {
-            if is_placeholder_api_key(k) || !k.starts_with("sk-") {
-                if openai_backend == "api" {
-                    return Err(AuditError::configuration(
-                        "OPENAI_API_KEY",
-                        "AI_AGENT_AUDIT_OPENAI_BACKEND=api requires a real OpenAI API key",
-                    ));
-                } else {
-                    log::warn!(
-                        "Ignoring OPENAI_API_KEY because it does not look like a real API key; default OpenAI path uses ChatGPT/Codex OAuth."
-                    );
-                }
+        if let Some(k) = &self.openai_api_key
+            && (is_placeholder_api_key(k) || !k.starts_with("sk-"))
+        {
+            if openai_backend == "api" {
+                return Err(AuditError::configuration(
+                    "OPENAI_API_KEY",
+                    "AI_AGENT_AUDIT_OPENAI_BACKEND=api requires a real OpenAI API key",
+                ));
+            } else {
+                log::warn!(
+                    "Ignoring OPENAI_API_KEY because it does not look like a real API key; default OpenAI path uses ChatGPT/Codex OAuth."
+                );
             }
         }
         if openai_backend == "api" && !self.has_openai_key() {
@@ -494,7 +494,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AuditConfig::default();
-        assert_eq!(OPENAI_MODEL, "gpt-6-sol");
+        assert_eq!(OPENAI_MODEL, "gpt-6.1-sol");
+        assert_eq!(OPENAI_REASONING_EFFORT, "high");
         assert_eq!(OPENAI_DEDUP_MODEL, "gpt-6-luna");
         assert_eq!(OPENAI_DEDUP_REASONING_EFFORT, "medium");
         assert_eq!(config.openai_backend, "codex");

@@ -177,9 +177,12 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Display total inference cost across all LLM providers
+    // This is an API-rate estimate, not the actual Codex/ChatGPT charge.
     let total_cost = get_total_inference_cost().await;
-    info!("Total Inference Cost ===> {}", total_cost);
+    info!(
+        "Estimated Inference Cost (USD; API-equivalent for Codex) ===> ${}",
+        total_cost
+    );
 
     // save all repoPaths and context to db
     prepare_code::repo_data::save_repo_data_to_db(&repo).await?;

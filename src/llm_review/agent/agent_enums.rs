@@ -46,7 +46,7 @@ pub struct DirectOpenaiExtractionConfig {
 
 pub enum OpenaiAgentBackend {
     Direct {
-        agent: Agent<openai::responses_api::ResponsesCompletionModel>,
+        agent: Box<Agent<openai::responses_api::ResponsesCompletionModel>>,
         extraction: DirectOpenaiExtractionConfig,
     },
     Codex {

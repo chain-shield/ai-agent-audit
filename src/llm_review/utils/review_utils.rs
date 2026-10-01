@@ -88,7 +88,7 @@ pub fn build_openai_agent(
     match context {
         Some(added_context) => AIAgent::Openai {
             backend: OpenaiAgentBackend::Direct {
-                agent: builder.context(added_context).build(),
+                agent: Box::new(builder.context(added_context).build()),
                 extraction: DirectOpenaiExtractionConfig {
                     model: client.completion_model(model),
                     preamble: preamble.to_string(),
@@ -100,7 +100,7 @@ pub fn build_openai_agent(
         },
         None => AIAgent::Openai {
             backend: OpenaiAgentBackend::Direct {
-                agent: builder.build(),
+                agent: Box::new(builder.build()),
                 extraction: DirectOpenaiExtractionConfig {
                     model: client.completion_model(model),
                     preamble: preamble.to_string(),

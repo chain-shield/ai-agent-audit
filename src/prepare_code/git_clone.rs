@@ -783,10 +783,10 @@ fn resolve_github_tree_refs(codebase: &mut ResolvedGitCodebase) -> Result<()> {
             );
         };
         branches.insert(git_ref);
-        if let Some(tree_path) = tree_path {
-            if let Some(tree_path) = normalize_resolved_tree_path(tree_path) {
-                tree_paths.push(tree_path);
-            }
+        if let Some(tree_path) = tree_path
+            && let Some(tree_path) = normalize_resolved_tree_path(tree_path)
+        {
+            tree_paths.push(tree_path);
         }
     }
 
@@ -1700,7 +1700,7 @@ fn hardhat_package_major(build_root: &Path) -> Option<u64> {
 fn package_version_major(version: &str) -> Option<u64> {
     let version = version
         .trim()
-        .trim_start_matches(|ch| matches!(ch, '^' | '~' | '=' | '>' | '<' | ' '));
+        .trim_start_matches(['^', '~', '=', '>', '<', ' ']);
     version
         .split(|ch: char| !ch.is_ascii_digit())
         .find(|segment| !segment.is_empty())
