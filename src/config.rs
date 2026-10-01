@@ -33,7 +33,7 @@ pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
 pub const INVARIANT_DISCOVERY_RUNS: usize = 5; // old value 5
 pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
-pub const OPENAI_MODEL: &str = "gpt-6.1-sol";
+pub const OPENAI_MODEL: &str = "gpt-6-sol";
 pub const OPENAI_REASONING_EFFORT: &str = "high";
 pub const OPENAI_DEDUP_MODEL: &str = "gpt-6-luna";
 pub const OPENAI_DEDUP_REASONING_EFFORT: &str = "medium";
@@ -494,7 +494,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AuditConfig::default();
-        assert_eq!(OPENAI_MODEL, "gpt-6.1-sol");
+        assert_eq!(OPENAI_MODEL, "gpt-6-sol");
+        assert_eq!(config.discovery_model, "gpt-6-sol");
         assert_eq!(OPENAI_REASONING_EFFORT, "high");
         assert_eq!(OPENAI_DEDUP_MODEL, "gpt-6-luna");
         assert_eq!(OPENAI_DEDUP_REASONING_EFFORT, "medium");
